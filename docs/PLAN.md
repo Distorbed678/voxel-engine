@@ -65,6 +65,9 @@ editing tools.
 |---|---|
 | Location | `~/Projects/voxel-engine`, git, T3 Code project "Voxel Engine". |
 | Validation | `vulkan-validation-layers` installed by the owner; use `--validate` while developing. |
+| Public repo | https://github.com/Distorbed678/voxel-engine (public), branch `main`. Commits keep the existing author identity. |
+| License | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`). |
+| Questions | Claude asks questions and proposes features through the question tool (see `CLAUDE.md`). Claude commits and pushes when a milestone is done. |
 
 ## 3. Implementation decisions taken during the build
 
@@ -132,17 +135,15 @@ These follow from the choices above.
     watcher)
   - texture export (`--export-textures`), `--worldgen DIR`
 - [x] **Docs**: README.md, docs/ARCHITECTURE.md, this plan.
+- [x] **Input handling fix**: UI panels regain mouse capture after an RMB look-drag (before,
+  clicks on panels fell through and edited the blocks behind them). Button and key releases now
+  always reach ImGui; held mouse buttons are cleared on focus loss. Covered by a unit test that
+  replays the event sequence through a real ImGui context. Still needs a hand check.
 
 **Measured** (RTX 4080, 1080p, `--benchmark`):
 - 279 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
 - Full 4 km world regeneration takes about 0.5 s of GPU time.
 - Validation-layer runs report 0 errors.
-
-### In progress
-
-- [ ] **Input handling fix** (being worked on in the follow-up thread). UI panels must regain
-  mouse capture after an RMB look-drag; before the fix, clicks on panels fell through and
-  edited blocks behind them. Touches `crates/engine/src/input.rs` and `engine.rs`.
 
 ### Not yet verified by hand
 
@@ -171,17 +172,40 @@ interactive test:
 - [ ] **Overdraw debug view.** It's listed in the debug-view combo but not implemented.
 - [ ] **Node comments / group boxes** (editor QoL).
 
-## 5. Suggested next work (not yet approved)
+### Approved additions (owner, 2026-11-11)
 
-Rough priority order:
+- [ ] **Public GitHub repo** with a showcase README (screenshots, flythrough, node editor),
+  license files.
+- [ ] **Automated test harness.** Scripted input playback (camera, tool choice, clicks at
+  pixels, key presses) in headless mode, plus screenshot regression tests against reference
+  images. This replaces most of the hand-test checklist above.
+- [ ] **GitHub Actions CI.** Build, clippy and the tests that don't need a GPU on every push, with a badge
+  in the README. GPU rendering can't run in CI.
+- [ ] **Anti-aliasing (TAA).** There is no AA today, so the 4 km view shimmers. Temporal AA
+  with jittered projection, motion vectors from the previous view-projection, neighbourhood
+  clamping.
+- [ ] **Ambient particles + weather.** GPU-simulated ash (volcanic), snowfall (frozen),
+  fireflies (night), rain, driven by the biome probes.
 
-1. Finish and verify the interactive input fix, then hand-test the checklist above.
-2. Colored block light propagation (the biggest missing piece of the Hytale look).
-3. Cave biomes + river node (completes the requested terrain features).
-4. GPU graph interpreter, so structural edits are instant while the compiled shader builds
+## 5. Work order
+
+Approved by the owner on 2026-11-11 ("work through it"). Items 1–3 come from Claude's
+suggestions; the rest is the earlier roadmap.
+
+1. ~~Input handling fix~~ (done, needs a hand check).
+2. Public repo, license, showcase README, GitHub Actions CI.
+3. Automated test harness (scripted input + screenshot regression), then use it to cover the
+   "not yet verified by hand" checklist.
+4. Colored block light + sky light (the biggest missing piece of the Hytale look).
+5. TAA.
+6. Cave biomes + river node (completes the requested terrain features).
+7. Small open items: per-biome colour grading, overdraw debug view, node comments / group boxes.
+8. Ambient particles + weather.
+9. GPU graph interpreter, so structural edits are instant while the compiled shader builds
    (today: about 3 s cold, about 50 ms cached).
-5. Hi-Z occlusion culling (main pass is 2–2.5 ms in dense views).
-6. Hytale-style noise/height biome selectors (alongside Voronoi).
-7. Block rotation states (stairs, logs) and partial-height water.
-8. Optional extras you previously skipped: node preview thumbnails, isolated biome preview,
-   camera bookmarks.
+10. Hi-Z occlusion culling (main pass is 2–2.5 ms in dense views).
+11. Hytale-style noise/height biome selectors (alongside Voronoi).
+12. Block rotation states (stairs, logs) and partial-height water.
+
+Still not selected (ask before doing): node preview thumbnails, isolated biome preview,
+camera bookmarks / cinematic paths.

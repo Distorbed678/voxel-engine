@@ -393,14 +393,7 @@ impl Engine {
         let mut imgui_wants_mouse = false;
         let mut imgui_wants_kb = false;
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
-            let forward = match event {
-                WindowEvent::CursorMoved { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } => {
-                    !self.fly_mode && !self.look_drag
-                }
-                WindowEvent::KeyboardInput { .. } => !self.fly_mode,
-                _ => true,
-            };
-            if forward {
+            if crate::input::forward_to_imgui(event, self.fly_mode || self.look_drag, self.fly_mode) {
                 let _ = p.handle_window_event(&mut self.imgui.ctx, w.id(), event);
             }
             let io = self.imgui.ctx.io();
@@ -456,6 +449,8 @@ impl Engine {
             WindowEvent::Focused(false) => {
                 self.set_fly_mode(false);
                 self.input.held.clear();
+                // a release that happens while unfocused never arrives: don't stay in look-drag
+                self.input.mouse_held = [false; 3];
             }
             _ => {}
         }
