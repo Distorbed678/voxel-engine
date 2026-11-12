@@ -7,6 +7,7 @@
             kind: "biome_output",
             pos: (1980.0, 0.0),
             params: {
+                "ambient": E("Pollen"),
                 "contrast": F(1.02),
                 "fluid": E("Water"),
                 "fog_color": Color((0.8, 0.85, 1.0)),
@@ -15,6 +16,8 @@
                 "grade_tint": Color((0.97, 1.0, 1.04)),
                 "grass_tint": Color((0.42, 0.85, 0.45)),
                 "map_color": Color((0.4, 0.85, 0.6)),
+                "particle_density": F(1.0),
+                "precipitation": E("Rain"),
                 "saturation": F(1.12),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
@@ -62,7 +65,7 @@
         (
             id: 5,
             kind: "y_gradient",
-            pos: (1980.0, 480.0),
+            pos: (1980.0, 549.0),
             params: {
                 "value_high": F(-60.0),
                 "value_low": F(-60.0),

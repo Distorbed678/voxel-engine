@@ -102,3 +102,13 @@ look 0 -89
 settle
 wait 30
 expect_image crates/engine/tests/golden/rivers.png
+
+# weather: heavy snowfall over the taiga (particles restart when settle finishes)
+clouds on
+weather 1
+time 0.33
+pos -128 90 4000
+look 35 -5
+settle
+wait 120
+expect_image crates/engine/tests/golden/weather.png

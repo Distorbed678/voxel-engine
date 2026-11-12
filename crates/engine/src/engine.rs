@@ -110,6 +110,7 @@ pub struct Engine {
     pub probes: crate::probe::Probes,
     pub light: crate::light::LightGpu,
     taa: crate::taa::Taa,
+    particles: crate::particles::Particles,
     bloom: crate::bloom::Bloom,
     /// Camera position of the previous frame (TAA reprojection).
     prev_cam_pos: DVec3,
@@ -118,6 +119,9 @@ pub struct Engine {
     /// Jitter sequence position (scripts restart it after `settle` so screenshots don't depend
     /// on how many frames loading took).
     taa_frame: u64,
+    /// Jump the environment (fog, grading, weather, particle shares) to its target on the next
+    /// frame instead of blending (scripts set it after `settle`).
+    env_snap: bool,
     pub wg: WorldgenSystem,
     pub node_ui: NodeEditorUi,
     pub tools: crate::tools::Tools,
@@ -222,6 +226,7 @@ impl Engine {
         let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, &blocks, extent, out_format, FIF)?;
         let light = crate::light::LightGpu::new(&ctx, &mut pm, &mut bindless)?;
         let taa = crate::taa::Taa::new(&ctx, &mut pm, &mut bindless, extent)?;
+        let particles = crate::particles::Particles::new(&ctx, &mut pm)?;
         let bloom = crate::bloom::Bloom::new(&ctx, &mut pm, &mut bindless, extent)?;
         let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
         let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
@@ -380,10 +385,12 @@ impl Engine {
             probes: crate::probe::Probes::new(&ctx, FIF)?,
             light,
             taa,
+            particles,
             bloom,
             prev_cam_pos: DVec3::ZERO,
             prev_taa: false,
             taa_frame: 0,
+            env_snap: false,
             wg,
             node_ui: NodeEditorUi::new(),
             tools: crate::tools::Tools::new(prefabs),
@@ -671,14 +678,27 @@ impl Engine {
     fn apply_environment(&mut self) {
         let Some(cam) = self.probes.camera else { return };
         let Some(b) = self.wg.compiled.biomes.get(cam.biome as usize) else { return };
-        let k = (self.dt * 1.5).min(1.0);
+        let k = if std::mem::take(&mut self.env_snap) { 1.0 } else { (self.dt * 1.5).min(1.0) };
         let target = Vec3::from(b.fog_color);
         self.atmosphere.fog_tint = self.atmosphere.fog_tint.lerp(target, k);
         self.atmosphere.fog_tint_strength = 0.55;
         self.atmosphere.grade_tint = self.atmosphere.grade_tint.lerp(Vec3::from(b.grade_tint), k);
         self.atmosphere.saturation += (b.saturation - self.atmosphere.saturation) * k;
         self.atmosphere.contrast += (b.contrast - self.atmosphere.contrast) * k;
-        let dens = 0.0012 * b.fog_density.max(0.05) * self.ui.fog_scale;
+        // weather: automatic (slow cycle on the animation clock) or the slider
+        let weather = if self.ui.weather_auto {
+            let t = self.anim_time as f64;
+            let w = (t * 0.0041).sin() * 0.6 + (t * 0.0097 + 1.3).sin() * 0.4;
+            ((w as f32 - 0.25) * 2.0).clamp(0.0, 1.0)
+        } else {
+            self.ui.weather
+        };
+        self.atmosphere.weather += (weather - self.atmosphere.weather) * k;
+        let daylight = (self.atmosphere.colors().sun_dir.y * 5.0 + 0.5).clamp(0.0, 1.0);
+        let target = crate::particles::Shares::for_biome(b.ambient, b.precipitation, b.particle_density, self.atmosphere.weather, daylight);
+        self.particles.shares = self.particles.shares.lerp(target, if k >= 1.0 { 1.0 } else { (self.dt * 0.8).min(1.0) });
+        let rain = self.particles.shares.rain;
+        let dens = 0.0012 * b.fog_density.max(0.05) * self.ui.fog_scale * (1.0 + 1.5 * rain);
         self.atmosphere.fog_density += (dens - self.atmosphere.fog_density) * k;
     }
 
@@ -986,6 +1006,25 @@ impl Engine {
             self.light.record(&self.ctx, cb, &self.pm, self.bindless.set, origin, self.world.coarse_light.origin_block(), self.renderer.block_table.address, &mut self.profiler, profiler_slot);
         }
 
+        // ambient particles and weather
+        let particle_draw = if self.ui.particles {
+            let t = self.anim_time;
+            let wind = glam::Vec2::new((t * 0.05).sin(), (t * 0.037).cos()) * (0.6 + 1.6 * self.atmosphere.weather);
+            let light_blocks = if self.ui.block_light && self.light.ready() { self.light.blocks_img } else { u32::MAX };
+            let push = self.particles.push(
+                self.renderer.per_slot[slot].frame_buf.address,
+                self.renderer.block_table.address,
+                light_blocks,
+                wind,
+                self.taa_frame as u32,
+                self.dt,
+            );
+            self.particles.record_sim(&self.ctx, cb, &self.pm, self.bindless.set, &push, &mut self.profiler, profiler_slot);
+            Some((self.pm.get(self.particles.draw), push))
+        } else {
+            None
+        };
+
         // biome probes (camera environment + minimap)
         {
             let pos = self.camera.pos;
@@ -1069,8 +1108,14 @@ impl Engine {
             self.ui.wireframe,
             self.wg.biome_table.address,
             self.ui.shadows,
-            self.ui.clouds,
+            {
+                // weather thickens the clouds
+                let mut c = self.ui.clouds;
+                c.coverage = (c.coverage + 0.3 * self.atmosphere.weather).min(1.0);
+                c
+            },
             self.ui.debug_view == crate::ui::DEBUG_OVERDRAW,
+            particle_draw,
         );
         if self.ui.taa {
             let frame_addr = self.renderer.per_slot[slot].frame_buf.address;
@@ -1560,6 +1605,7 @@ impl Drop for Engine {
         self.probes.destroy(&self.ctx);
         self.light.destroy(&self.ctx, &mut self.bindless);
         self.taa.destroy(&self.ctx, &mut self.bindless);
+        self.particles.destroy(&self.ctx);
         self.bloom.destroy(&self.ctx, &mut self.bindless);
         self.wg.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);

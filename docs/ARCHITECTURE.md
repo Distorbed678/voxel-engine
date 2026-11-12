@@ -86,6 +86,23 @@ a ping-ponged RGBA16F history:
 - The tonemap pass reads the resolved image and applies a light 4-neighbour sharpen, clamped to
   the neighbourhood so it doesn't ring.
 
+## Particles and weather
+
+A pool of 24,576 GPU particles lives in a 64³ box that wraps around the camera: a particle that
+leaves one side comes back on the other, so the camera is always surrounded
+(`crates/engine/src/particles.rs`, `shaders/particles/`). Each frame `sim.comp` respawns free slots
+with a kind picked from per-kind shares, steers velocities towards per-kind targets (falling snow,
+fast rain, drifting ash, rising embers, wandering fireflies, pollen), and kills particles inside
+solid blocks. Rain and snow also die under a roof, using the light volume's sky sources. The
+translucent pass draws camera-facing quads (rain is stretched along its motion). Embers and
+fireflies are emissive, so bloom makes them glow.
+
+The shares come from the camera's biome: each Biome Output has ambient particles (ash, embers,
+fireflies at night, pollen by day), precipitation (rain or snow) and a density. They're multiplied
+by a weather intensity that cycles slowly by itself or is set by hand. Weather also thickens the
+clouds and the fog. Everything blends over time like fog. Scripts restart the particles and snap
+the blend when `settle` finishes, so golden images stay deterministic.
+
 ## Colour grading
 
 Each biome output has a grading tint, saturation and contrast. Like fog, they blend toward the

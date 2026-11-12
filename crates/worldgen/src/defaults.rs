@@ -634,6 +634,19 @@ pub fn default_project() -> Project {
         ("ashlands", [1.05, 0.95, 0.9], 0.7, 1.1),
         ("lava_fields", [1.1, 0.95, 0.85], 1.1, 1.12),
     ];
+    // ambient particles and precipitation (rain falls with the weather, snow always a little)
+    let particles: &[(&str, &str, &str)] = &[
+        ("meadow", "Pollen", "Rain"),
+        ("oak_forest", "Fireflies", "Rain"),
+        ("birch_hills", "Fireflies", "Rain"),
+        ("floating_isles", "Pollen", "Rain"),
+        ("savanna", "Pollen", "Rain"),
+        ("taiga", "None", "Snow"),
+        ("glacier", "None", "Snow"),
+        ("snowy_peaks", "None", "Snow"),
+        ("ashlands", "Ash", "None"),
+        ("lava_fields", "Embers", "None"),
+    ];
     for g in &mut p.graphs {
         if let Some(&(_, tint, sat, contrast)) = grading.iter().find(|e| e.0 == g.name)
             && let Some(o) = g.output_node().map(|n| n.id)
@@ -641,6 +654,12 @@ pub fn default_project() -> Project {
             g.set(o, "grade_tint", Value::Color(tint));
             g.set(o, "saturation", fv(sat));
             g.set(o, "contrast", fv(contrast));
+        }
+        if let Some(&(_, ambient, precip)) = particles.iter().find(|e| e.0 == g.name)
+            && let Some(o) = g.output_node().map(|n| n.id)
+        {
+            g.set(o, "ambient", ev(ambient));
+            g.set(o, "precipitation", ev(precip));
         }
         crate::layout::auto_layout(g);
         if g.kind == GraphKind::World {

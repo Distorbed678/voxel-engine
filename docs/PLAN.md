@@ -220,8 +220,10 @@ Still needs a hand test (real input devices or complex UI flows):
 - [ ] **Anti-aliasing (TAA).** There is no AA today, so the 4 km view shimmers. Temporal AA
   with jittered projection, motion vectors from the previous view-projection, neighbourhood
   clamping.
-- [ ] **Ambient particles + weather.** GPU-simulated ash (volcanic), snowfall (frozen),
-  fireflies (night), rain, driven by the biome probes.
+- [x] **Ambient particles + weather.** 24k GPU particles in a camera-wrapping box: snow, rain,
+  ash, embers, fireflies (night), pollen (day), from Biome Output settings × weather intensity
+  (auto cycle or slider; also thickens clouds and fog). Killed inside blocks / under roofs via the
+  light volume. Weather golden image.
 
 ## 5. Work order
 
@@ -238,7 +240,7 @@ suggestions; the rest is the earlier roadmap.
 6. ~~**Far-field lava glow**~~ (approved 2026-11-11).
 7. ~~Cave biomes + river node~~.
 8. ~~Small open items: colour grading, overdraw view, node comments, node auto-layout~~.
-9. Ambient particles + weather.
+9. ~~Ambient particles + weather~~.
 10. GPU graph interpreter, so structural edits are instant while the compiled shader builds
    (today: about 3 s cold, about 50 ms cached).
 11. Hi-Z occlusion culling (main pass is 2–2.5 ms in dense views).

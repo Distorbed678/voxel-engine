@@ -39,6 +39,12 @@ pub struct UiState {
     pub bloom: bool,
     /// Per-biome colour grading.
     pub grading: bool,
+    /// Ambient particles and precipitation.
+    pub particles: bool,
+    /// Weather intensity when not automatic.
+    pub weather: f32,
+    /// Let the weather change by itself over time.
+    pub weather_auto: bool,
     pub bloom_strength: f32,
     /// Exposure-scaled brightness where bloom starts.
     pub bloom_threshold: f32,
@@ -76,6 +82,9 @@ impl UiState {
             taa: true,
             bloom: true,
             grading: true,
+            particles: true,
+            weather: 0.0,
+            weather_auto: true,
             bloom_strength: 0.35,
             bloom_threshold: 0.9,
             clouds: Default::default(),
@@ -274,6 +283,14 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.checkbox("Bloom", &mut c.state.bloom);
             ui.same_line();
             ui.checkbox("Grading", &mut c.state.grading);
+            ui.checkbox("Particles", &mut c.state.particles);
+            ui.same_line();
+            ui.checkbox("Auto weather", &mut c.state.weather_auto);
+            if c.state.weather_auto {
+                ui.text_disabled(format!("weather {:.2}", c.atmosphere.weather));
+            } else {
+                ui.slider("Weather", 0.0f32, 1.0f32, &mut c.state.weather);
+            }
             if c.state.bloom {
                 ui.slider("Bloom strength", 0.0f32, 1.5f32, &mut c.state.bloom_strength);
                 ui.slider("Bloom threshold", 0.0f32, 3.0f32, &mut c.state.bloom_threshold);

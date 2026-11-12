@@ -29,6 +29,10 @@ pub struct BiomeInfo {
     pub grade_tint: [f32; 3],
     pub saturation: f32,
     pub contrast: f32,
+    /// Ambient particles (None, Ash, Embers, Fireflies, Pollen), precipitation (None, Rain, Snow).
+    pub ambient: u32,
+    pub precipitation: u32,
+    pub particle_density: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -810,9 +814,16 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             grade_tint: color_param(g, &outn, "grade_tint"),
             saturation: outn.params.get("saturation").map(|v| v.as_f32()).unwrap_or(1.0),
             contrast: outn.params.get("contrast").map(|v| v.as_f32()).unwrap_or(1.0),
+            ambient: 0,
+            precipitation: 0,
+            particle_density: outn.params.get("particle_density").map(|v| v.as_f32()).unwrap_or(1.0),
         });
         let mut em = Em::new(&mut sh, g, pfx.clone(), false);
         fluids.push(em.enum_idx(&outn, "fluid"));
+        if let Some(info) = biome_infos.last_mut() {
+            info.ambient = em.enum_idx(&outn, "ambient") as u32;
+            info.precipitation = em.enum_idx(&outn, "precipitation") as u32;
+        }
         // density
         let dens = g
             .input_link(outn.id, 0)

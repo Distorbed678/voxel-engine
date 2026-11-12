@@ -18,6 +18,8 @@ pub struct Atmosphere {
     pub fog_tint_strength: f32,
     /// Colour grading (blended towards the camera's biome): tint, saturation, contrast.
     pub grade_tint: Vec3,
+    /// Weather intensity 0..1 (rain, heavier snow, more clouds and fog).
+    pub weather: f32,
     pub saturation: f32,
     pub contrast: f32,
 }
@@ -36,6 +38,7 @@ impl Default for Atmosphere {
             fog_tint: Vec3::new(0.75, 0.82, 0.95),
             fog_tint_strength: 0.0,
             grade_tint: Vec3::ONE,
+            weather: 0.0,
             saturation: 1.0,
             contrast: 1.0,
         }

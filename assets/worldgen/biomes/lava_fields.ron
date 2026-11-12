@@ -7,6 +7,7 @@
             kind: "biome_output",
             pos: (1320.0, 0.0),
             params: {
+                "ambient": E("Embers"),
                 "contrast": F(1.12),
                 "fluid": E("Lava"),
                 "fog_color": Color((0.55, 0.3, 0.2)),
@@ -15,6 +16,8 @@
                 "grade_tint": Color((1.1, 0.95, 0.85)),
                 "grass_tint": Color((0.45, 0.75, 0.3)),
                 "map_color": Color((0.75, 0.25, 0.1)),
+                "particle_density": F(1.0),
+                "precipitation": E("None"),
                 "saturation": F(1.1),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
@@ -87,7 +90,7 @@
         (
             id: 8,
             kind: "block",
-            pos: (1320.0, 480.0),
+            pos: (1320.0, 549.0),
             params: {
                 "block": Block("obsidian"),
             },

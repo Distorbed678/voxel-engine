@@ -7,6 +7,7 @@
             kind: "biome_output",
             pos: (2970.0, 0.0),
             params: {
+                "ambient": E("None"),
                 "contrast": F(1.0),
                 "fluid": E("Water"),
                 "fog_color": Color((0.75, 0.82, 0.9)),
@@ -15,6 +16,8 @@
                 "grade_tint": Color((0.95, 1.0, 1.04)),
                 "grass_tint": Color((0.45, 0.62, 0.45)),
                 "map_color": Color((0.3, 0.5, 0.4)),
+                "particle_density": F(1.0),
+                "precipitation": E("Snow"),
                 "saturation": F(0.92),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },

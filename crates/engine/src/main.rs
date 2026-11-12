@@ -12,6 +12,7 @@ mod taa;
 mod textures;
 mod ui;
 mod node_editor;
+mod particles;
 mod prefab;
 mod probe;
 mod tools;

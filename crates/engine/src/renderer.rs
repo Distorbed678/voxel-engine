@@ -584,6 +584,7 @@ impl Renderer {
         shadows: bool,
         clouds: CloudSettings,
         overdraw: bool,
+        particles: Option<(vk::Pipeline, crate::particles::ParticlePush)>,
     ) {
         let d = &ctx.device;
         let frame_addr = self.per_slot[slot].frame_buf.address;
@@ -799,6 +800,12 @@ impl Renderer {
                     density: clouds.density,
                 }));
                 d.cmd_draw(cb, 3, 1, 0, 0);
+            }
+            if let Some((pipe, pp)) = &particles {
+                // ambient particles and weather (after clouds: they are always close to the camera)
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, *pipe);
+                push(bytemuck::bytes_of(pp));
+                d.cmd_draw(cb, 6, crate::particles::MAX_PARTICLES, 0, 0);
             }
             d.cmd_end_rendering(cb);
         }

@@ -14,10 +14,11 @@
 //! | `move X Y Z YAW PITCH FRAMES` | glide the camera there (smoothstep) |
 //! | `waypoint X Y Z YAW PITCH` ... `fly_path FRAMES` | fly a smooth spline from the camera through the waypoints |
 //! | `find_biome NAME [HEIGHT]` | survey the generator, go to the nearest large patch of a biome, HEIGHT blocks above its highest block |
+//! | `weather W` | fixed weather intensity 0..1 (turns automatic weather off) |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
-//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `block_light on\|off` | render toggles |
+//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `block_light on\|off` | render toggles |
 //! | `wait N` / `settle [MAX]` | wait N frames / until streaming, meshing and shader builds are idle |
 //! | `screenshot PATH` / `record DIR\|off` | save this frame / save every frame as `DIR/frame_NNNNN.png` |
 //! | `cursor X Y` | move the mouse to a pixel (picking follows it; waits for the pick) |
@@ -90,6 +91,8 @@ enum Cmd {
     Taa(bool),
     Bloom(bool),
     Grading(bool),
+    Particles(bool),
+    Weather(f32),
     BlockLight(bool),
     Wait(u32),
     Settle(u32),
@@ -282,6 +285,8 @@ fn parse(line: &str) -> Result<Cmd> {
         "taa" => Cmd::Taa(on_off(a.first())?),
         "bloom" => Cmd::Bloom(on_off(a.first())?),
         "grading" => Cmd::Grading(on_off(a.first())?),
+        "particles" => Cmd::Particles(on_off(a.first())?),
+        "weather" => Cmd::Weather(num(a.first(), "intensity")?),
         "block_light" => Cmd::BlockLight(on_off(a.first())?),
         "wait" => Cmd::Wait(num(a.first(), "frames")?),
         "settle" => Cmd::Settle(a.first().map(|f| f.parse()).transpose()?.unwrap_or(3000)),
@@ -698,6 +703,8 @@ impl Engine {
                     // how many frames streaming took
                     self.taa_frame = 0;
                     self.taa.reset = true;
+                    self.particles.reset();
+                    self.env_snap = true;
                     None
                 } else if left == 0 {
                     s.fail(line, "settle timed out (world still streaming)");
@@ -883,6 +890,12 @@ impl Engine {
             Cmd::Taa(on) => self.ui.taa = on,
             Cmd::Bloom(on) => self.ui.bloom = on,
             Cmd::Grading(on) => self.ui.grading = on,
+            Cmd::Particles(on) => self.ui.particles = on,
+            Cmd::Weather(w) => {
+                self.ui.weather_auto = false;
+                self.ui.weather = w.clamp(0.0, 1.0);
+                self.atmosphere.weather = self.ui.weather;
+            }
             Cmd::BlockLight(on) => self.ui.block_light = on,
             Cmd::Wait(n) => return Ok((n > 0).then_some(Busy::Frames(n))),
             Cmd::Settle(max) => return Ok(Some(Busy::Settle { left: max, quiet: 0 })),
