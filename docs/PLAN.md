@@ -178,6 +178,12 @@ These follow from the choices above.
 - [x] **Far-field block light**: a coarse 4-blocks-per-cell volume (block light only) over the
   LOD0 box, filled by LOD0 jobs as a side effect, sampled beyond the fine volume. Distant lava
   lights its banks.
+- [x] **Generation consistency**: a cell comes out the same whichever chunk generates it
+  (`check_apron` over 720 chunks in every biome). Depth, open sky and flooding use fixed windows
+  (with upward probes where the look-ahead is too short), the cell below the slot is evaluated
+  for the bottom apron, props anchor on every open surface and draw in a fixed order. Also
+  fixed: overlapping chunk-record writes in one copy (a validation error, and a chunk could
+  vanish), and rain flashing for a frame in caves. Generation cost: terrain +3%, props −33%.
 - [x] **Block rotation states and lower water**: logs and other column blocks lie along X, Y or Z
   (end texture and bark grain follow the axis), stairs have a fixed facing. Placing orients them
   (face axis / away from the camera); clipboard rotation and rotated prefab props turn them;
@@ -197,6 +203,8 @@ Covered by the GPU script tests (`cargo test --release -p voxel-engine -- --igno
   a rotated clipboard
 - [x] Block states: logs take the axis of the face they're placed on, stairs face away from the
   camera
+- [x] Generation consistency: apron cells match the neighbouring chunks (cave ceilings and
+  plants, flooding, desert layering, spikes, overlapping trees)
 - [x] UI capture: panels own the mouse after an RMB look-drag (the input fix)
 - [x] Rendering: eleven golden images (daylight, badlands, night, lava, biome view, normals,
   a lamp-lit room before/after removing the lamp, cave, rivers, weather)
@@ -217,8 +225,10 @@ Still needs a hand test (real input devices or complex UI flows):
 - [x] ~~Dark rectangle / grid lines on the glacier lake~~: fixed by sorting transparent draws.
 - [x] ~~Desert oasis water looks lavender~~: not water; dry sinkholes where ravines and caves reach
   the surface (they now get cave biome floors).
-- [ ] Apron cells on the Y faces of a chunk miss decorations and props owned by the chunk below
-  (found with `check_apron`); harmless for meshing today.
+- [x] ~~Apron cells on the Y faces of a chunk miss decorations and props owned by the chunk
+  below~~: fixed (generation consistency, below). It wasn't harmless: caves below sea level got
+  water without a surface, caves under deserts sandstone stripes at chunk boundaries, and
+  spikes and overlapping trees could be cut at chunk borders.
 
 ### Not done yet (owner's choices that are still open)
 
@@ -238,6 +248,19 @@ Still needs a hand test (real input devices or complex UI flows):
   ash, embers, fireflies (night), pollen (day), from Biome Output settings × weather intensity
   (auto cycle or slider; also thickens clouds and fog). Killed inside blocks / under roofs via the
   light volume. Weather golden image.
+
+### Approved additions (owner, 2026-11-12)
+
+- [ ] **Isolated zone / biome preview**: show one zone or one biome on its own across the whole
+  world, to tune it without searching for it.
+- [ ] **Faster shadow pass** (now the most expensive pass): cache the far cascades and redraw
+  them only when the sun or the chunks change; occlusion-cull shadow casters.
+- [x] **Apron Y-face props**: the known issue above. Fixed together with everything else that
+  made neighbouring chunks disagree (see "Generation consistency" in ARCHITECTURE.md).
+- [ ] **Flowing water** for edits: water spreads into dug-out space, with lower levels as it
+  spreads (water levels in the block state).
+- [ ] **World save files**: the edit overlay, camera and seed in one file, from the UI and the
+  command line.
 
 ## 5. Work order
 
@@ -263,5 +286,13 @@ suggestions; the rest is the earlier roadmap.
 12. ~~Hytale-style noise/height biome selectors~~.
 13. ~~Block rotation states (stairs, logs) and partial-height water~~.
 
-Still not selected (ask before doing): node preview thumbnails, isolated biome preview,
-camera bookmarks / cinematic paths.
+Approved on 2026-11-12, in this order (small fixes first, the largest last):
+
+14. ~~Apron Y-face props~~.
+15. World save files.
+16. Faster shadow pass.
+17. Isolated zone / biome preview.
+18. Flowing water.
+
+Still not selected (ask before doing): node preview thumbnails, camera bookmarks / cinematic
+paths.

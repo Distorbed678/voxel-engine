@@ -221,7 +221,8 @@ impl WorldGpu {
             results: Buffer::gpu(ctx, "job_results", RESULTS_BYTES)?,
             batch_stats: Buffer::gpu(ctx, "batch_stats", 64)?,
             record_staging: (0..frames_in_flight)
-                .map(|i| Buffer::upload(ctx, &format!("record_staging_{i}"), 1 << 20))
+                // room for every record: after deduplication a frame writes each at most once
+                .map(|i| Buffer::upload(ctx, &format!("record_staging_{i}"), max_records as u64 * std::mem::size_of::<GpuChunkRecord>() as u64))
                 .collect::<Result<_>>()?,
             slots,
             quad_capacity,
@@ -314,11 +315,21 @@ impl WorldGpu {
             let rec_size = std::mem::size_of::<GpuChunkRecord>() as u64;
             let staging = &mut self.record_staging[frame_slot];
             let max = (staging.size / rec_size) as usize;
-            let updates = &updates[..updates.len().min(max)];
-            let mut regions = Vec::with_capacity(updates.len());
+            // A record can change twice in a frame (freed, then reused right away). Only the last
+            // write counts, and one copy must not write the same bytes twice (the order of
+            // overlapping regions is undefined).
+            let mut last = std::collections::HashMap::with_capacity(updates.len());
+            for (i, (idx, _)) in updates.iter().enumerate() {
+                last.insert(*idx, i);
+            }
+            let mut regions = Vec::with_capacity(last.len().min(max));
             for (i, (idx, rec)) in updates.iter().enumerate() {
-                staging.write(i as u64 * rec_size, std::slice::from_ref(rec));
-                regions.push(vk::BufferCopy { src_offset: i as u64 * rec_size, dst_offset: *idx as u64 * rec_size, size: rec_size });
+                if last[idx] != i || regions.len() == max {
+                    continue;
+                }
+                let at = regions.len() as u64 * rec_size;
+                staging.write(at, std::slice::from_ref(rec));
+                regions.push(vk::BufferCopy { src_offset: at, dst_offset: *idx as u64 * rec_size, size: rec_size });
             }
             unsafe { d.cmd_copy_buffer(cb, staging.raw, self.records.raw, &regions) };
             any = true;

@@ -49,15 +49,17 @@ void main() {
         if (q.kind != PK_NONE && w[q.kind - 1u] < 1e-3) q.life = min(q.life, 0.5) - pc.dt;
         q.pos = mod(q.pos + q.vel * pc.dt, PBOX);
         q.life -= pc.dt;
-        if (q.kind != PK_NONE && pc.lightBlocks != 0xFFFFFFFFu) {
-            // the light volume (128³ around the camera) contains the whole particle box
-            ivec3 w = f.camBlock.xyz + ivec3(floor(box_rel(f, q.pos) + f.camFrac.xyz));
-            uint raw = imageLoad(gLightBlocks[pc.lightBlocks], w & LIGHT_MASK).r;
-            uint id = raw & ID_MASK;
-            bool solid = id != 0u && (pc.blocks.b[id].light >> 28 & 1u) != 0u;
-            bool covered = (raw >> SKY_SHIFT) < 15u;
-            if (solid || ((q.kind == PK_SNOW || q.kind == PK_RAIN) && covered)) q.life = 0.0;
-        }
+    }
+    // checked for new particles too, which are drawn this frame: otherwise rain respawning in a
+    // cave flashes for a frame wherever it lands
+    if (q.kind != PK_NONE && q.life > 0.0 && pc.lightBlocks != 0xFFFFFFFFu) {
+        // the light volume (128³ around the camera) contains the whole particle box
+        ivec3 w = f.camBlock.xyz + ivec3(floor(box_rel(f, q.pos) + f.camFrac.xyz));
+        uint raw = imageLoad(gLightBlocks[pc.lightBlocks], w & LIGHT_MASK).r;
+        uint id = raw & ID_MASK;
+        bool solid = id != 0u && (pc.blocks.b[id].light >> 28 & 1u) != 0u;
+        bool covered = (raw >> SKY_SHIFT) < 15u;
+        if (solid || ((q.kind == PK_SNOW || q.kind == PK_RAIN) && covered)) q.life = 0.0;
     }
     pc.particles.p[i] = q;
 }

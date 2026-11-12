@@ -8,10 +8,11 @@
 //   uint  wg_cave_biome(vec3 p, in WgColumn c);                    (NO_CAVE_BIOME if the zone has none)
 //   uint  wg_cave_material(uint b, vec3 p, float depth, float airAbove);
 //   uint  wg_cave_decorate(uint b, vec3 p, uint ground);
+//   float wg_depth_max(in WgColumn c);                            (deepest depth threshold used)
 //
 // One invocation = one (x, z) column of 34 cells (chunk + apron), generated top-down so we know
 // how deep below the surface each solid cell is (material layering) and whether the cell can
-// see the sky (oceans vs. dry caves). Cells removed by the zone's cave carver are cave air: the
+// see the sky (oceans vs. dry caves; see the windows below). Cells removed by the zone's cave carver are cave air: the
 // solid cell below one is a cave floor, the solid cell above one a cave ceiling, and both take
 // the zone's cave biome material (floors also get its ground cover).
 
@@ -43,21 +44,64 @@ void main() {
         pc.columns.c[jobIdx * uint(CA * CA) + uint(lc.y * CA + lc.x)] = uint16_t(wg_main_biome(col));
 
         uint base = jobIdx * SLOT_U16;
+        // A cell must come out the same whichever chunk generates it (chunks also generate their
+        // neighbours' apron cells), so what a cell sees above it is measured over fixed windows:
+        //   depth     the run of solid cells directly above, capped at the deepest material
+        //             threshold of the column's biomes (wg_depth_max), so layering stays exact;
+        //   skyOpen   no solid cell up to WG_LOOKAHEAD cells above the cell, or above sea level
+        //             for a cell below it (flooded caves, ocean floors);
+        //   airAbove  air directly above (materials only test > 0).
+        // The look-ahead (ly >= CA) covers these windows for cells above sea level. When they
+        // reach further, the loop probes upwards after the top look-ahead cell: below a solid one
+        // to measure deep layering, below an air one (under sea level) to look for a roof. ly = -1
+        // is the cell below the slot, evaluated only for what it does to the bottom apron cell
+        // (cave ceiling material, ground cover on it).
+        // Single loop: one wg_density call site keeps the generated shader small.
+        int top = CA - 1 + WG_LOOKAHEAD;
+        float fs = float(scale);
+        float cellY0 = float(job.origin.y - scale + half_) + 0.5;  // centre of cell ly = 0
+        float skyReach = float(WG_LOOKAHEAD) * fs;
+        float seaReach = gSeaLevel + skyReach;
+        int needCells = min(int(ceil(wg_depth_max(col) / fs)), WG_LOOKAHEAD + 32);
+        float depthCap = float(needCells) * fs;
+        bool depthWanted = needCells > WG_LOOKAHEAD;
+        bool skyWanted = cellY0 - fs < gSeaLevel && cellY0 + float(top) * fs < seaReach;
+        bool depthOn = false;
+        bool skyOn = false;
+        int probe = 0;
         float depth = 0.0;
         float airAbove = 0.0;
-        bool skyOpen = true;
+        float solidY = 1e30;  // centre of the lowest solid cell seen so far
         uint prevBlock = 0u;
         int prevLy = -1;
         bool prevCarved = false;
         bool prevSolid = false;
-        // single loop (one wg_density call site keeps the generated shader small):
-        // ly >= CA is look-ahead above the chunk (only tracks depth / sky visibility)
-        for (int ly = CA - 1 + WG_LOOKAHEAD; ly >= 0; --ly) {
-            vec3 p = vec3(xz.x, float(job.origin.y + (ly - 1) * scale + half_) + 0.5, xz.y);
+        for (int ly = top; ly >= -1;) {
+            vec3 p = vec3(xz.x, cellY0 + float(probe > 0 ? probe : ly) * fs, xz.y);
             bool carved;
             float d = wg_density_c(p, col, carved);
             bool solid = d > 0.0;
+            if (probe > 0) {
+                int k = probe - top;
+                if (depthOn) {
+                    if (solid) depth = min(depth + fs, depthCap);
+                    depthOn = solid && k < needCells - WG_LOOKAHEAD;
+                }
+                if (skyOn) {
+                    if (solid || k >= 512) solidY = p.y;
+                    skyOn = !solid && k < 512 && p.y + fs <= seaReach;
+                }
+                if (depthOn || skyOn) {
+                    ++probe;
+                } else {
+                    probe = 0;
+                    --ly;
+                }
+                continue;
+            }
             if (ly < CA) {
+                bool below = ly < 0;
+                bool skyOpen = solidY > max(p.y, gSeaLevel) + skyReach;
                 uint b = solid ? wg_material(p, depth, airAbove, skyOpen, col) : wg_fluid(p, skyOpen, col);
                 bool decorated = false;
                 if (solid && prevCarved) {
@@ -90,16 +134,27 @@ void main() {
                         nonAir += 1u;
                     }
                 }
-                pc.voxels.v[base + uint(ly * CA * CA + lc.y * CA + lc.x)] = uint16_t(b);
-                if (b != 0u) nonAir += 1u;
-                if (solid && b != 0u) opaque += 1u;
+                if (!below) {
+                    pc.voxels.v[base + uint(ly * CA * CA + lc.y * CA + lc.x)] = uint16_t(b);
+                    if (b != 0u) nonAir += 1u;
+                    if (solid && b != 0u) opaque += 1u;
+                }
                 prevBlock = b;
                 prevLy = ly;
             }
             prevCarved = carved && !solid;
             prevSolid = solid;
-            if (solid) { depth += float(scale); airAbove = 0.0; skyOpen = false; }
-            else { depth = 0.0; airAbove += float(scale); }
+            if (solid) { depth = min(depth + fs, depthCap); airAbove = 0.0; solidY = p.y; }
+            else { depth = 0.0; airAbove += fs; }
+            if (ly == top) {
+                depthOn = solid && depthWanted;
+                skyOn = !solid && skyWanted;
+                if (depthOn || skyOn) {
+                    probe = top + 1;
+                    continue;
+                }
+            }
+            --ly;
         }
     }
 

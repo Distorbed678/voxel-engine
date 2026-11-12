@@ -64,3 +64,9 @@ fn selection() {
 fn render() {
     run("render");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn apron() {
+    run("apron");
+}

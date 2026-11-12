@@ -103,6 +103,12 @@ struct Shared<'a> {
     warnings: Vec<String>,
     biome_ids: HashMap<String, u32>,
     zone_ids: HashMap<String, u32>,
+    /// depth thresholds used by material nodes (GLSL expressions), per biome (None: cave
+    /// materials, used anywhere): the terrain pass needs to know how deep below the surface it
+    /// must look to decide every material consistently
+    depth_terms: Vec<(Option<u32>, String)>,
+    /// the biome whose surface materials are being compiled
+    depth_biome: Option<u32>,
 }
 
 struct Em<'s, 'a> {
@@ -595,6 +601,7 @@ impl<'s, 'a> Em<'s, 'a> {
                 let uw = self.block(&n, "underwater");
                 let cf = self.block(&n, "cave_floor");
                 let (td, ud, beach) = (self.p(&n, "top_depth"), self.p(&n, "under_depth"), self.p(&n, "beach_height"));
+                self.sh.depth_terms.push((self.sh.depth_biome, format!("{td} + {ud}")));
                 format!(
                     "(!skyOpen ? ((airAbove > 0.0 && depth < 1.0) ? {cf} : {base}) : (depth < {td} ? (p.y < gSeaLevel + {beach} ? {uw} : {top}) : (depth < {td} + {ud} ? (p.y < gSeaLevel + {beach} ? {uw} : {under}) : {base})))"
                 )
@@ -613,6 +620,7 @@ impl<'s, 'a> Em<'s, 'a> {
                 let a = mat_in(self, 0, "B_DIRT");
                 let b = mat_in(self, 1, "B_STONE");
                 let d = self.p(&n, "depth");
+                self.sh.depth_terms.push((self.sh.depth_biome, d.clone()));
                 format!("(depth < {d} ? {a} : {b})")
             }
             "noise_select" => {
@@ -642,6 +650,7 @@ impl<'s, 'a> Em<'s, 'a> {
                 let bands: Vec<String> = (1..=6).map(|i| self.block(&n, &format!("band{i}"))).collect();
                 let rep = self.block(&n, "replace");
                 let (bh, wob, md) = (self.p(&n, "band_height"), self.p(&n, "wobble"), self.p(&n, "min_depth"));
+                self.sh.depth_terms.push((self.sh.depth_biome, md.clone()));
                 let b = self.var("uint", base, false);
                 format!(
                     "(({0} == {rep} && depth >= {md}) ? strata_pick(p, {bh}, {wob}, gSeed + {1}u, {2}, {3}, {4}, {5}, {6}, {7}) : {0})",
@@ -736,6 +745,8 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         warnings: Vec::new(),
         biome_ids: HashMap::new(),
         zone_ids: HashMap::new(),
+        depth_terms: Vec::new(),
+        depth_biome: None,
     };
     let biome_names = project.names(GraphKind::Biome);
     let zone_names = project.names(GraphKind::Zone);
@@ -818,6 +829,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             precipitation: 0,
             particle_density: outn.params.get("particle_density").map(|v| v.as_f32()).unwrap_or(1.0),
         });
+        sh.depth_biome = Some(bi as u32);
         let mut em = Em::new(&mut sh, g, pfx.clone(), false);
         fluids.push(em.enum_idx(&outn, "fluid"));
         if let Some(info) = biome_infos.last_mut() {
@@ -1017,6 +1029,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         for m in masks {
             let _ = writeln!(biome_code, "{}", m.replace("{EXPORTS}", &exports));
         }
+        sh.depth_biome = None;
         if cave_biome_ids.contains(&(bi as u32)) {
             let mut cem = Em::new(&mut sh, g, format!("b{bi}c_"), true);
             let cmat = g.input_link(outn.id, 1).copied().map(|l| cem.material(l.from_node)).unwrap_or_else(|| "B_STONE".into());
@@ -1410,6 +1423,16 @@ uint wg_pick(vec3 p, in WgColumn c) {{
 }}
 uint wg_main_biome(in WgColumn c) {{ return c.biome[0]; }}"#
     );
+    // the deepest material threshold in a column (2.5: the river bed; cave materials count
+    // everywhere), read live so slider edits stay exact
+    sh.depth_terms.sort();
+    sh.depth_terms.dedup();
+    let max_of = |b: Option<u32>, init: &str| {
+        sh.depth_terms.iter().filter(|(k, _)| *k == b).fold(init.to_string(), |m, (_, t)| format!("max({m}, {t})"))
+    };
+    let _ = writeln!(s, "float wg_depth_max(in WgColumn c) {{\n    float m = {};\n    for (uint k = 0u; k < c.nb; ++k) {{", max_of(None, "2.5"));
+    s.push_str(&format!("    {}", sw("c.biome[k]", &|i| format!("m = {}; break;", max_of(Some(i as u32), "m")), nb, "break;").replace("\n    ", "\n        ").trim_start()));
+    let _ = writeln!(s, "    }}\n    return m;\n}}");
     let _ = writeln!(
         s,
         "uint wg_material(vec3 p, float depth, float airAbove, bool skyOpen, in WgColumn c) {{\n    if (c.river > 0.4 && skyOpen && depth < 2.5 && p.y < gSeaLevel + 1.0) return gRiverBed;\n    uint k = wg_pick(p, c);"

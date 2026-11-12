@@ -39,7 +39,7 @@
 //! | `expect_selected NAME` | the block selected for placing (e.g. after a middle-click pick) |
 //! | `expect_clipboard SX SY SZ` / `expect_selection X1 Y1 Z1 X2 Y2 Z2` | tool state |
 //! | `expect_image GOLDEN [TOL]` | compare this frame against a reference PNG (created if missing, `UPDATE_GOLDEN=1` rewrites) |
-//! | `check_apron CX CY CZ` | (debugging) compare a LOD0 chunk's generated apron cells with its neighbours' blocks |
+//! | `check_apron CX CY CZ` / `check_apron ~DX ~DY ~DZ` | (debugging) compare a LOD0 chunk's generated apron cells with its neighbours' blocks |
 //! | `log TEXT` | print a line |
 
 use std::path::{Path, PathBuf};
@@ -123,7 +123,8 @@ enum Cmd {
     ExpectClipboard(IVec3),
     ExpectSelection(IVec3, IVec3),
     ExpectImage { golden: PathBuf, tol: f32 },
-    CheckApron(IVec3),
+    /// chunk, relative to the camera's chunk (`~` coordinates)
+    CheckApron(IVec3, bool),
     Log(String),
 }
 
@@ -382,7 +383,11 @@ fn parse(line: &str) -> Result<Cmd> {
             golden: a.first().context("missing golden path")?.into(),
             tol: a.get(1).map(|t| t.parse()).transpose()?.unwrap_or(1.5),
         },
-        "check_apron" => Cmd::CheckApron(ivec(a, "chunk")?),
+        "check_apron" => {
+            let rel = a.iter().take(3).all(|t| t.starts_with('~'));
+            let t: Vec<&str> = a.iter().map(|t| t.trim_start_matches('~')).map(|t| if t.is_empty() { "0" } else { t }).collect();
+            Cmd::CheckApron(ivec(&t, "chunk")?, rel)
+        }
         "log" => Cmd::Log(a.join(" ")),
         other => bail!("unknown command `{other}`"),
     })
@@ -534,6 +539,8 @@ impl Engine {
                     let origin = chunk * crate::world::CHUNK;
                     let ca = crate::world::CA;
                     let mut bad = 0;
+                    // (face, slot block, world block) -> count
+                    let mut kinds: std::collections::BTreeMap<(&str, u16, u16), u32> = Default::default();
                     for y in 0..ca {
                         for z in 0..ca {
                             for x in 0..ca {
@@ -545,14 +552,23 @@ impl Engine {
                                 let got = raw[((y * ca + z) * ca + x) as usize];
                                 let want = r.get(origin + l);
                                 if got != want {
-                                    if bad < 8 {
-                                        let name = |b: u16| self.blocks.get(b).name;
-                                        log::warn!("script: apron {} has {} but the world has {}", origin + l, name(got), name(want));
+                                    let face = match () {
+                                        _ if l.y < 0 => "-Y",
+                                        _ if l.y >= crate::world::CHUNK => "+Y",
+                                        _ if l.x < 0 || l.x >= crate::world::CHUNK => "X",
+                                        _ => "Z",
+                                    };
+                                    if bad < 4 {
+                                        log::warn!("script: apron {} has {} but the world has {}", origin + l, self.blocks.value_name(got), self.blocks.value_name(want));
                                     }
+                                    *kinds.entry((face, got, want)).or_default() += 1;
                                     bad += 1;
                                 }
                             }
                         }
+                    }
+                    for ((face, got, want), n) in &kinds {
+                        log::warn!("script:   {face} face: {} -> {} x{n}", self.blocks.value_name(*got), self.blocks.value_name(*want));
                     }
                     if bad > 0 {
                         s.fail(line, format!("{bad} apron cells of chunk {chunk} differ from their neighbours"));
@@ -1076,7 +1092,8 @@ impl Engine {
                 self.screenshot_request = Some(shot.clone());
                 return Ok(Some(Busy::Image { shot, golden, tol, left: FIF as u32 + 2 }));
             }
-            Cmd::CheckApron(chunk) => {
+            Cmd::CheckApron(chunk, rel) => {
+                let chunk = if rel { chunk + self.camera.pos.floor().as_ivec3().div_euclid(IVec3::splat(crate::world::CHUNK)) } else { chunk };
                 let o = chunk * crate::world::CHUNK;
                 self.world.capture_raw.insert(chunk);
                 let id = self.world.request_region(o - IVec3::ONE, o + IVec3::splat(crate::world::CHUNK));

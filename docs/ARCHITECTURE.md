@@ -212,7 +212,31 @@ The compiler emits GLSL:
   distance, so channel width stays even.
 - **Props**: one workgroup per chunk. Candidate anchors on a jittered grid go through biome,
   chance, mask, surface-scan and surface-block tests, then all threads rasterise the shapes.
-  Props are deterministic per anchor, so they are seamless across chunks.
+  The surface scan takes every open surface the prop could reach the chunk from: a solid cell
+  under 8 cells of air that no carver removed, which rules out cave floors and spots under low
+  overhangs. It only covers heights the layer accepts (height limits, dry ground). Anchors are
+  sorted by layer and position and drawn one at a time, since overlapping props resolve by order.
+  So every chunk a prop touches draws the same blocks.
+
+### Generation consistency
+
+A chunk also generates its neighbours' apron cells, so a cell must come out the same whichever
+chunk generates it. The terrain pass scans each column top-down and measures what a cell sees
+above it over fixed windows, never "as far as this chunk happens to look":
+
+- **depth** (material layering): the run of solid cells above, capped at the deepest material
+  threshold of the column's biomes (`wg_depth_max`, from the live parameters).
+- **open sky** (ocean floors, flooding): no solid cell up to 8 cells above, or, for a cell below
+  sea level, up to 8 cells above sea level. A cave below sea level floods only if it opens
+  upwards past sea level.
+- The 8-cell look-ahead above the chunk covers these windows above sea level. Otherwise the
+  scan probes upwards from the top of the look-ahead: below a solid cell for deep layering
+  (only desert columns by default), below an air cell for a roof when sea level is far above.
+- It also evaluates the cell below the slot, for what that cell does to the bottom apron
+  (cave ceiling material, ground cover).
+
+The `check_apron` script command compares a chunk's apron with its neighbours' blocks;
+`tests/scripts/apron.vxs` covers places that once disagreed.
 
 ### Shader build tiers
 

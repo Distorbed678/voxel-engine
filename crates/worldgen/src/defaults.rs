@@ -752,6 +752,17 @@ mod tests {
         assert!(c.source.contains("river_mask("));
         assert!(c.source.contains("float th[2] = float[2]("), "arid zone uses humidity bands");
         assert!(c.prop_layers > 10);
+        // the terrain pass looks as deep as the column's biomes need: 12 blocks of sandstone
+        // under the desert, 1 + 3 blocks of grass and dirt in the meadow
+        let fun = &c.source[c.source.find("float wg_depth_max(").unwrap()..];
+        let fun = &fun[..fun.find("\n}").unwrap()];
+        let case = |b: &str| {
+            let id = c.biomes.iter().position(|i| i.name == b).unwrap();
+            let line = fun.lines().find(|l| l.trim_start().starts_with(&format!("case {id}u:"))).unwrap().to_string();
+            line.split("P(").skip(1).map(|t| c.params[t[..t.find('u').unwrap()].parse::<usize>().unwrap()]).collect::<Vec<f32>>()
+        };
+        assert!(case("desert").contains(&12.0), "{fun}");
+        assert_eq!(case("meadow"), [1.0, 3.0], "{fun}");
     }
 
     #[test]
