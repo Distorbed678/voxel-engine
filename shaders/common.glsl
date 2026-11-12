@@ -20,6 +20,10 @@ layout(set = 0, binding = 0) uniform sampler2DArray gTex2DArray[];
 layout(set = 0, binding = 0) uniform sampler2DArrayShadow gShadowArray[];
 layout(set = 0, binding = 0) uniform sampler3D gTex3D[];
 layout(set = 0, binding = 1) uniform image2D gImage2D[];
+layout(set = 0, binding = 1, r32ui) uniform uimage2D gUImage2D[];
+
+// overdraw debug view: count every fragment shaded at this pixel
+#define COUNT_OVERDRAW(f) if ((f).debugMode == DBG_OVERDRAW) imageAtomicAdd(gUImage2D[(f).overdrawImg], ivec2(gl_FragCoord.xy), 1u)
 
 // ---- per-frame constants ----------------------------------------------------------------
 struct FrameData {
@@ -49,7 +53,7 @@ struct FrameData {
     uint blockTexNormal;
     uint hdrTex;
     uint depthTex;
-    vec4 exposure;        // x = exposure, y = time of day [0,1), z = bloom strength (0 = off)
+    vec4 exposure;        // x = exposure, y = time of day [0,1), z = bloom strength (0 = off), w = contrast
     mat4 shadowVP[4];     // camera-relative -> cascade clip
     vec4 shadowPlanes[24];
     vec4 shadowSplits;    // far distance (view depth) of each cascade
@@ -61,9 +65,10 @@ struct FrameData {
     ivec4 lightOrigin;    // light volume min corner relative to camBlock, w = LIGHT_ENABLED
     ivec4 coarseOrigin;   // coarse light volume min corner relative to camBlock, w = LIGHT_ENABLED
     uint coarseTex;       // bindless sampled index of the coarse light volume
-    uint pad1;
+    uint overdrawImg;     // bindless storage index of the overdraw counters
     uint pad2;
     uint pad3;
+    vec4 grade;           // colour grading: rgb tint, a = saturation (contrast in exposure.w)
 };
 
 layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer FrameRef {

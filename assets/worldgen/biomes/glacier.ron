@@ -5,14 +5,17 @@
         (
             id: 1,
             kind: "biome_output",
-            pos: (600.0, 200.0),
+            pos: (990.0, 0.0),
             params: {
+                "contrast": F(1.05),
                 "fluid": E("Ice"),
                 "fog_color": Color((0.85, 0.9, 1.0)),
                 "fog_density": F(1.8),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
+                "grade_tint": Color((0.93, 0.98, 1.08)),
                 "grass_tint": Color((0.45, 0.75, 0.3)),
                 "map_color": Color((0.85, 0.92, 1.0)),
+                "saturation": F(0.85),
                 "water_tint": Color((0.3, 0.5, 0.8)),
             },
             comment: "",
@@ -20,7 +23,7 @@
         (
             id: 2,
             kind: "simplex2d",
-            pos: (0.0, 0.0),
+            pos: (330.0, 0.0),
             params: {
                 "amplitude": F(5.0),
                 "gain": F(0.5),
@@ -34,7 +37,7 @@
         (
             id: 3,
             kind: "height_terrain",
-            pos: (260.0, 0.0),
+            pos: (660.0, 0.0),
             params: {
                 "base": F(66.0),
                 "falloff": F(1.0),
@@ -45,7 +48,7 @@
         (
             id: 4,
             kind: "block",
-            pos: (0.0, 200.0),
+            pos: (0.0, 228.0),
             params: {
                 "block": Block("stone"),
             },
@@ -54,7 +57,7 @@
         (
             id: 5,
             kind: "block",
-            pos: (0.0, 280.0),
+            pos: (0.0, 341.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -63,7 +66,7 @@
         (
             id: 6,
             kind: "height_select",
-            pos: (200.0, 200.0),
+            pos: (330.0, 228.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -73,7 +76,7 @@
         (
             id: 7,
             kind: "simplex2d",
-            pos: (0.0, 360.0),
+            pos: (0.0, 454.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -87,7 +90,7 @@
         (
             id: 8,
             kind: "surface_layers",
-            pos: (300.0, 200.0),
+            pos: (660.0, 179.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -103,7 +106,7 @@
         (
             id: 9,
             kind: "spike",
-            pos: (0.0, 400.0),
+            pos: (330.0, 473.0),
             params: {
                 "block": Block("packed_ice"),
                 "height_max": F(30.0),
@@ -115,7 +118,7 @@
         (
             id: 10,
             kind: "scatter",
-            pos: (260.0, 400.0),
+            pos: (660.0, 473.0),
             params: {
                 "any_surface": B(true),
                 "chance": F(0.35),
@@ -131,7 +134,7 @@
         (
             id: 11,
             kind: "boulder",
-            pos: (0.0, 560.0),
+            pos: (330.0, 787.0),
             params: {
                 "block": Block("packed_ice"),
                 "block2": Block("ice"),
@@ -143,7 +146,7 @@
         (
             id: 12,
             kind: "scatter",
-            pos: (260.0, 560.0),
+            pos: (660.0, 787.0),
             params: {
                 "any_surface": B(true),
                 "chance": F(0.3),

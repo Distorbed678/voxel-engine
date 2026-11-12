@@ -5,14 +5,17 @@
         (
             id: 1,
             kind: "biome_output",
-            pos: (600.0, 200.0),
+            pos: (3300.0, 0.0),
             params: {
+                "contrast": F(1.03),
                 "fluid": E("Water"),
                 "fog_color": Color((0.8, 0.86, 0.95)),
                 "fog_density": F(1.0),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
+                "grade_tint": Color((0.95, 0.98, 1.06)),
                 "grass_tint": Color((0.5, 0.65, 0.5)),
                 "map_color": Color((0.95, 0.95, 0.98)),
+                "saturation": F(0.88),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -20,7 +23,7 @@
         (
             id: 2,
             kind: "ridged2d",
-            pos: (0.0, 0.0),
+            pos: (1980.0, 0.0),
             params: {
                 "amplitude": F(130.0),
                 "gain": F(0.5),
@@ -34,7 +37,7 @@
         (
             id: 3,
             kind: "simplex2d",
-            pos: (0.0, 150.0),
+            pos: (1980.0, 228.0),
             params: {
                 "amplitude": F(30.0),
                 "gain": F(0.5),
@@ -48,14 +51,14 @@
         (
             id: 4,
             kind: "add",
-            pos: (240.0, 60.0),
+            pos: (2310.0, 0.0),
             params: {},
             comment: "",
         ),
         (
             id: 5,
             kind: "height_terrain",
-            pos: (460.0, 60.0),
+            pos: (2640.0, 0.0),
             params: {
                 "base": F(96.0),
                 "falloff": F(1.0),
@@ -66,7 +69,7 @@
         (
             id: 6,
             kind: "simplex3d",
-            pos: (240.0, 220.0),
+            pos: (2310.0, 179.0),
             params: {
                 "amplitude": F(14.0),
                 "gain": F(0.5),
@@ -80,7 +83,7 @@
         (
             id: 7,
             kind: "simplex3d",
-            pos: (0.0, 320.0),
+            pos: (2310.0, 407.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -94,7 +97,7 @@
         (
             id: 8,
             kind: "simplex3d",
-            pos: (0.0, 420.0),
+            pos: (2310.0, 635.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -108,7 +111,7 @@
         (
             id: 9,
             kind: "warp",
-            pos: (460.0, 260.0),
+            pos: (2640.0, 179.0),
             params: {
                 "strength": F(10.0),
             },
@@ -117,14 +120,14 @@
         (
             id: 10,
             kind: "add",
-            pos: (680.0, 100.0),
+            pos: (2970.0, 0.0),
             params: {},
             comment: "",
         ),
         (
             id: 11,
             kind: "block",
-            pos: (0.0, 560.0),
+            pos: (0.0, 863.0),
             params: {
                 "block": Block("stone"),
             },
@@ -133,7 +136,7 @@
         (
             id: 12,
             kind: "block",
-            pos: (0.0, 640.0),
+            pos: (0.0, 976.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -142,7 +145,7 @@
         (
             id: 13,
             kind: "height_select",
-            pos: (200.0, 560.0),
+            pos: (330.0, 863.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -152,7 +155,7 @@
         (
             id: 14,
             kind: "simplex2d",
-            pos: (0.0, 720.0),
+            pos: (0.0, 1089.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -166,7 +169,7 @@
         (
             id: 15,
             kind: "ore",
-            pos: (260.0, 580.0),
+            pos: (660.0, 863.0),
             params: {
                 "ore": Block("coal_ore"),
                 "rarity": F(0.78),
@@ -181,7 +184,7 @@
         (
             id: 16,
             kind: "ore",
-            pos: (480.0, 580.0),
+            pos: (990.0, 863.0),
             params: {
                 "ore": Block("iron_ore"),
                 "rarity": F(0.82),
@@ -196,7 +199,7 @@
         (
             id: 17,
             kind: "ore",
-            pos: (700.0, 580.0),
+            pos: (1320.0, 863.0),
             params: {
                 "ore": Block("copper_ore"),
                 "rarity": F(0.84),
@@ -211,7 +214,7 @@
         (
             id: 18,
             kind: "ore",
-            pos: (920.0, 580.0),
+            pos: (1650.0, 863.0),
             params: {
                 "ore": Block("gold_ore"),
                 "rarity": F(0.86),
@@ -226,7 +229,7 @@
         (
             id: 19,
             kind: "surface_layers",
-            pos: (300.0, 700.0),
+            pos: (1980.0, 863.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -242,7 +245,7 @@
         (
             id: 20,
             kind: "block",
-            pos: (300.0, 800.0),
+            pos: (2310.0, 1059.0),
             params: {
                 "block": Block("snow"),
             },
@@ -251,7 +254,7 @@
         (
             id: 21,
             kind: "block",
-            pos: (300.0, 880.0),
+            pos: (1980.0, 1157.0),
             params: {
                 "block": Block("stone"),
             },
@@ -260,7 +263,7 @@
         (
             id: 22,
             kind: "height_select",
-            pos: (560.0, 700.0),
+            pos: (2310.0, 863.0),
             params: {
                 "height": F(125.0),
                 "noise_amount": F(12.0),
@@ -270,7 +273,7 @@
         (
             id: 23,
             kind: "simplex2d",
-            pos: (300.0, 960.0),
+            pos: (1980.0, 617.5),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -284,7 +287,7 @@
         (
             id: 24,
             kind: "height_select",
-            pos: (780.0, 760.0),
+            pos: (2640.0, 372.0),
             params: {
                 "height": F(175.0),
                 "noise_amount": F(16.0),
@@ -294,7 +297,7 @@
         (
             id: 25,
             kind: "depth_select",
-            pos: (980.0, 760.0),
+            pos: (2970.0, 130.0),
             params: {
                 "depth": F(2.0),
             },
@@ -303,7 +306,7 @@
         (
             id: 26,
             kind: "tree",
-            pos: (0.0, 1080.0),
+            pos: (2640.0, 568.0),
             params: {
                 "height_max": F(12.0),
                 "height_min": F(7.0),
@@ -317,7 +320,7 @@
         (
             id: 27,
             kind: "scatter",
-            pos: (260.0, 1080.0),
+            pos: (2970.0, 283.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.5),
@@ -333,7 +336,7 @@
         (
             id: 28,
             kind: "geode",
-            pos: (260.0, 1220.0),
+            pos: (2970.0, 597.0),
             params: {
                 "chance": F(0.5),
                 "inner": Block("crystal"),

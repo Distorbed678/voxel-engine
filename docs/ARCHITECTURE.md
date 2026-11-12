@@ -86,6 +86,12 @@ a ping-ponged RGBA16F history:
 - The tonemap pass reads the resolved image and applies a light 4-neighbour sharpen, clamped to
   the neighbourhood so it doesn't ring.
 
+## Colour grading
+
+Each biome output has a grading tint, saturation and contrast. Like fog, they blend toward the
+biome the camera stands in (from the GPU probes). The tonemap pass applies them in linear HDR
+before ACES: tint, then saturation around luminance, then contrast around mid-grey (0.18).
+
 ## Bloom
 
 A half-resolution RGBA16F mip chain with up to six levels (`crates/engine/src/bloom.rs`). The

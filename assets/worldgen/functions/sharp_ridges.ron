@@ -5,7 +5,7 @@
         (
             id: 1,
             kind: "function_output",
-            pos: (600.0, 200.0),
+            pos: (660.0, 0.0),
             params: {},
             comment: "",
         ),
@@ -26,7 +26,7 @@
         (
             id: 3,
             kind: "function_input",
-            pos: (0.0, 150.0),
+            pos: (0.0, 228.0),
             params: {
                 "index": I(0),
             },
@@ -35,7 +35,7 @@
         (
             id: 4,
             kind: "multiply",
-            pos: (240.0, 60.0),
+            pos: (330.0, 0.0),
             params: {},
             comment: "",
         ),

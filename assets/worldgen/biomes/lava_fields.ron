@@ -5,14 +5,17 @@
         (
             id: 1,
             kind: "biome_output",
-            pos: (600.0, 200.0),
+            pos: (1320.0, 0.0),
             params: {
+                "contrast": F(1.12),
                 "fluid": E("Lava"),
                 "fog_color": Color((0.55, 0.3, 0.2)),
                 "fog_density": F(3.5),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
+                "grade_tint": Color((1.1, 0.95, 0.85)),
                 "grass_tint": Color((0.45, 0.75, 0.3)),
                 "map_color": Color((0.75, 0.25, 0.1)),
+                "saturation": F(1.1),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -20,7 +23,7 @@
         (
             id: 2,
             kind: "simplex2d",
-            pos: (0.0, 0.0),
+            pos: (330.0, 0.0),
             params: {
                 "amplitude": F(11.0),
                 "gain": F(0.5),
@@ -34,7 +37,7 @@
         (
             id: 3,
             kind: "worley2d",
-            pos: (0.0, 150.0),
+            pos: (0.0, 228.0),
             params: {
                 "amplitude": F(1.0),
                 "jitter": F(1.0),
@@ -48,7 +51,7 @@
         (
             id: 4,
             kind: "curve",
-            pos: (220.0, 150.0),
+            pos: (330.0, 228.0),
             params: {
                 "curve": Curve([(0.0, 60.0), (0.12, 40.0), (0.3, 6.0), (1.0, 0.0)]),
             },
@@ -57,14 +60,14 @@
         (
             id: 5,
             kind: "add",
-            pos: (440.0, 60.0),
+            pos: (660.0, 0.0),
             params: {},
             comment: "",
         ),
         (
             id: 6,
             kind: "height_terrain",
-            pos: (640.0, 60.0),
+            pos: (990.0, 0.0),
             params: {
                 "base": F(58.0),
                 "falloff": F(1.0),
@@ -75,7 +78,7 @@
         (
             id: 7,
             kind: "block",
-            pos: (0.0, 300.0),
+            pos: (330.0, 466.0),
             params: {
                 "block": Block("basalt"),
             },
@@ -84,7 +87,7 @@
         (
             id: 8,
             kind: "block",
-            pos: (0.0, 380.0),
+            pos: (1320.0, 480.0),
             params: {
                 "block": Block("obsidian"),
             },
@@ -93,7 +96,7 @@
         (
             id: 9,
             kind: "surface_layers",
-            pos: (300.0, 300.0),
+            pos: (660.0, 179.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -109,7 +112,7 @@
         (
             id: 10,
             kind: "block",
-            pos: (300.0, 440.0),
+            pos: (660.0, 473.0),
             params: {
                 "block": Block("magma"),
             },
@@ -118,7 +121,7 @@
         (
             id: 11,
             kind: "simplex3d",
-            pos: (300.0, 520.0),
+            pos: (660.0, 586.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -132,7 +135,7 @@
         (
             id: 12,
             kind: "noise_select",
-            pos: (560.0, 380.0),
+            pos: (990.0, 179.0),
             params: {
                 "threshold": F(0.4),
             },
@@ -141,7 +144,7 @@
         (
             id: 13,
             kind: "spike",
-            pos: (0.0, 640.0),
+            pos: (660.0, 814.0),
             params: {
                 "block": Block("obsidian"),
                 "height_max": F(12.0),
@@ -153,7 +156,7 @@
         (
             id: 14,
             kind: "scatter",
-            pos: (260.0, 640.0),
+            pos: (990.0, 352.0),
             params: {
                 "any_surface": B(true),
                 "chance": F(0.3),

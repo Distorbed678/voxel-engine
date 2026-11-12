@@ -16,6 +16,10 @@ pub struct Atmosphere {
     /// biome-driven fog tint (blended in by the environment system)
     pub fog_tint: Vec3,
     pub fog_tint_strength: f32,
+    /// Colour grading (blended towards the camera's biome): tint, saturation, contrast.
+    pub grade_tint: Vec3,
+    pub saturation: f32,
+    pub contrast: f32,
 }
 
 impl Default for Atmosphere {
@@ -31,6 +35,9 @@ impl Default for Atmosphere {
             sea_level: 62.0,
             fog_tint: Vec3::new(0.75, 0.82, 0.95),
             fog_tint_strength: 0.0,
+            grade_tint: Vec3::ONE,
+            saturation: 1.0,
+            contrast: 1.0,
         }
     }
 }

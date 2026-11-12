@@ -135,6 +135,12 @@ const FUNC: &[GraphKind] = &[GraphKind::Function];
 const SPECIES: &[&str] = &["Round", "Birch", "Spruce", "Palm", "Acacia", "Dead", "Bush", "Willow"];
 
 pub static NODES: &[NodeDef] = &[
+    // ---------------------------------------------------------------- editor
+    NodeDef { kind: "comment", title: "Comment", category: "Editor",
+        help: "A resizable box with a note. Drag it to move the nodes inside; the generator ignores it.",
+        inputs: &[], outputs: &[],
+        params: &[f("width", 420.0, 60.0, 8000.0), f("height", 260.0, 40.0, 8000.0)],
+        allowed: ALL },
     // ---------------------------------------------------------------- outputs
     NodeDef { kind: "world_output", title: "World Output", category: "Output", help: "Root of the generator: lays out zones across the infinite world.",
         inputs: &[("Zones", Zone), ("Rivers", Density)], outputs: &[],
@@ -158,6 +164,9 @@ pub static NODES: &[NodeDef] = &[
             col("water_tint", [0.15, 0.35, 0.65]),
             col("fog_color", [0.7, 0.8, 0.95]),
             f("fog_density", 1.0, 0.0, 10.0),
+            col("grade_tint", [1.0, 1.0, 1.0]),
+            f("saturation", 1.0, 0.0, 2.0),
+            f("contrast", 1.0, 0.5, 2.0),
             col("map_color", [0.3, 0.6, 0.25]),
         ],
         allowed: BIOME },

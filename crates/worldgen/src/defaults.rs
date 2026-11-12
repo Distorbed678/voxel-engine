@@ -586,7 +586,7 @@ fn ridge_function() -> Graph {
 }
 
 pub fn default_project() -> Project {
-    Project {
+    let mut p = Project {
         graphs: vec![
             world(),
             zone(
@@ -618,7 +618,44 @@ pub fn default_project() -> Project {
             frost_caves(),
             ridge_function(),
         ],
+    };
+    // colour grading while the camera is in a biome: tint, saturation, contrast
+    let grading: &[(&str, [f32; 3], f32, f32)] = &[
+        ("meadow", [1.0, 1.0, 0.97], 1.08, 1.0),
+        ("oak_forest", [0.98, 1.02, 0.96], 1.05, 1.0),
+        ("birch_hills", [1.0, 1.0, 0.98], 1.05, 1.0),
+        ("floating_isles", [0.97, 1.0, 1.04], 1.12, 1.02),
+        ("desert", [1.06, 1.0, 0.9], 1.05, 1.05),
+        ("badlands", [1.08, 0.98, 0.9], 1.1, 1.08),
+        ("savanna", [1.05, 1.02, 0.9], 1.0, 1.02),
+        ("taiga", [0.95, 1.0, 1.04], 0.92, 1.0),
+        ("glacier", [0.93, 0.98, 1.08], 0.85, 1.05),
+        ("snowy_peaks", [0.95, 0.98, 1.06], 0.88, 1.03),
+        ("ashlands", [1.05, 0.95, 0.9], 0.7, 1.1),
+        ("lava_fields", [1.1, 0.95, 0.85], 1.1, 1.12),
+    ];
+    for g in &mut p.graphs {
+        if let Some(&(_, tint, sat, contrast)) = grading.iter().find(|e| e.0 == g.name)
+            && let Some(o) = g.output_node().map(|n| n.id)
+        {
+            g.set(o, "grade_tint", Value::Color(tint));
+            g.set(o, "saturation", fv(sat));
+            g.set(o, "contrast", fv(contrast));
+        }
+        crate::layout::auto_layout(g);
+        if g.kind == GraphKind::World {
+            // a note around the river network (comment boxes ignore auto-layout)
+            if let Some(r) = g.nodes.iter().find(|n| n.kind == "river").map(|n| n.pos) {
+                let c = g.add("comment", [r[0] - 24.0, r[1] - 48.0]);
+                g.set(c, "width", fv(330.0));
+                g.set(c, "height", fv(crate::layout::node_size("river")[1] + 40.0));
+                if let Some(n) = g.node_mut(c) {
+                    n.comment = "Rivers: carved to sea level everywhere".into();
+                }
+            }
+        }
     }
+    p
 }
 
 #[cfg(test)]

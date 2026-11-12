@@ -5,7 +5,7 @@
         (
             id: 1,
             kind: "zone_output",
-            pos: (600.0, 200.0),
+            pos: (1320.0, 0.0),
             params: {
                 "map_color": Color((0.9, 0.75, 0.4)),
             },
@@ -14,7 +14,7 @@
         (
             id: 2,
             kind: "biome_voronoi",
-            pos: (300.0, 0.0),
+            pos: (990.0, 0.0),
             params: {
                 "blend": F(48.0),
                 "cell_size": F(520.0),
@@ -35,7 +35,7 @@
         (
             id: 3,
             kind: "biome",
-            pos: (0.0, 0.0),
+            pos: (660.0, 0.0),
             params: {
                 "biome": Ref("desert"),
             },
@@ -44,7 +44,7 @@
         (
             id: 4,
             kind: "biome",
-            pos: (0.0, 90.0),
+            pos: (660.0, 113.0),
             params: {
                 "biome": Ref("badlands"),
             },
@@ -53,7 +53,7 @@
         (
             id: 5,
             kind: "biome",
-            pos: (0.0, 180.0),
+            pos: (660.0, 226.0),
             params: {
                 "biome": Ref("savanna"),
             },
@@ -62,7 +62,7 @@
         (
             id: 6,
             kind: "spaghetti_caves",
-            pos: (0.0, 420.0),
+            pos: (0.0, 549.0),
             params: {
                 "max_lod": I(1),
                 "seed": I(0),
@@ -76,7 +76,7 @@
         (
             id: 7,
             kind: "cheese_caves",
-            pos: (0.0, 560.0),
+            pos: (0.0, 777.0),
             params: {
                 "max_lod": I(1),
                 "seed": I(0),
@@ -90,7 +90,7 @@
         (
             id: 8,
             kind: "noodle_caves",
-            pos: (0.0, 700.0),
+            pos: (330.0, 679.0),
             params: {
                 "max_lod": I(0),
                 "seed": I(0),
@@ -104,21 +104,21 @@
         (
             id: 9,
             kind: "max",
-            pos: (260.0, 480.0),
+            pos: (330.0, 549.0),
             params: {},
             comment: "",
         ),
         (
             id: 10,
             kind: "max",
-            pos: (420.0, 560.0),
+            pos: (660.0, 549.0),
             params: {},
             comment: "",
         ),
         (
             id: 11,
             kind: "ravines",
-            pos: (260.0, 760.0),
+            pos: (660.0, 679.0),
             params: {
                 "depth": F(70.0),
                 "max_lod": I(2),
@@ -132,14 +132,14 @@
         (
             id: 12,
             kind: "max",
-            pos: (560.0, 640.0),
+            pos: (990.0, 549.0),
             params: {},
             comment: "",
         ),
         (
             id: 13,
             kind: "cave_biomes",
-            pos: (300.0, 860.0),
+            pos: (990.0, 679.0),
             params: {
                 "cell_size": F(64.0),
                 "seed": I(0),
@@ -154,7 +154,7 @@
         (
             id: 14,
             kind: "biome",
-            pos: (0.0, 860.0),
+            pos: (660.0, 907.0),
             params: {
                 "biome": Ref("crystal_caves"),
             },
@@ -163,7 +163,7 @@
         (
             id: 15,
             kind: "biome",
-            pos: (0.0, 950.0),
+            pos: (660.0, 1020.0),
             params: {
                 "biome": Ref("lush_caves"),
             },

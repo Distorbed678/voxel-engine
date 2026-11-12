@@ -5,14 +5,17 @@
         (
             id: 1,
             kind: "biome_output",
-            pos: (600.0, 200.0),
+            pos: (2310.0, 0.0),
             params: {
+                "contrast": F(1.1),
                 "fluid": E("Lava"),
                 "fog_color": Color((0.45, 0.38, 0.35)),
                 "fog_density": F(3.0),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
+                "grade_tint": Color((1.05, 0.95, 0.9)),
                 "grass_tint": Color((0.4, 0.38, 0.32)),
                 "map_color": Color((0.35, 0.33, 0.32)),
+                "saturation": F(0.7),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -20,7 +23,7 @@
         (
             id: 2,
             kind: "billow2d",
-            pos: (0.0, 0.0),
+            pos: (1650.0, 0.0),
             params: {
                 "amplitude": F(12.0),
                 "gain": F(0.5),
@@ -34,7 +37,7 @@
         (
             id: 3,
             kind: "height_terrain",
-            pos: (260.0, 0.0),
+            pos: (1980.0, 0.0),
             params: {
                 "base": F(70.0),
                 "falloff": F(1.0),
@@ -45,7 +48,7 @@
         (
             id: 4,
             kind: "block",
-            pos: (0.0, 200.0),
+            pos: (0.0, 228.0),
             params: {
                 "block": Block("basalt"),
             },
@@ -54,7 +57,7 @@
         (
             id: 5,
             kind: "ore",
-            pos: (220.0, 200.0),
+            pos: (330.0, 228.0),
             params: {
                 "ore": Block("coal_ore"),
                 "rarity": F(0.78),
@@ -69,7 +72,7 @@
         (
             id: 6,
             kind: "ore",
-            pos: (440.0, 200.0),
+            pos: (660.0, 228.0),
             params: {
                 "ore": Block("iron_ore"),
                 "rarity": F(0.82),
@@ -84,7 +87,7 @@
         (
             id: 7,
             kind: "ore",
-            pos: (660.0, 200.0),
+            pos: (990.0, 228.0),
             params: {
                 "ore": Block("copper_ore"),
                 "rarity": F(0.84),
@@ -99,7 +102,7 @@
         (
             id: 8,
             kind: "ore",
-            pos: (880.0, 200.0),
+            pos: (1320.0, 228.0),
             params: {
                 "ore": Block("gold_ore"),
                 "rarity": F(0.86),
@@ -114,7 +117,7 @@
         (
             id: 9,
             kind: "surface_layers",
-            pos: (300.0, 340.0),
+            pos: (1650.0, 228.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -130,7 +133,7 @@
         (
             id: 10,
             kind: "block",
-            pos: (300.0, 440.0),
+            pos: (1650.0, 522.0),
             params: {
                 "block": Block("magma"),
             },
@@ -139,7 +142,7 @@
         (
             id: 11,
             kind: "simplex2d",
-            pos: (300.0, 520.0),
+            pos: (1650.0, 635.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -153,7 +156,7 @@
         (
             id: 12,
             kind: "noise_select",
-            pos: (560.0, 380.0),
+            pos: (1980.0, 179.0),
             params: {
                 "threshold": F(0.62),
             },
@@ -162,7 +165,7 @@
         (
             id: 13,
             kind: "ground_cover",
-            pos: (260.0, 640.0),
+            pos: (1980.0, 352.0),
             params: {
                 "chance": F(0.06),
                 "on": Block("ash"),
@@ -181,7 +184,7 @@
         (
             id: 14,
             kind: "tree",
-            pos: (0.0, 780.0),
+            pos: (1650.0, 863.0),
             params: {
                 "height_max": F(8.0),
                 "height_min": F(4.0),
@@ -195,7 +198,7 @@
         (
             id: 15,
             kind: "scatter",
-            pos: (260.0, 780.0),
+            pos: (1980.0, 715.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.4),
@@ -211,7 +214,7 @@
         (
             id: 16,
             kind: "column",
-            pos: (0.0, 920.0),
+            pos: (1650.0, 1091.0),
             params: {
                 "arms": B(false),
                 "block": Block("basalt"),
@@ -224,7 +227,7 @@
         (
             id: 17,
             kind: "scatter",
-            pos: (260.0, 920.0),
+            pos: (1980.0, 1029.0),
             params: {
                 "any_surface": B(true),
                 "chance": F(0.35),

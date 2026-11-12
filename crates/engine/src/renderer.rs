@@ -61,7 +61,10 @@ pub struct FrameData {
     /// coarse light volume min corner relative to cam_block, w = enabled
     pub coarse_origin: [i32; 4],
     pub coarse_tex: u32,
-    pub pad: [u32; 3],
+    pub overdraw_img: u32,
+    pub pad: [u32; 2],
+    /// colour grading: rgb tint, a = saturation (contrast in exposure.w)
+    pub grade: [f32; 4],
 }
 
 pub const FLAG_SHADOWS: u32 = 2;
@@ -170,6 +173,10 @@ pub struct Renderer {
     pub depth: Image,
     pub hdr_tex: u32,
     pub depth_tex: u32,
+    /// Per-pixel fragment counter for the overdraw debug view (R32_UINT, bindless storage).
+    pub overdraw: Image,
+    pub overdraw_img: u32,
+    overdraw_ready: bool,
     pub albedo: Image,
     pub normal: Image,
     pub albedo_tex: u32,
@@ -189,6 +196,19 @@ pub struct Renderer {
     pub shadow_draws: Buffer,
     pub shadow_args: Buffer,
     pub pipes: Pipelines,
+}
+
+fn create_overdraw(ctx: &VkContext, extent: vk::Extent2D) -> Result<Image> {
+    Image::new(
+        ctx,
+        &ImageDesc::d2(
+            "overdraw",
+            vk::Format::R32_UINT,
+            extent.width,
+            extent.height,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST,
+        ),
+    )
 }
 
 fn create_targets(ctx: &VkContext, extent: vk::Extent2D) -> Result<(Image, Image)> {
@@ -303,6 +323,8 @@ impl Renderer {
         frames_in_flight: usize,
     ) -> Result<Self> {
         let (hdr, depth) = create_targets(ctx, extent)?;
+        let overdraw = create_overdraw(ctx, extent)?;
+        let overdraw_img = bindless.add_storage(ctx, overdraw.view);
         let hdr_tex = bindless.add_sampled(ctx, hdr.view, bindless.samplers.linear_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let depth_tex = bindless.add_sampled(ctx, depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
 
@@ -374,6 +396,9 @@ impl Renderer {
             depth,
             hdr_tex,
             depth_tex,
+            overdraw,
+            overdraw_img,
+            overdraw_ready: false,
             albedo,
             normal,
             albedo_tex,
@@ -531,6 +556,10 @@ impl Renderer {
         let (hdr, depth) = create_targets(ctx, extent)?;
         self.hdr = hdr;
         self.depth = depth;
+        self.overdraw.destroy(ctx);
+        self.overdraw = create_overdraw(ctx, extent)?;
+        bindless.update_storage(ctx, self.overdraw_img, self.overdraw.view);
+        self.overdraw_ready = false;
         bindless.update_sampled(ctx, self.hdr_tex, self.hdr.view, bindless.samplers.linear_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         bindless.update_sampled(ctx, self.depth_tex, self.depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
         self.extent = extent;
@@ -554,6 +583,7 @@ impl Renderer {
         biomes: u64,
         shadows: bool,
         clouds: CloudSettings,
+        overdraw: bool,
     ) {
         let d = &ctx.device;
         let frame_addr = self.per_slot[slot].frame_buf.address;
@@ -626,6 +656,33 @@ impl Renderer {
 
         // ---- main pass ----
         profiler.begin(ctx, cb, slot, "main pass");
+        if overdraw {
+            // overdraw view: clear the per-pixel fragment counters
+            image_barrier(
+                ctx,
+                cb,
+                self.overdraw.raw,
+                vkcore::sync::color_range(),
+                if self.overdraw_ready { vk::ImageLayout::GENERAL } else { vk::ImageLayout::UNDEFINED },
+                vk::ImageLayout::GENERAL,
+                vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                vk::PipelineStageFlags2::TRANSFER,
+                vk::AccessFlags2::TRANSFER_WRITE,
+            );
+            unsafe {
+                d.cmd_clear_color_image(cb, self.overdraw.raw, vk::ImageLayout::GENERAL, &vk::ClearColorValue { uint32: [0; 4] }, &[vkcore::sync::color_range()]);
+            }
+            memory_barrier(
+                ctx,
+                cb,
+                vk::PipelineStageFlags2::TRANSFER,
+                vk::AccessFlags2::TRANSFER_WRITE,
+                vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            );
+            self.overdraw_ready = true;
+        }
         image_barrier(
             ctx,
             cb,
@@ -936,6 +993,7 @@ impl Renderer {
     pub fn destroy(&mut self, ctx: &VkContext) {
         self.hdr.destroy(ctx);
         self.depth.destroy(ctx);
+        self.overdraw.destroy(ctx);
         self.albedo.destroy(ctx);
         self.normal.destroy(ctx);
         self.block_table.destroy(ctx);

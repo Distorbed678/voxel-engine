@@ -5,7 +5,7 @@
         (
             id: 1,
             kind: "world_output",
-            pos: (600.0, 200.0),
+            pos: (660.0, 0.0),
             params: {
                 "river_bed": Block("gravel"),
                 "river_carve": F(48.0),
@@ -17,7 +17,7 @@
         (
             id: 2,
             kind: "zone_voronoi",
-            pos: (300.0, 0.0),
+            pos: (330.0, 0.0),
             params: {
                 "blend": F(96.0),
                 "cell_size": F(2400.0),
@@ -47,7 +47,7 @@
         (
             id: 4,
             kind: "zone",
-            pos: (0.0, 90.0),
+            pos: (0.0, 113.0),
             params: {
                 "zone": Ref("arid"),
             },
@@ -56,7 +56,7 @@
         (
             id: 5,
             kind: "zone",
-            pos: (0.0, 180.0),
+            pos: (0.0, 226.0),
             params: {
                 "zone": Ref("frozen"),
             },
@@ -65,7 +65,7 @@
         (
             id: 6,
             kind: "zone",
-            pos: (0.0, 270.0),
+            pos: (0.0, 339.0),
             params: {
                 "zone": Ref("volcanic"),
             },
@@ -74,7 +74,7 @@
         (
             id: 7,
             kind: "river",
-            pos: (0.0, 420.0),
+            pos: (330.0, 549.0),
             params: {
                 "bank": F(36.0),
                 "seed": I(0),
@@ -83,6 +83,16 @@
                 "width": F(9.0),
             },
             comment: "",
+        ),
+        (
+            id: 8,
+            kind: "comment",
+            pos: (306.0, 501.0),
+            params: {
+                "height": F(209.0),
+                "width": F(330.0),
+            },
+            comment: "Rivers: carved to sea level everywhere",
         ),
     ],
     links: [
@@ -123,5 +133,5 @@
             to_pin: 1,
         ),
     ],
-    next_id: 8,
+    next_id: 9,
 )

@@ -116,7 +116,8 @@ cargo run --release
 
 **Node editor**: right-click or `Space` adds a node. Dragging a pin into empty space adds a node
 and links it. `Del` deletes. `Ctrl+C`/`V`/`D` copy, paste and duplicate. "Group selection into
-function" turns the selected nodes into a reusable function graph.
+function" turns the selected nodes into a reusable function graph. **Auto-layout** tidies a graph.
+A **Comment** node is a resizable box with a note; dragging it moves the nodes inside.
 
 </details>
 
@@ -126,7 +127,7 @@ function" turns the selected nodes into a reusable function graph.
 ```
 --headless --frames N --screenshot out.png   render offscreen and save a PNG
 --size 1920x1080   --pos x,y,z   --look yaw,pitch (radians)   --time 0..1   --seed N
---debug-view N     (0 lit, 1 normals, 2 LOD, 3 chunks, 4 meshlets, 5 AO, 6 albedo, 8 zones, 9 biomes)
+--debug-view N     (0 lit, 1 normals, 2 LOD, 3 chunks, 4 meshlets, 5 AO, 6 albedo, 7 overdraw, 8 zones, 9 biomes)
 --script FILE      headless scripted run (camera, input, tools, checks); exit code 1 on failure
 --benchmark        scripted 24 s flight, report saved to benchmarks/
 --worldgen DIR     load generator graphs from DIR instead of assets/worldgen

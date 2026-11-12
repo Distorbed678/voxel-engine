@@ -160,6 +160,14 @@ These follow from the choices above.
   (water, ice or lava), river-bed block.
 - [x] **Transparency order fix**: transparent draw groups sorted back to front on the GPU (the
   "dark rectangle / grid lines on glacier lakes" issue was blend order between chunks).
+- [x] **Per-biome colour grading**: Biome Output tint / saturation / contrast, blended towards
+  the camera's biome like fog, applied in the tonemap pass ("Grading" toggle).
+- [x] **Overdraw debug view**: fragment shaders count shaded fragments per pixel into an R32 image
+  (only in that view), shown as a heatmap. It shows 8–16+ shaded fragments in forests, so early-Z
+  is mostly not happening (discard + the pick atomic): input for the Hi-Z work.
+- [x] **Node editor**: Auto-layout button (columns by distance to the output, barycentre
+  ordering, estimated node heights; the default graphs are laid out with it), Comment boxes
+  (resizable group boxes with a note, text edited in the inspector).
 - [x] **Far-field block light**: a coarse 4-blocks-per-cell volume (block light only) over the
   LOD0 box, filled by LOD0 jobs as a side effect, sampled beyond the fine volume. Distant lava
   lights its banks.
@@ -190,7 +198,7 @@ Still needs a hand test (real input devices or complex UI flows):
 
 ### Known issues (found while capturing media)
 
-- [ ] The default biome graphs (e.g. oak_forest) have overlapping nodes in the editor.
+- [x] ~~The default biome graphs have overlapping nodes~~: laid out with auto-layout.
 - [x] ~~Dark rectangle / grid lines on the glacier lake~~: fixed by sorting transparent draws.
 - [x] ~~Desert oasis water looks lavender~~: not water; dry sinkholes where ravines and caves reach
   the surface (they now get cave biome floors).
@@ -199,10 +207,6 @@ Still needs a hand test (real input devices or complex UI flows):
 
 ### Not done yet (owner's choices that are still open)
 
-- [ ] **Colour grading per biome.** Fog is per-biome; grading (tint, contrast, saturation in the
-  tonemapper) is not yet.
-- [ ] **Overdraw debug view.** It's listed in the debug-view combo but not implemented.
-- [ ] **Node comments / group boxes** (editor QoL).
 
 ### Approved additions (owner, 2026-11-11)
 
@@ -233,9 +237,7 @@ suggestions; the rest is the earlier roadmap.
 5. ~~TAA~~, then ~~bloom~~ (approved 2026-11-11).
 6. ~~**Far-field lava glow**~~ (approved 2026-11-11).
 7. ~~Cave biomes + river node~~.
-8. Small open items: per-biome colour grading, overdraw debug view, node comments / group boxes,
-   **node auto-layout** (approved 2026-11-11; also tidies the overlapping default biome graphs),
-   the known issues above.
+8. ~~Small open items: colour grading, overdraw view, node comments, node auto-layout~~.
 9. Ambient particles + weather.
 10. GPU graph interpreter, so structural edits are instant while the compiled shader builds
    (today: about 3 s cold, about 50 ms cached).

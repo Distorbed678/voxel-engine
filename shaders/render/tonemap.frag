@@ -36,7 +36,24 @@ void main() {
     if (f.exposure.z > 0.0) {
         hdr += texture(gTex2D[nonuniformEXT(f.bloomTex)], vUV).rgb * f.exposure.z;
     }
-    vec3 c = aces(hdr * f.exposure.x);
+    // per-biome colour grading: tint, saturation around luminance, contrast around mid-grey
+    hdr *= f.grade.rgb;
+    float lum = dot(hdr, vec3(0.2126, 0.7152, 0.0722));
+    hdr = max(mix(vec3(lum), hdr, f.grade.a), vec3(0.0));
+    vec3 e = hdr * f.exposure.x;
+    e = 0.18 * pow(e / 0.18 + 1e-6, vec3(f.exposure.w));
+    vec3 c = aces(e);
+    if (f.debugMode == DBG_OVERDRAW) {
+        // fragments shaded per pixel: 1 blue, 2 cyan, 4 green, 8 yellow, 16+ red/white
+        uint n = imageLoad(gUImage2D[f.overdrawImg], ivec2(gl_FragCoord.xy)).r;
+        float t = clamp(log2(float(max(n, 1u))) / 4.0, 0.0, 1.0);
+        vec3 heat = n == 0u ? vec3(0.0) : (t < 0.25 ? mix(vec3(0.1, 0.2, 0.9), vec3(0.1, 0.8, 0.9), t * 4.0)
+                  : t < 0.5 ? mix(vec3(0.1, 0.8, 0.9), vec3(0.2, 0.9, 0.2), t * 4.0 - 1.0)
+                  : t < 0.75 ? mix(vec3(0.2, 0.9, 0.2), vec3(1.0, 0.9, 0.1), t * 4.0 - 2.0)
+                  : mix(vec3(1.0, 0.9, 0.1), vec3(1.0, 0.15, 0.1), t * 4.0 - 3.0));
+        if (n > 24u) heat = vec3(1.0);
+        c = heat;
+    }
     // subtle vignette
     vec2 q = vUV - 0.5;
     c *= 1.0 - dot(q, q) * 0.35;

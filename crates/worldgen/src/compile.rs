@@ -25,6 +25,10 @@ pub struct BiomeInfo {
     pub fog_color: [f32; 3],
     pub fog_density: f32,
     pub map_color: [f32; 3],
+    /// Colour grading while the camera is in this biome.
+    pub grade_tint: [f32; 3],
+    pub saturation: f32,
+    pub contrast: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -803,6 +807,9 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             fog_color: color_param(g, &outn, "fog_color"),
             fog_density: outn.params.get("fog_density").map(|v| v.as_f32()).unwrap_or(1.0),
             map_color: color_param(g, &outn, "map_color"),
+            grade_tint: color_param(g, &outn, "grade_tint"),
+            saturation: outn.params.get("saturation").map(|v| v.as_f32()).unwrap_or(1.0),
+            contrast: outn.params.get("contrast").map(|v| v.as_f32()).unwrap_or(1.0),
         });
         let mut em = Em::new(&mut sh, g, pfx.clone(), false);
         fluids.push(em.enum_idx(&outn, "fluid"));

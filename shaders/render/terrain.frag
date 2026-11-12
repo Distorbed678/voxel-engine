@@ -49,6 +49,9 @@ void faceFrame(uint dir, out vec3 T, out vec3 B) {
 
 void main() {
     FrameData f = pc.frame.d;
+#ifndef SHADOW
+    COUNT_OVERDRAW(f);
+#endif
     uint dir = (pQuad.x >> 25) & 7u;
     uint block = pQuad.y & 0xFFFFu;
     uint ao = (pQuad.y >> 16) & 0xFFu;

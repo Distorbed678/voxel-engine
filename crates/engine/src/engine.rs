@@ -675,6 +675,9 @@ impl Engine {
         let target = Vec3::from(b.fog_color);
         self.atmosphere.fog_tint = self.atmosphere.fog_tint.lerp(target, k);
         self.atmosphere.fog_tint_strength = 0.55;
+        self.atmosphere.grade_tint = self.atmosphere.grade_tint.lerp(Vec3::from(b.grade_tint), k);
+        self.atmosphere.saturation += (b.saturation - self.atmosphere.saturation) * k;
+        self.atmosphere.contrast += (b.contrast - self.atmosphere.contrast) * k;
         let dens = 0.0012 * b.fog_density.max(0.05) * self.ui.fog_scale;
         self.atmosphere.fog_density += (dens - self.atmosphere.fog_density) * k;
     }
@@ -1067,6 +1070,7 @@ impl Engine {
             self.wg.biome_table.address,
             self.ui.shadows,
             self.ui.clouds,
+            self.ui.debug_view == crate::ui::DEBUG_OVERDRAW,
         );
         if self.ui.taa {
             let frame_addr = self.renderer.per_slot[slot].frame_buf.address;
@@ -1346,7 +1350,12 @@ impl Engine {
             // what the tonemap pass reads: the TAA resolve when enabled
             hdr_tex: self.scene_output(),
             depth_tex: self.renderer.depth_tex,
-            exposure: [self.atmosphere.exposure, self.atmosphere.time_of_day, if self.ui.bloom { self.ui.bloom_strength } else { 0.0 }, 0.0],
+            exposure: [
+                self.atmosphere.exposure,
+                self.atmosphere.time_of_day,
+                if self.ui.bloom { self.ui.bloom_strength } else { 0.0 },
+                if self.ui.grading { self.atmosphere.contrast } else { 1.0 },
+            ],
             shadow_vp: [[[0.0; 4]; 4]; 4],
             shadow_planes: [[0.0; 4]; 24],
             shadow_splits: [0.0; 4],
@@ -1370,7 +1379,13 @@ impl Engine {
                 _ => [0; 4],
             },
             coarse_tex: self.light.coarse_sampled,
-            pad: [0; 3],
+            overdraw_img: self.renderer.overdraw_img,
+            pad: [0; 2],
+            grade: if self.ui.grading {
+                [self.atmosphere.grade_tint.x, self.atmosphere.grade_tint.y, self.atmosphere.grade_tint.z, self.atmosphere.saturation]
+            } else {
+                [1.0, 1.0, 1.0, 1.0]
+            },
         };
         let mut fd = fd;
         let light = if sky.sun_dir.y > -0.05 { sky.sun_dir } else { -sky.sun_dir };

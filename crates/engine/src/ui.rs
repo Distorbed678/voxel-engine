@@ -10,6 +10,8 @@ use crate::camera::Camera;
 use crate::engine::{FrameStats, PickHit};
 use crate::world::World;
 
+/// Index of "Overdraw" in DEBUG_VIEWS (shaders: DBG_OVERDRAW).
+pub const DEBUG_OVERDRAW: u32 = 7;
 pub const DEBUG_VIEWS: [&str; 11] = [
     "Lit", "Normals", "LOD level", "Chunks", "Meshlets", "Ambient occlusion", "Albedo", "Overdraw", "Zones", "Biomes", "Lighting only",
 ];
@@ -35,6 +37,8 @@ pub struct UiState {
     /// Temporal anti-aliasing.
     pub taa: bool,
     pub bloom: bool,
+    /// Per-biome colour grading.
+    pub grading: bool,
     pub bloom_strength: f32,
     /// Exposure-scaled brightness where bloom starts.
     pub bloom_threshold: f32,
@@ -71,6 +75,7 @@ impl UiState {
             block_light: true,
             taa: true,
             bloom: true,
+            grading: true,
             bloom_strength: 0.35,
             bloom_threshold: 0.9,
             clouds: Default::default(),
@@ -267,6 +272,8 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.checkbox("TAA", &mut c.state.taa);
             ui.same_line();
             ui.checkbox("Bloom", &mut c.state.bloom);
+            ui.same_line();
+            ui.checkbox("Grading", &mut c.state.grading);
             if c.state.bloom {
                 ui.slider("Bloom strength", 0.0f32, 1.5f32, &mut c.state.bloom_strength);
                 ui.slider("Bloom threshold", 0.0f32, 3.0f32, &mut c.state.bloom_threshold);

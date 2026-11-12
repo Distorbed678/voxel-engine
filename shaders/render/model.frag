@@ -15,6 +15,7 @@ vec3 unpack_normal(uint u) {
 
 void main() {
     FrameData f = pc.frame.d;
+    COUNT_OVERDRAW(f);
     uint block = pData.x & 0xFFFFu;
     uint biome = (pData.x >> 16) & 127u;
     uint texDir = pData.y & 255u;

@@ -38,6 +38,8 @@ pub struct NodeEditorUi {
     redo: Vec<(GraphKey, Graph)>,
     navigate: bool,
     status: String,
+    /// Last on-screen size of each comment box, to turn resizes into width/height changes.
+    comment_sizes: HashMap<u32, [f32; 2]>,
 }
 
 fn pin_id(node: u32, out: bool, idx: u8) -> PinId {
@@ -87,6 +89,7 @@ impl NodeEditorUi {
             redo: Vec::new(),
             navigate: true,
             status: String::new(),
+            comment_sizes: HashMap::new(),
         }
     }
 
@@ -173,6 +176,16 @@ impl NodeEditorUi {
         }
         ui.same_line();
         ui.checkbox("Autosave", &mut wg.autosave);
+        ui.same_line();
+        if ui.button("Auto-layout") {
+            self.snapshot(wg);
+            if let Some(g) = wg.project.get_mut(self.current.0, &self.current.1) {
+                worldgen::layout::auto_layout(g);
+                wg.unsaved = true;
+            }
+            self.placed.remove(&self.current);
+            self.navigate = true;
+        }
         ui.same_line();
         if ui.button("Undo") {
             self.restore(wg, true);
@@ -347,6 +360,20 @@ impl NodeEditorUi {
                 ed.set_node_position(nid, graph.nodes[ni].pos);
                 placed.insert(node_id);
             }
+            if graph.nodes[ni].kind == "comment" {
+                // a resizable group box with a note; dragging it moves the nodes inside
+                let n = &graph.nodes[ni];
+                let size = [
+                    n.params.get("width").map(|v| v.as_f32()).unwrap_or(420.0),
+                    n.params.get("height").map(|v| v.as_f32()).unwrap_or(260.0),
+                ];
+                let text = if n.comment.is_empty() { "Comment".to_string() } else { n.comment.clone() };
+                ed.node(nid, |_tok| {
+                    ui.text_colored([0.95, 0.88, 0.55, 1.0], &text);
+                    ed.group(size);
+                });
+                continue;
+            }
             let Some(def) = nodes::def(&graph.nodes[ni].kind) else { continue };
             let color = category_color(def.category);
             let node = &mut graph.nodes[ni];
@@ -494,6 +521,22 @@ impl NodeEditorUi {
         if self.palette_open_request {
             self.palette_pos = ed.screen_to_canvas(ui.mouse_pos());
         }
+        // comment boxes resized by dragging their edges
+        for n in graph.nodes.iter_mut().filter(|n| n.kind == "comment") {
+            let s = ed.node_size(NodeId::new(n.id as usize));
+            if !(s[0].is_finite() && s[0] > 0.0) {
+                continue;
+            }
+            if let Some(last) = self.comment_sizes.insert(n.id, s)
+                && ((s[0] - last[0]).abs() > 0.5 || (s[1] - last[1]).abs() > 0.5)
+            {
+                for (k, d) in [("width", s[0] - last[0]), ("height", s[1] - last[1])] {
+                    let v = n.params.get(k).map(|v| v.as_f32()).unwrap_or(0.0) + d;
+                    n.params.insert(k.into(), Value::F(v.max(40.0)));
+                }
+                wg.unsaved = true;
+            }
+        }
         // selection + positions
         self.selected = ed.selected_nodes().into_iter().map(|n| { let v: usize = n.into(); v as u32 }).collect();
         for n in graph.nodes.iter_mut() {
@@ -635,6 +678,12 @@ impl NodeEditorUi {
             ui.text_colored(category_color(def.category), def.title);
             ui.text_wrapped(def.help);
             ui.separator();
+            if node.kind == "comment" {
+                if ui.input_text_multiline("##comment_text", &mut node.comment, [-1.0, 120.0]).build() {
+                    wg.unsaved = true;
+                }
+                return;
+            }
             for pd in def.params {
                 let label = format!("{}##insp{}", pd.name, pd.name);
                 match pd.kind {

@@ -5,14 +5,17 @@
         (
             id: 1,
             kind: "biome_output",
-            pos: (600.0, 200.0),
+            pos: (990.0, 0.0),
             params: {
+                "contrast": F(1.0),
                 "fluid": E("None"),
                 "fog_color": Color((0.7, 0.8, 0.95)),
                 "fog_density": F(1.0),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
+                "grade_tint": Color((1.0, 1.0, 1.0)),
                 "grass_tint": Color((0.45, 0.75, 0.3)),
                 "map_color": Color((0.55, 0.25, 0.15)),
+                "saturation": F(1.0),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -29,7 +32,7 @@
         (
             id: 3,
             kind: "block",
-            pos: (0.0, 90.0),
+            pos: (0.0, 113.0),
             params: {
                 "block": Block("magma"),
             },
@@ -38,7 +41,7 @@
         (
             id: 4,
             kind: "simplex3d",
-            pos: (0.0, 180.0),
+            pos: (0.0, 226.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -52,7 +55,7 @@
         (
             id: 5,
             kind: "noise_select",
-            pos: (260.0, 60.0),
+            pos: (330.0, 0.0),
             params: {
                 "threshold": F(0.55),
             },
@@ -61,7 +64,7 @@
         (
             id: 6,
             kind: "surface_layers",
-            pos: (520.0, 60.0),
+            pos: (660.0, 0.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -77,7 +80,7 @@
         (
             id: 7,
             kind: "ground_cover",
-            pos: (520.0, 260.0),
+            pos: (660.0, 294.0),
             params: {
                 "chance": F(0.14),
                 "on": Block("basalt"),

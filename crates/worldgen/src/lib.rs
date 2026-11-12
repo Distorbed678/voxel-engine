@@ -4,6 +4,7 @@
 pub mod compile;
 pub mod defaults;
 pub mod graph;
+pub mod layout;
 pub mod nodes;
 
 pub use compile::{BiomeInfo, Compiled, ParamKey, ZoneInfo, compile};
