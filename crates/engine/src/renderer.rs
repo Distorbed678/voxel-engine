@@ -14,6 +14,9 @@ use crate::textures;
 pub const HDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 pub const MAX_DRAWS: u32 = 1 << 18;
+pub const SHADOW_RES: u32 = 2048;
+pub const CASCADES: usize = 4;
+pub const SHADOW_DRAWS: u32 = 1 << 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -45,6 +48,13 @@ pub struct FrameData {
     pub hdr_tex: u32,
     pub depth_tex: u32,
     pub exposure: [f32; 4],
+    pub shadow_vp: [[[f32; 4]; 4]; 4],
+    pub shadow_planes: [[f32; 4]; 24],
+    pub shadow_splits: [f32; 4],
+    pub cam_forward: [f32; 4],
+    pub shadow_tex: u32,
+    pub shadow_res: u32,
+    pub pad: [u32; 2],
 }
 
 pub const FLAG_WIREFRAME: u32 = 1;
@@ -99,6 +109,7 @@ pub struct Pipelines {
     pub terrain_wire: PipelineHandle,
     pub terrain_trans: PipelineHandle,
     pub models: PipelineHandle,
+    pub shadow: PipelineHandle,
     pub sky: PipelineHandle,
     pub tonemap: PipelineHandle,
     pub apply_edits: PipelineHandle,
@@ -124,6 +135,11 @@ pub struct Renderer {
     pub opaque_draws: Buffer,
     pub trans_draws: Buffer,
     pub model_draws: Buffer,
+    pub shadow_map: Image,
+    pub shadow_views: Vec<vk::ImageView>,
+    pub shadow_tex: u32,
+    pub shadow_draws: Buffer,
+    pub shadow_args: Buffer,
     pub pipes: Pipelines,
     pub output_format: vk::Format,
 }
@@ -273,6 +289,37 @@ impl Renderer {
             .collect::<Result<Vec<_>>>()?;
 
         let pipes = Self::create_pipelines(pm, ctx, output_format)?;
+        let shadow_map = Image::new(
+            ctx,
+            &ImageDesc {
+                name: "shadow_cascades",
+                format: DEPTH_FORMAT,
+                extent: vk::Extent3D { width: SHADOW_RES, height: SHADOW_RES, depth: 1 },
+                mips: 1,
+                layers: CASCADES as u32,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+                view_type: vk::ImageViewType::TYPE_2D_ARRAY,
+                per_mip_views: false,
+            },
+        )?;
+        let shadow_views = (0..CASCADES as u32).map(|l| shadow_map.layer_view(ctx, l)).collect::<Result<Vec<_>>>()?;
+        let shadow_tex = bindless.add_sampled(ctx, shadow_map.view, bindless.samplers.shadow, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        // the shadow map must be in a readable layout even before the first shadow pass
+        let range = shadow_map.full_range();
+        ctx.immediate(|cb| {
+            image_barrier(
+                ctx,
+                cb,
+                shadow_map.raw,
+                range,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::PipelineStageFlags2::NONE,
+                vk::AccessFlags2::NONE,
+                vk::PipelineStageFlags2::ALL_COMMANDS,
+                vk::AccessFlags2::SHADER_READ,
+            );
+        })?;
 
         Ok(Self {
             extent,
@@ -291,6 +338,11 @@ impl Renderer {
             opaque_draws: Buffer::gpu(ctx, "opaque_draws", MAX_DRAWS as u64 * 16)?,
             trans_draws: Buffer::gpu(ctx, "trans_draws", MAX_DRAWS as u64 * 16)?,
             model_draws: Buffer::gpu(ctx, "model_draws", MAX_DRAWS as u64 * 16)?,
+            shadow_map,
+            shadow_views,
+            shadow_tex,
+            shadow_draws: Buffer::gpu(ctx, "shadow_draws", SHADOW_DRAWS as u64 * 16 * CASCADES as u64)?,
+            shadow_args: Buffer::gpu(ctx, "shadow_args", 64 * CASCADES as u64)?,
             pipes,
             output_format,
         })
@@ -357,6 +409,28 @@ impl Renderer {
                     state: GraphicsState { cull: vk::CullModeFlags::NONE, ..opaque_state.clone() },
                 },
             )?,
+            shadow: pm.create(
+                ctx,
+                "shadow",
+                PipelineSource::Graphics {
+                    stages: vec![
+                        ("render/terrain.task".to_string(), vec![("SHADOW".into(), "1".into())]),
+                        ("render/terrain.mesh".to_string(), vec![("SHADOW".into(), "1".into())]),
+                        ("render/terrain.frag".to_string(), vec![("SHADOW".into(), "1".into())]),
+                    ],
+                    state: GraphicsState {
+                        color_formats: vec![],
+                        blend: vec![],
+                        depth_format: Some(DEPTH_FORMAT),
+                        depth_test: true,
+                        depth_write: true,
+                        cull: vk::CullModeFlags::NONE,
+                        depth_bias: true,
+                        depth_clamp: true,
+                        ..Default::default()
+                    },
+                },
+            )?,
             sky: pm.create(
                 ctx,
                 "sky",
@@ -415,6 +489,7 @@ impl Renderer {
         num_records: u32,
         wireframe: bool,
         biomes: u64,
+        shadows: bool,
     ) {
         let d = &ctx.device;
         let frame_addr = self.per_slot[slot].frame_buf.address;
@@ -465,6 +540,10 @@ impl Renderer {
             vk::AccessFlags2::INDIRECT_COMMAND_READ | vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::TRANSFER_READ,
         );
         profiler.end(ctx, cb, slot);
+
+        if shadows {
+            self.record_shadows(ctx, cb, slot, pm, profiler, records, quads, num_records, biomes);
+        }
 
         // ---- main pass ----
         profiler.begin(ctx, cb, slot, "main pass");
@@ -588,6 +667,122 @@ impl Renderer {
         profiler.end(ctx, cb, slot);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn record_shadows(
+        &mut self,
+        ctx: &VkContext,
+        cb: vk::CommandBuffer,
+        slot: usize,
+        pm: &PipelineManager,
+        profiler: &mut GpuProfiler,
+        records: &Buffer,
+        quads: &Buffer,
+        num_records: u32,
+        biomes: u64,
+    ) {
+        let d = &ctx.device;
+        let frame_addr = self.per_slot[slot].frame_buf.address;
+        let layout = pm.layout;
+        let push = |p: &[u8]| unsafe { d.cmd_push_constants(cb, layout, vk::ShaderStageFlags::ALL, 0, p) };
+        profiler.begin(ctx, cb, slot, "shadows");
+        unsafe {
+            for c in 0..CASCADES {
+                let args: [u32; 11] = [0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1];
+                d.cmd_update_buffer(cb, self.shadow_args.raw, c as u64 * 64, bytemuck::cast_slice(&args));
+            }
+        }
+        memory_barrier(
+            ctx,
+            cb,
+            vk::PipelineStageFlags2::TRANSFER | vk::PipelineStageFlags2::DRAW_INDIRECT | vk::PipelineStageFlags2::TASK_SHADER_EXT,
+            vk::AccessFlags2::TRANSFER_WRITE | vk::AccessFlags2::INDIRECT_COMMAND_READ | vk::AccessFlags2::SHADER_READ,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+        );
+        unsafe {
+            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.pipes.cull));
+            for c in 0..CASCADES {
+                let draws = self.shadow_draws.address + (c as u64) * SHADOW_DRAWS as u64 * 16;
+                push(bytemuck::bytes_of(&CullPush {
+                    frame: frame_addr,
+                    records: records.address,
+                    opaque: draws,
+                    trans: draws,
+                    models: draws,
+                    args: self.shadow_args.address + c as u64 * 64,
+                    num_records,
+                    max_draws: SHADOW_DRAWS,
+                    shadow: c as u32 + 1,
+                    pad: 0,
+                }));
+                d.cmd_dispatch(cb, num_records.div_ceil(64).max(1), 1, 1);
+            }
+        }
+        memory_barrier(
+            ctx,
+            cb,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::AccessFlags2::SHADER_WRITE,
+            vk::PipelineStageFlags2::DRAW_INDIRECT | vk::PipelineStageFlags2::TASK_SHADER_EXT | vk::PipelineStageFlags2::MESH_SHADER_EXT,
+            vk::AccessFlags2::INDIRECT_COMMAND_READ | vk::AccessFlags2::SHADER_READ,
+        );
+        image_barrier(
+            ctx,
+            cb,
+            self.shadow_map.raw,
+            self.shadow_map.full_range(),
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            vk::PipelineStageFlags2::FRAGMENT_SHADER,
+            vk::AccessFlags2::SHADER_READ,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        );
+        let area = vk::Rect2D { offset: vk::Offset2D::default(), extent: vk::Extent2D { width: SHADOW_RES, height: SHADOW_RES } };
+        for c in 0..CASCADES {
+            let depth_att = vk::RenderingAttachmentInfo::default()
+                .image_view(self.shadow_views[c])
+                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 } });
+            let info = vk::RenderingInfo::default().render_area(area).layer_count(1).depth_attachment(&depth_att);
+            unsafe {
+                d.cmd_begin_rendering(cb, &info);
+                d.cmd_set_viewport(cb, 0, &[vk::Viewport { x: 0.0, y: 0.0, width: SHADOW_RES as f32, height: SHADOW_RES as f32, min_depth: 0.0, max_depth: 1.0 }]);
+                d.cmd_set_scissor(cb, 0, &[area]);
+                d.cmd_set_depth_bias(cb, -1.5, 0.0, -2.0);
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.shadow));
+                push(bytemuck::bytes_of(&TerrainPush {
+                    frame: frame_addr,
+                    records: records.address,
+                    draws: self.shadow_draws.address + (c as u64) * SHADOW_DRAWS as u64 * 16,
+                    quads: quads.address,
+                    blocks: self.block_table.address,
+                    pick: self.pick.address,
+                    biomes,
+                    flags: c as u32,
+                    pad: 0,
+                }));
+                ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.shadow_args.raw, c as u64 * 64, 1, 12);
+                d.cmd_end_rendering(cb);
+            }
+        }
+        image_barrier(
+            ctx,
+            cb,
+            self.shadow_map.raw,
+            self.shadow_map.full_range(),
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::FRAGMENT_SHADER,
+            vk::AccessFlags2::SHADER_READ,
+        );
+        profiler.end(ctx, cb, slot);
+    }
+
     /// Tonemap the HDR image into `target_view` (which must be in COLOR_ATTACHMENT_OPTIMAL),
     /// then let `overlay` draw on top (ImGui) inside the same rendering scope.
     #[allow(clippy::too_many_arguments)]
@@ -647,5 +842,11 @@ impl Renderer {
         self.opaque_draws.destroy(ctx);
         self.trans_draws.destroy(ctx);
         self.model_draws.destroy(ctx);
+        for v in self.shadow_views.drain(..) {
+            unsafe { ctx.device.destroy_image_view(v, None) };
+        }
+        self.shadow_map.destroy(ctx);
+        self.shadow_draws.destroy(ctx);
+        self.shadow_args.destroy(ctx);
     }
 }

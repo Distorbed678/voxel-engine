@@ -50,14 +50,27 @@ void main() {
     float size = float(CS << lod);
     vec3 mn = vec3(rec.origin - f.camBlock.xyz) - f.camFrac.xyz;
     vec3 mx = mn + size;
+    bool shadow = pc.shadowPass > 0u;
+    uint casc = pc.shadowPass - 1u;
+    if (shadow && lod > 1u) return;
     for (int p = 0; p < 6; ++p) {
-        vec4 pl = f.frustum[p];
+        vec4 pl = shadow ? f.shadowPlanes[casc * 6u + uint(p)] : f.frustum[p];
         vec3 v = vec3(pl.x >= 0.0 ? mx.x : mn.x, pl.y >= 0.0 ? mx.y : mn.y, pl.z >= 0.0 ? mx.z : mn.z);
         if (dot(pl.xyz, v) + pl.w < 0.0) return;
     }
     atomicAdd(pc.args.v[6], 1u);
     uint offset = rec.quadBase;
     uint quads = 0u;
+    if (shadow) {
+        // shadow casters: faces turned away from the sun (closed voxel surfaces), opaque only
+        vec3 L = f.sunDir.y > -0.05 ? f.sunDir.xyz : -f.sunDir.xyz;
+        for (uint d = 0u; d < 6u; ++d) {
+            uint c = rec.counts[d];
+            if (c > 0u && dot(vec3(dir_normal(d)), L) < 0.2) emit(pc.opaqueDraws, 0u, i, offset, c, d, MAX_DRAW_QUADS);
+            offset += c;
+        }
+        return;
+    }
     for (uint d = 0u; d < 6u; ++d) {
         uint c = rec.counts[d];
         if (c > 0u && faceVisible(d, mn, mx)) {

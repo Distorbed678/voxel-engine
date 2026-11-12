@@ -827,6 +827,7 @@ impl Engine {
             self.world.record_count,
             self.ui.wireframe,
             self.wg.biome_table.address,
+            self.ui.shadows,
         );
 
         // ---- output (tonemap + UI) ----
@@ -1095,7 +1096,30 @@ impl Engine {
             hdr_tex: self.renderer.hdr_tex,
             depth_tex: self.renderer.depth_tex,
             exposure: [self.atmosphere.exposure, self.atmosphere.time_of_day, 0.0, 0.0],
+            shadow_vp: [[[0.0; 4]; 4]; 4],
+            shadow_planes: [[0.0; 4]; 24],
+            shadow_splits: [0.0; 4],
+            cam_forward: [0.0; 4],
+            shadow_tex: self.renderer.shadow_tex,
+            shadow_res: crate::renderer::SHADOW_RES,
+            pad: [0; 2],
         };
+        let mut fd = fd;
+        let light = if sky.sun_dir.y > -0.05 { sky.sun_dir } else { -sky.sun_dir };
+        let casc = crate::camera::fit_cascades(&self.camera, extent.width as f32 / extent.height.max(1) as f32, light, self.ui.shadow_distance, crate::renderer::SHADOW_RES);
+        for c in 0..4 {
+            fd.shadow_vp[c] = casc.view_proj[c].to_cols_array_2d();
+            for p in 0..6 {
+                fd.shadow_planes[c * 6 + p] = casc.planes[c][p].to_array();
+            }
+        }
+        fd.shadow_splits = casc.splits;
+        let fw = self.camera.forward();
+        let night = (1.0 - ((sky.sun_dir.y.abs() - 0.02) / 0.1).clamp(0.0, 1.0)) * 0.6;
+        fd.cam_forward = [fw.x, fw.y, fw.z, self.ui.shadow_strength * (1.0 - night)];
+        if self.ui.shadows {
+            fd.flags |= crate::renderer::FLAG_SHADOWS;
+        }
         self.renderer.per_slot[slot].frame_buf.write(0, std::slice::from_ref(&fd));
     }
 

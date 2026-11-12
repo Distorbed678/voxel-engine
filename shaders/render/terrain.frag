@@ -7,7 +7,32 @@ layout(location = 1) in vec3 vLocal;
 layout(location = 2) perprimitiveEXT flat in uvec2 pQuad;
 layout(location = 3) perprimitiveEXT flat in uint pMeta;
 
+#ifndef SHADOW
 layout(location = 0) out vec4 outColor;
+#endif
+
+#ifndef SHADOW
+float shadow_lookup(FrameData f, vec3 rel, vec3 N, vec3 L) {
+    if ((f.flags & FLAG_SHADOWS) == 0u) return 1.0;
+    float z = dot(rel, f.camForward.xyz);
+    if (z > f.shadowSplits.w) return 1.0;
+    uint c = z < f.shadowSplits.x ? 0u : (z < f.shadowSplits.y ? 1u : (z < f.shadowSplits.z ? 2u : 3u));
+    float texel = (c == 0u ? f.shadowSplits.x : (c == 1u ? f.shadowSplits.y : (c == 2u ? f.shadowSplits.z : f.shadowSplits.w))) * 2.2 / float(f.shadowRes);
+    vec3 p = rel + N * texel * 1.5 + L * texel * 0.5;
+    vec4 lp = f.shadowVP[c] * vec4(p, 1.0);
+    vec2 uv = lp.xy * 0.5 + 0.5;
+    float ref = lp.z + 0.0004;
+    float sum = 0.0;
+    vec2 ts = vec2(1.0 / float(f.shadowRes));
+    for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x)
+        sum += texture(gShadowArray[nonuniformEXT(f.shadowTex)], vec4(uv + vec2(x, y) * ts, float(c), ref));
+    float s = sum / 9.0;
+    // fade out at the far end of the last cascade
+    float fade = smoothstep(f.shadowSplits.w * 0.85, f.shadowSplits.w, z);
+    return mix(s, 1.0, fade);
+}
+#endif
 
 // texture-space axes (T = +u, B = +v i.e. image-down) for each face direction
 void faceFrame(uint dir, out vec3 T, out vec3 B) {
@@ -43,6 +68,9 @@ void main() {
 #else
     if (albedo.a < 0.5) discard;
 #endif
+#ifdef SHADOW
+    return;
+#else
     vec4 nmap = texture(gTex2DArray[nonuniformEXT(f.blockTexNormal)], vec3(uv, float(layer)));
 
     // Hytale-style biome tinting: recolour the green/blue parts of tintable blocks
@@ -75,7 +103,8 @@ void main() {
     float ndl = max(dot(Nw, sunDir), 0.0) * smoothstep(-0.05, 0.05, dot(N, sunDir) + 0.05);
     vec3 sun = f.sunColor.rgb * f.sunDir.w;
     vec3 skyAmb = mix(f.groundColor.rgb, f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3, Nw.y * 0.5 + 0.5);
-    float shadow = 1.0;
+    float shadow = ndl > 0.0 ? shadow_lookup(f, vRel, N, sunDir) : 1.0;
+    shadow = mix(1.0, shadow, f.camForward.w);
     vec3 lit = albedo.rgb * (sun * ndl * shadow + skyAmb * aoV * 0.55);
     // emissive blocks
     uint emission = (pc.blocks.b[block].flags >> 8) & 0xFFu;
@@ -114,4 +143,5 @@ void main() {
         uint64_t packed = (uint64_t(floatBitsToUint(gl_FragCoord.z)) << 32) | uint64_t(payload);
         atomicMax(pc.pick.v[0], packed);
     }
+#endif
 }

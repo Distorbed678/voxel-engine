@@ -26,6 +26,9 @@ pub struct UiState {
     pub debug_view: u32,
     pub wireframe: bool,
     pub fog: bool,
+    pub shadows: bool,
+    pub shadow_distance: f32,
+    pub shadow_strength: f32,
     pub selected_block: u16,
     pub mouse_sensitivity: f32,
     pub jobs_per_frame: usize,
@@ -48,6 +51,9 @@ impl UiState {
             debug_view: 0,
             wireframe: false,
             fog: true,
+            shadows: true,
+            shadow_distance: 320.0,
+            shadow_strength: 0.85,
             selected_block: blocks.id("stone"),
             mouse_sensitivity: 1.0,
             jobs_per_frame: 256,
@@ -210,6 +216,10 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             }
             ui.checkbox("Wireframe", &mut c.state.wireframe);
             ui.checkbox("Fog", &mut c.state.fog);
+            ui.same_line();
+            ui.checkbox("Shadows", &mut c.state.shadows);
+            ui.slider("Shadow distance", 64.0f32, 1024.0f32, &mut c.state.shadow_distance);
+            ui.slider("Shadow strength", 0.0f32, 1.0f32, &mut c.state.shadow_strength);
             if let Some(vs) = c.vsync {
                 let mut v = vs;
                 if ui.checkbox("VSync", &mut v) {

@@ -50,6 +50,14 @@ struct FrameData {
     uint hdrTex;
     uint depthTex;
     vec4 exposure;        // x = exposure, y = time of day [0,1)
+    mat4 shadowVP[4];     // camera-relative -> cascade clip
+    vec4 shadowPlanes[24];
+    vec4 shadowSplits;    // far distance (view depth) of each cascade
+    vec4 camForward;      // xyz camera forward, w = shadow strength
+    uint shadowTex;
+    uint shadowRes;
+    uint pad0;
+    uint pad1;
 };
 
 layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer FrameRef {

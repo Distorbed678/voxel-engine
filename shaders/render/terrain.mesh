@@ -50,7 +50,11 @@ void main() {
             vec3 rel = relOrigin + local;
             vLocal[vb + c] = local;
             vRel[vb + c] = rel;
+#ifdef SHADOW
+            gl_MeshVerticesEXT[vb + c].gl_Position = f.shadowVP[pc.flags & 3u] * vec4(rel, 1.0);
+#else
             gl_MeshVerticesEXT[vb + c].gl_Position = f.viewProj * vec4(rel, 1.0);
+#endif
         }
         uint pb = qi * 2u;
         if (positive) {
