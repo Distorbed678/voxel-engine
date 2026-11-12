@@ -12,20 +12,26 @@ const MAX_PROBES: usize = 1 + MAP_N * MAP_N;
 pub struct ProbeResult {
     pub biome: u32,
     pub zone: u32,
-    pub weight: f32,
-    pub zone2: u32,
     pub height: f32,
 }
+
+/// (origin x, origin z, spacing) of a MAP_N x MAP_N probe grid, and whether it is a survey.
+type Grid = ((f64, f64, f64), bool);
 
 pub struct Probes {
     pub input: Vec<Buffer>,
     pub output: Vec<Buffer>,
     counts: Vec<u32>,
-    grids: Vec<Option<(f64, f64, f64)>>,
+    grids: Vec<Option<Grid>>,
     pub camera: Option<ProbeResult>,
     /// latest minimap: (origin x, origin z, spacing) + cells (row-major, z rows)
     pub map: Option<((f64, f64, f64), Vec<ProbeResult>)>,
     pub spacing: f64,
+    /// Survey request (center x, center z, spacing): one wide grid evaluated on the next frame
+    /// instead of the minimap (used by scripts to find biomes).
+    pub survey_request: Option<(f64, f64, f64)>,
+    /// Latest survey result, same layout as `map`.
+    pub survey: Option<((f64, f64, f64), Vec<ProbeResult>)>,
 }
 
 impl Probes {
@@ -36,7 +42,7 @@ impl Probes {
             input.push(Buffer::upload(ctx, &format!("probe_in_{i}"), (MAX_PROBES * 8) as u64)?);
             output.push(Buffer::readback(ctx, &format!("probe_out_{i}"), (MAX_PROBES * 16) as u64)?);
         }
-        Ok(Self { input, output, counts: vec![0; frames], grids: vec![None; frames], camera: None, map: None, spacing: 24.0 })
+        Ok(Self { input, output, counts: vec![0; frames], grids: vec![None; frames], camera: None, map: None, spacing: 24.0, survey_request: None, survey: None })
     }
 
     /// Fill this slot's probe list. Returns the number of probes to dispatch.
@@ -44,17 +50,23 @@ impl Probes {
         let mut pts: Vec<[f32; 2]> = Vec::with_capacity(MAX_PROBES);
         pts.push([cam.x as f32, cam.z as f32]);
         self.grids[slot] = None;
-        if frame % 20 == 0 {
+        let grid = if let Some((cx, cz, s)) = self.survey_request.take() {
+            let half = (MAP_N as f64) * 0.5 * s;
+            Some(((cx - half, cz - half, s), true))
+        } else if frame.is_multiple_of(20) {
             let s = self.spacing;
             let half = (MAP_N as f64) * 0.5 * s;
-            let ox = ((cam.x - half) / s).floor() * s;
-            let oz = ((cam.z - half) / s).floor() * s;
+            Some(((((cam.x - half) / s).floor() * s, ((cam.z - half) / s).floor() * s, s), false))
+        } else {
+            None
+        };
+        if let Some(((ox, oz, s), _)) = grid {
             for j in 0..MAP_N {
                 for i in 0..MAP_N {
                     pts.push([(ox + (i as f64 + 0.5) * s) as f32, (oz + (j as f64 + 0.5) * s) as f32]);
                 }
             }
-            self.grids[slot] = Some((ox, oz, s));
+            self.grids[slot] = grid;
         }
         self.input[slot].write(0, &pts);
         self.counts[slot] = pts.len() as u32;
@@ -70,16 +82,18 @@ impl Probes {
         let conv = |r: [u32; 4]| ProbeResult {
             biome: r[0] & 0xFFFF,
             zone: r[0] >> 16,
-            weight: f32::from_bits(r[1]),
-            zone2: r[2],
             height: f32::from_bits(r[3]),
         };
         self.camera = Some(conv(raw[0]));
-        if let Some(g) = self.grids[slot] {
-            if n > 1 {
-                self.map = Some((g, raw[1..].iter().map(|r| conv(*r)).collect()));
+        if let Some((g, survey)) = self.grids[slot]
+            && n > 1 {
+                let cells = Some((g, raw[1..].iter().map(|r| conv(*r)).collect()));
+                if survey {
+                    self.survey = cells;
+                } else {
+                    self.map = cells;
+                }
             }
-        }
     }
 
     pub fn height_at(&self, x: f64, z: f64) -> Option<f32> {

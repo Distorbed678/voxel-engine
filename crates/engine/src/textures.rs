@@ -304,16 +304,14 @@ fn log_top(t: &mut TexImage, wood: u32, ring: u32, bark: u32, seed: u32) {
             let dy = y as f32 - 15.5;
             let r = (dx * dx + dy * dy).sqrt() + (vnoise(x as f32, y as f32, 4, seed) - 0.5) * 2.0;
             let edge = dx.abs().max(dy.abs());
-            let c;
-            let h;
-            if edge > 13.5 {
-                c = shade(hex(bark), 0.9 + rnd(x, y, seed) * 0.2);
-                h = 0.6;
+            
+            
+            let (c, h) = if edge > 13.5 {
+                (shade(hex(bark), 0.9 + rnd(x, y, seed) * 0.2), 0.6)
             } else {
                 let rings = (r * 0.8).sin() * 0.5 + 0.5;
-                c = mix(hex(ring), hex(wood), q(rings, 4.0));
-                h = 0.5 + rings * 0.2;
-            }
+                (mix(hex(ring), hex(wood), q(rings, 4.0)), 0.5 + rings * 0.2)
+            };
             t.set(x, y, c, 1.0, h);
         }
     }

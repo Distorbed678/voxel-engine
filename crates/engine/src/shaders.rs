@@ -95,14 +95,13 @@ impl PipelineManager {
         let changed = Arc::new(Mutex::new(HashSet::new()));
         let changed_w = changed.clone();
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(ev) = res {
-                if matches!(ev.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_)) {
+            if let Ok(ev) = res
+                && matches!(ev.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_)) {
                     let mut c = changed_w.lock().unwrap();
                     for p in ev.paths {
                         c.insert(p.canonicalize().unwrap_or(p));
                     }
                 }
-            }
         })
         .ok()
         .and_then(|mut w| w.watch(&root, RecursiveMode::Recursive).ok().map(|_| w));

@@ -67,7 +67,6 @@ pub struct WorldgenSystem {
     tx: Sender<Job>,
     rx: Receiver<std::result::Result<BuiltPipelines, (u64, String)>>,
     pub dirty: bool,
-    pub structure_dirty: bool,
     pub last_error: Option<String>,
     pub last_compile_ms: f32,
     pub last_build_ms: f32,
@@ -157,10 +156,8 @@ impl WorldgenSystem {
                             let probe = match probe {
                                 Ok(p) => p,
                                 Err(e) => {
-                                    for r in [&terrain, &props] {
-                                        if let Ok(p) = r {
-                                            unsafe { device.destroy_pipeline(*p, None) };
-                                        }
+                                    for p in [&terrain, &props].into_iter().flatten() {
+                                        unsafe { device.destroy_pipeline(*p, None) };
                                     }
                                     return Err(e);
                                 }
@@ -229,7 +226,6 @@ impl WorldgenSystem {
             tx,
             rx,
             dirty: true,
-            structure_dirty: true,
             last_error: None,
             last_compile_ms: 0.0,
             last_build_ms: 0.0,

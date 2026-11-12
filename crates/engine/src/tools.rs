@@ -4,7 +4,6 @@
 //! GPU region read and finish a few frames later.
 
 use std::collections::HashMap;
-use std::time::Instant;
 
 use dear_imgui_rs::{Condition, Ui};
 use glam::{IVec3, Vec4};
@@ -58,7 +57,8 @@ pub struct Tools {
     pub paste_air: bool,
     pub replace_from: u16,
     pending: HashMap<u64, Pending>,
-    last_apply: Instant,
+    /// Seconds since the brush last applied (hold-to-repeat).
+    since_apply: f32,
     pub prefab_name: String,
     pub prefabs: PrefabLibrary,
     pub show_tools: bool,
@@ -101,7 +101,7 @@ impl Tools {
             paste_air: false,
             replace_from: 1,
             pending: HashMap::new(),
-            last_apply: Instant::now(),
+            since_apply: 0.0,
             prefab_name: "my_prefab".into(),
             prefabs,
             show_tools: true,
@@ -134,7 +134,8 @@ impl Tools {
     }
 
     /// Handle mouse input for the active tool. Returns true if the input was consumed.
-    pub fn handle_input(&mut self, input: &Input, fly_mode: bool, pick: Option<PickHit>, world: &mut World, ui: &mut UiState, blocks: &BlockRegistry) {
+    pub fn handle_input(&mut self, input: &Input, dt: f32, fly_mode: bool, pick: Option<PickHit>, world: &mut World, ui: &mut UiState, blocks: &BlockRegistry) {
+        self.since_apply += dt;
         // Alt + wheel: brush radius
         if input.alt() && input.scroll != 0.0 {
             self.radius = (self.radius + input.scroll.signum() as i32).clamp(1, 32);
@@ -160,13 +161,13 @@ impl Tools {
                 }
             }
             ToolKind::Brush => {
-                let repeat = self.last_apply.elapsed().as_secs_f32() > 0.12;
+                let repeat = self.since_apply > 0.12;
                 let fire_p = primary || (primary_held && repeat);
                 let fire_s = secondary || (secondary_held && repeat);
                 if !(fire_p || fire_s) {
                     return;
                 }
-                self.last_apply = Instant::now();
+                self.since_apply = 0.0;
                 let mode = match (self.mode, fire_s) {
                     (BrushMode::Add, true) => BrushMode::Remove,
                     (BrushMode::Remove, true) => BrushMode::Add,
@@ -273,6 +274,66 @@ impl Tools {
         }
     }
 
+    /// Fill the selection with `block` (0 clears it).
+    pub fn fill_selection(&mut self, world: &mut World, block: u16) {
+        let Some((a, b)) = self.selection_ok() else { return };
+        let mut w = Vec::new();
+        for y in a.y..=b.y {
+            for z in a.z..=b.z {
+                for x in a.x..=b.x {
+                    w.push((IVec3::new(x, y, z), block));
+                }
+            }
+        }
+        Self::write(world, if block == 0 { "Clear" } else { "Fill" }, &w);
+    }
+
+    /// Replace every `from` block in the selection with `to` (after an async region read).
+    pub fn replace_in_selection(&mut self, world: &mut World, from: u16, to: u16) {
+        if let Some((a, b)) = self.selection_ok() {
+            let id = world.request_region(a, b);
+            self.pending.insert(id, Pending::Replace { from, to });
+        }
+    }
+
+    /// Copy the selection into the clipboard (after an async region read).
+    pub fn copy_selection(&mut self, world: &mut World) {
+        if let Some((a, b)) = self.selection_ok() {
+            let id = world.request_region(a, b);
+            self.pending.insert(id, Pending::Copy);
+        }
+    }
+
+    /// Paste the clipboard against the targeted face.
+    pub fn paste_at_pick(&mut self, world: &mut World, pick: Option<PickHit>) {
+        if let Some(h) = pick {
+            self.paste_at(world, h.block_pos + h.normal);
+        }
+    }
+
+    pub fn rotate_clipboard(&mut self) {
+        if let Some(c) = &self.clipboard {
+            self.clipboard = Some(c.rotated());
+        }
+    }
+
+    /// Save the selection as a prefab named `name` (after an async region read).
+    pub fn save_selection_as_prefab(&mut self, world: &mut World, name: &str) {
+        let name = worldgen::compile::sanitize(name.trim()).to_lowercase();
+        if name.is_empty() {
+            return;
+        }
+        if let Some((a, b)) = self.selection_ok() {
+            let id = world.request_region(a, b);
+            self.pending.insert(id, Pending::SavePrefab(name));
+        }
+    }
+
+    /// Region reads still waiting for their result.
+    pub fn pending_ops(&self) -> usize {
+        self.pending.len()
+    }
+
     fn paste_at(&mut self, world: &mut World, at: IVec3) {
         let Some(cb) = &self.clipboard else { return };
         let mut w = Vec::with_capacity(cb.blocks.len());
@@ -343,31 +404,11 @@ impl Tools {
                             ui.text("no selection");
                         }
                         if ui.button("Fill") {
-                            if let Some((a, b)) = self.selection_ok() {
-                                let mut w = Vec::new();
-                                for y in a.y..=b.y {
-                                    for z in a.z..=b.z {
-                                        for x in a.x..=b.x {
-                                            w.push((IVec3::new(x, y, z), state.selected_block));
-                                        }
-                                    }
-                                }
-                                Self::write(world, "Fill", &w);
-                            }
+                            self.fill_selection(world, state.selected_block);
                         }
                         ui.same_line();
                         if ui.button("Clear") {
-                            if let Some((a, b)) = self.selection_ok() {
-                                let mut w = Vec::new();
-                                for y in a.y..=b.y {
-                                    for z in a.z..=b.z {
-                                        for x in a.x..=b.x {
-                                            w.push((IVec3::new(x, y, z), 0));
-                                        }
-                                    }
-                                }
-                                Self::write(world, "Clear", &w);
-                            }
+                            self.fill_selection(world, 0);
                         }
                         ui.same_line();
                         if ui.button("Deselect") {
@@ -380,29 +421,19 @@ impl Tools {
                             self.replace_from = from as u16;
                         }
                         if ui.button("Replace with selected block") {
-                            if let Some((a, b)) = self.selection_ok() {
-                                let id = world.request_region(a, b);
-                                self.pending.insert(id, Pending::Replace { from: self.replace_from, to: state.selected_block });
-                            }
+                            self.replace_in_selection(world, self.replace_from, state.selected_block);
                         }
                         ui.separator();
                         if ui.button("Copy") {
-                            if let Some((a, b)) = self.selection_ok() {
-                                let id = world.request_region(a, b);
-                                self.pending.insert(id, Pending::Copy);
-                            }
+                            self.copy_selection(world);
                         }
                         ui.same_line();
                         if ui.button("Paste at target") {
-                            if let Some(h) = pick {
-                                self.paste_at(world, h.block_pos + h.normal);
-                            }
+                            self.paste_at_pick(world, pick);
                         }
                         ui.same_line();
                         if ui.button("Rotate 90") {
-                            if let Some(c) = &self.clipboard {
-                                self.clipboard = Some(c.rotated());
-                            }
+                            self.rotate_clipboard();
                         }
                         ui.checkbox("Paste air", &mut self.paste_air);
                         if let Some(c) = &self.clipboard {
@@ -411,13 +442,8 @@ impl Tools {
                         ui.separator();
                         ui.input_text("Prefab name", &mut self.prefab_name).build();
                         if ui.button("Save selection as prefab") {
-                            if let Some((a, b)) = self.selection_ok() {
-                                let name = worldgen::compile::sanitize(self.prefab_name.trim()).to_lowercase();
-                                if !name.is_empty() {
-                                    let id = world.request_region(a, b);
-                                    self.pending.insert(id, Pending::SavePrefab(name));
-                                }
-                            }
+                            let name = self.prefab_name.clone();
+                            self.save_selection_as_prefab(world, &name);
                         }
                     }
                 }

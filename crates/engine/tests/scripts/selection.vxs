@@ -1,0 +1,52 @@
+# Box selection: replace, clear, copy, rotate, paste, undo, save as prefab.
+ui off
+select -20 380 0 20 420 1
+block stone
+op fill
+pos 0.5 400.5 -12
+look 180 0
+settle
+
+# replace stone -> bricks in a 5x5x1 box (async region read)
+tool select
+select -2 398 0 2 402 0
+expect_selection -2 398 0 2 402 0
+block bricks
+op replace stone
+settle
+expect_undo 2 Replace
+expect_block 0 400 0 bricks
+expect_block 3 400 0 stone
+
+# clear
+select 5 398 0 6 399 0
+op clear
+expect_undo 3 Clear
+settle
+expect_block 5 398 0 air
+expect_block 5 398 1 stone
+
+# copy the bricks, rotate 90 degrees (5x5x1 -> 1x5x5), paste against the targeted face
+select -2 398 0 2 402 0
+op copy
+settle
+expect_clipboard 5 5 1
+op rotate
+expect_clipboard 1 5 5
+expect_pick bricks
+op paste
+expect_undo 4 Paste
+expect_selection 0 400 -1 0 404 3
+settle
+expect_block 0 400 -1 bricks
+expect_block 0 404 -1 bricks
+expect_block 1 400 -1 air
+key ctrl+z
+settle
+expect_block 0 400 -1 air
+
+# save the selection as a prefab (the test runner deletes the file afterwards)
+select -2 398 0 2 402 1
+op save_prefab zz_script_test
+settle
+expect_prefab zz_script_test

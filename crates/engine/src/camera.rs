@@ -113,8 +113,7 @@ pub fn fit_cascades(cam: &Camera, aspect: f32, light_dir: Vec3, max_dist: f32, r
     let lu = lr.cross(l);
     let mut out = Cascades { view_proj: [Mat4::IDENTITY; 4], planes: [[Vec4::ZERO; 6]; 4], splits };
     let mut near = cam.near;
-    for c in 0..4 {
-        let far = splits[c];
+    for (c, &far) in splits.iter().enumerate() {
         let mut corners = Vec::with_capacity(8);
         for z in [near, far] {
             let h = z * th;

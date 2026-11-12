@@ -1,0 +1,25 @@
+# Regression: after an RMB look-drag over the world, UI panels must own the mouse again.
+# Before the fix ImGui never saw the RMB release, ignored every panel, and a click on a
+# panel broke the block behind it. Coordinates assume --size 1280x720 (default layout).
+ui on
+select -20 380 0 20 420 1
+block stone
+op fill
+pos 0.5 400.5 -8
+look 180 0
+settle
+
+cursor 500 200          # world, between panels
+expect_capture false
+expect_pick stone
+hold right 8            # look-drag over the world
+cursor 100 300          # inside the Stats panel, with the wall behind it
+expect_capture true
+click left
+settle
+expect_undo 1 Fill      # the click stayed in the UI
+
+cursor 500 200          # the world still takes clicks afterwards
+expect_capture false
+click left
+expect_undo 2 Break

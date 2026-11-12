@@ -1,0 +1,57 @@
+# Block tool: break, place, middle-click pick, undo/redo, in editor mode and fly mode.
+ui off
+select -20 380 0 20 420 1
+block stone
+op fill
+expect_undo 1 Fill
+pos 0.5 400.5 -8
+look 180 0
+settle
+expect_block 0 400 0 stone
+expect_pick stone
+
+# editor mode: LMB breaks the block under the cursor (screen centre)
+tool block
+click left
+expect_undo 2 Break
+settle
+expect_block 0 400 0 air
+expect_block 0 400 1 stone
+expect_pick stone       # the second layer
+
+# Shift+LMB places the selected block against the targeted face
+block dirt
+click left shift
+expect_undo 3 Place
+settle
+expect_block 0 400 0 dirt
+expect_pick dirt
+
+# MMB picks the block under the cursor
+block glass
+click middle
+expect_selected dirt
+
+# Ctrl+Z / Ctrl+Y
+key ctrl+z
+settle
+expect_block 0 400 0 air
+expect_undo 2 Break
+key ctrl+y
+settle
+expect_block 0 400 0 dirt
+expect_undo 3 Place
+
+# fly mode picks from the screen centre whatever the cursor does: LMB breaks, RMB places
+fly on
+cursor 100 100
+click left
+settle
+expect_block 0 400 0 air
+block planks
+click right
+settle
+expect_block 0 400 0 planks
+expect_pick planks
+fly off
+expect_undo 5 Place

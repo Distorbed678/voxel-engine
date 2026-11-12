@@ -1,0 +1,52 @@
+# Rendering regression: frames compared against crates/engine/tests/golden/*.png
+# (half resolution). Rewrite the goldens after an intended visual change with UPDATE_GOLDEN=1.
+ui off
+anim 12
+
+# daylight, shadows, clouds, floating isles, water
+time 0.36
+pos 144 136 -368
+look 90 4
+settle
+wait 240
+expect_image crates/engine/tests/golden/islands.png
+
+# terracotta strata, biome blending
+time 0.42
+pos -1200 115 2480
+look 35 -14
+settle
+wait 240
+expect_image crates/engine/tests/golden/badlands.png
+
+# night: moon, stars, dark fog
+time 0.02
+pos 144 110 3280
+look 60 6
+settle
+wait 240
+expect_image crates/engine/tests/golden/night.png
+
+# emissive lava at dusk
+time 0.78
+pos -2224 107 1968
+look 35 -14
+settle
+wait 240
+expect_image crates/engine/tests/golden/lava.png
+
+# debug views: biome map from above, normals
+time 0.40
+clouds off
+pos 0 900 0
+look 30 -55
+settle
+view 9
+wait 4
+expect_image crates/engine/tests/golden/view_biomes.png
+pos 144 136 -368
+look 90 -10
+settle
+view 1
+wait 4
+expect_image crates/engine/tests/golden/view_normals.png

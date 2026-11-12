@@ -15,6 +15,9 @@ use worldgen::{Graph, GraphKind, Link, Node, Value};
 use crate::blocks::BlockRegistry;
 use crate::wg::WorldgenSystem;
 
+/// A deferred structural change to the graph being drawn.
+type GraphEdit = Box<dyn FnOnce(&mut Graph)>;
+
 type GraphKey = (GraphKind, String);
 
 pub struct NodeEditorUi {
@@ -47,7 +50,7 @@ fn decode_pin(p: PinId) -> (u32, bool, u8) {
 }
 
 fn link_id(l: &Link) -> LinkId {
-    LinkId::new(((l.from_node as usize) << 40) | ((l.from_pin as usize) << 32) | ((l.to_node as usize) << 8) | l.to_pin as usize + 1)
+    LinkId::new(((l.from_node as usize) << 40) | ((l.from_pin as usize) << 32) | ((l.to_node as usize) << 8) | (l.to_pin as usize + 1))
 }
 
 fn category_color(cat: &str) -> [f32; 4] {
@@ -89,12 +92,11 @@ impl NodeEditorUi {
 
     /// Editor contexts must be created outside of a Dear ImGui frame.
     pub fn prepare(&mut self, imgui: &dear_imgui_rs::Context, wg: &WorldgenSystem) {
-        if wg.project.get(self.current.0, &self.current.1).is_none() {
-            if let Some(g) = wg.project.graphs.first() {
+        if wg.project.get(self.current.0, &self.current.1).is_none()
+            && let Some(g) = wg.project.graphs.first() {
                 self.current = (g.kind, g.name.clone());
                 self.navigate = true;
             }
-        }
         if !self.contexts.contains_key(&self.current) {
             let cfg = EditorConfig::new().no_settings_file();
             self.contexts.insert(self.current.clone(), EditorContext::create_with_config(imgui, cfg));
@@ -266,8 +268,8 @@ impl NodeEditorUi {
                     wg.mark_dirty();
                 }
             }
-            if ui.button("Duplicate") {
-                if let Some(g) = wg.project.get(self.current.0, &self.current.1).cloned() {
+            if ui.button("Duplicate")
+                && let Some(g) = wg.project.get(self.current.0, &self.current.1).cloned() {
                     let mut n = 2;
                     while wg.project.get(g.kind, &format!("{}_{n}", g.name)).is_some() {
                         n += 1;
@@ -279,7 +281,6 @@ impl NodeEditorUi {
                     self.navigate = true;
                     wg.mark_dirty();
                 }
-            }
             ui.same_line();
             let count = wg.project.graphs.iter().filter(|g| g.kind == self.current.0).count();
             if ui.button("Delete") && count > 1 {
@@ -328,7 +329,7 @@ impl NodeEditorUi {
         let ed = ui.node_editor(ctx, "wg_canvas", size);
         let placed = self.placed.entry(key.clone()).or_default();
         let mut changed_params = false;
-        let mut structural: Vec<Box<dyn FnOnce(&mut Graph)>> = Vec::new();
+        let mut structural: Vec<GraphEdit> = Vec::new();
         let mut snapshot_needed = false;
 
         let graph = wg.project.get_mut(key.0, &key.1);
@@ -398,11 +399,10 @@ impl NodeEditorUi {
                             }
                         }
                         ParamKind::Curve => {
-                            if let Some(Value::Curve(pts)) = node.params.get_mut(pd.name) {
-                                if curve_widget(ui, &format!("curve{node_id}"), pts, [200.0, 120.0]) {
+                            if let Some(Value::Curve(pts)) = node.params.get_mut(pd.name)
+                                && curve_widget(ui, &format!("curve{node_id}"), pts, [200.0, 120.0]) {
                                     changed_params = true;
                                 }
-                            }
                         }
                         _ => {
                             let s = match node.params.get(pd.name) {
@@ -459,23 +459,21 @@ impl NodeEditorUi {
                     cs.reject_new_item_styled([1.0, 0.3, 0.3, 1.0], 2.0);
                 }
             }
-            if let Some(p) = cs.query_new_node() {
-                if cs.accept_new_item() {
+            if let Some(p) = cs.query_new_node()
+                && cs.accept_new_item() {
                     self.pending_link_from = Some(decode_pin(p));
                     self.palette_open_request = true;
                 }
-            }
             cs.end();
         }
         // ---- delete ----
         if let Some(ds) = ed.begin_delete() {
             while let Some((lid, _, _)) = ds.query_deleted_link() {
-                if let Some(l) = graph.links.iter().find(|l| link_id(l) == lid).copied() {
-                    if ds.accept_deleted_item(true) {
+                if let Some(l) = graph.links.iter().find(|l| link_id(l) == lid).copied()
+                    && ds.accept_deleted_item(true) {
                         snapshot_needed = true;
                         structural.push(Box::new(move |g: &mut Graph| g.links.retain(|x| *x != l)));
                     }
-                }
             }
             while let Some(nid) = ds.query_deleted_node() {
                 let id: usize = nid.into();
@@ -571,16 +569,14 @@ impl NodeEditorUi {
             if let Some((n, out, idx)) = link_from {
                 let d = nodes::def(kind).unwrap();
                 if out {
-                    if let Some(t) = from_type.map(|t| t.0) {
-                        if let Some(i) = d.inputs.iter().position(|p| p.1 == t) {
+                    if let Some(t) = from_type.map(|t| t.0)
+                        && let Some(i) = d.inputs.iter().position(|p| p.1 == t) {
                             graph.connect(n, idx, id, i as u8);
                         }
-                    }
-                } else if let Some(t) = from_type.map(|t| t.0) {
-                    if let Some(o) = d.outputs.iter().position(|p| p.1 == t) {
+                } else if let Some(t) = from_type.map(|t| t.0)
+                    && let Some(o) = d.outputs.iter().position(|p| p.1 == t) {
                         graph.connect(id, o as u8, n, idx);
                     }
-                }
             }
             self.pending_link_from = None;
             structural_change = true;
@@ -599,13 +595,12 @@ impl NodeEditorUi {
             paste(graph, &nodes, &links, [40.0, 40.0]);
             structural_change = true;
         }
-        if do_paste {
-            if let Some((nodes, links)) = &self.clipboard {
+        if do_paste
+            && let Some((nodes, links)) = &self.clipboard {
                 let allowed: Vec<Node> = nodes.iter().filter(|n| nodes::def(&n.kind).map(|d| nodes::allowed_in(d, key.0)).unwrap_or(false)).cloned().collect();
                 paste(graph, &allowed, links, [60.0, 60.0]);
                 structural_change = true;
             }
-        }
         if structural_change || changed_params {
             wg.mark_dirty();
         }
@@ -931,13 +926,11 @@ pub fn curve_widget(ui: &Ui, id: &str, pts: &mut Vec<[f32; 2]>, size: [f32; 2]) 
     let mut changed = false;
     let drag_idx = CURVE_DRAG.with(|m| m.borrow().get(id).copied().unwrap_or(-1));
     let mut drag = drag_idx;
-    if hovered && ui.is_mouse_clicked(MouseButton::Left) {
-        if let Some((i, d2)) = nearest {
-            if d2 < 100.0 {
+    if hovered && ui.is_mouse_clicked(MouseButton::Left)
+        && let Some((i, d2)) = nearest
+            && d2 < 100.0 {
                 drag = i as i32;
             }
-        }
-    }
     if !active {
         drag = -1;
     }
@@ -961,14 +954,12 @@ pub fn curve_widget(ui: &Ui, id: &str, pts: &mut Vec<[f32; 2]>, size: [f32; 2]) 
         pts.insert(pos, c);
         changed = true;
     }
-    if hovered && ui.is_mouse_clicked(MouseButton::Right) && pts.len() > 2 {
-        if let Some((i, d2)) = nearest {
-            if d2 < 100.0 {
+    if hovered && ui.is_mouse_clicked(MouseButton::Right) && pts.len() > 2
+        && let Some((i, d2)) = nearest
+            && d2 < 100.0 {
                 pts.remove(i);
                 changed = true;
             }
-        }
-    }
     for (i, p) in pts.iter().enumerate() {
         let s = to_screen(*p);
         let col = if drag == i as i32 { [1.0, 0.8, 0.2, 1.0] } else { [0.9, 0.9, 0.9, 1.0] };

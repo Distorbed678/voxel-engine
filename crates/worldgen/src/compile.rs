@@ -326,11 +326,10 @@ impl<'s, 'a> Em<'s, 'a> {
                     format!("worley2({pos}.xz / {size}, gSeed + {seed} * 7919u + {}u, {jit})", n.id)
                 };
                 let w = self.var("vec3", call, !three && self.ctx_2d(ctx));
-                if three {
-                    if let Some(o) = self.ctxs[ctx].o.clone() {
+                if three
+                    && let Some(o) = self.ctxs[ctx].o.clone() {
                         self.need(&o);
                     }
-                }
                 let we = w.e.clone();
                 let w2 = Val { e: we.clone(), two_d: w.two_d, width: 3 };
                 self.emit(format!("{} * {amp}", mode.replace('w', &we)), &[&w2], three, ctx)

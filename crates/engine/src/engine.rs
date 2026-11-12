@@ -25,6 +25,8 @@ use crate::world::gpu::{MAX_JOBS, WorldGpu, WorldPipelines};
 use crate::node_editor::NodeEditorUi;
 use crate::wg::WorldgenSystem;
 
+mod script;
+
 pub const FIF: usize = 2;
 pub const OUTPUT_FORMAT_HEADLESS: vk::Format = vk::Format::B8G8R8A8_UNORM;
 
@@ -44,6 +46,8 @@ pub struct Options {
     pub seed: Option<u32>,
     pub worldgen_dir: Option<PathBuf>,
     pub benchmark: bool,
+    /// Scripted input playback (headless): see `engine/script.rs`.
+    pub script: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -52,7 +56,6 @@ pub struct PickHit {
     pub normal: IVec3,
     pub block: u16,
     pub lod: u32,
-    pub world: DVec3,
     pub distance: f32,
 }
 
@@ -115,7 +118,6 @@ pub struct Engine {
     pub ui: UiState,
     pub imgui: ImguiLayer,
     pub seed: u32,
-    start: Instant,
     last_frame: Instant,
     pub dt: f32,
     pub pick: Option<PickHit>,
@@ -133,6 +135,12 @@ pub struct Engine {
     batch_sizes: [usize; FIF],
     /// EMA of GPU milliseconds per generated chunk (gen + props + meshing)
     pub ms_per_job: f32,
+    /// Scripted input playback, if running a script.
+    pub script: Option<script::Script>,
+    /// Animation clock (wind, water, clouds); advances by `dt`, so scripts are deterministic.
+    anim_time: f32,
+    /// Scripts can freeze the animation clock so screenshots don't depend on frame counts.
+    anim_frozen: bool,
     ctx: VkContext,
 }
 
@@ -279,8 +287,14 @@ impl Engine {
         }
 
         // ---- Dear ImGui ----
+        let script = match &opts.script {
+            Some(p) => Some(script::Script::load(p)?),
+            None => None,
+        };
         let mut ictx = dear_imgui_rs::Context::create();
-        let _ = ictx.set_ini_filename(Some(PathBuf::from("imgui.ini")));
+        // scripted runs use the default window layout, never the user's imgui.ini
+        let ini = if script.is_some() { None } else { Some(PathBuf::from("imgui.ini")) };
+        let _ = ictx.set_ini_filename(ini);
         {
             let io = ictx.io_mut();
             io.set_config_flags(io.config_flags() | dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
@@ -361,7 +375,6 @@ impl Engine {
             ui: ui_state,
             imgui: ImguiLayer { ctx: ictx, platform, renderer: Some(imgui_renderer), pool: imgui_pool },
             seed,
-            start: Instant::now(),
             last_frame: Instant::now(),
             dt: 0.016,
             pick: None,
@@ -376,12 +389,11 @@ impl Engine {
             bench: None,
             batch_sizes: [0; FIF],
             ms_per_job: 0.05,
+            script,
+            anim_time: 0.0,
+            anim_frozen: false,
             ctx,
         })
-    }
-
-    pub fn ctx(&self) -> &VkContext {
-        &self.ctx
     }
 
     // ---------------------------------------------------------------------------------------
@@ -390,16 +402,17 @@ impl Engine {
 
     pub fn handle_window_event(&mut self, event: &winit::event::WindowEvent) {
         use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-        let mut imgui_wants_mouse = false;
-        let mut imgui_wants_kb = false;
-        if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
-            if crate::input::forward_to_imgui(event, self.fly_mode || self.look_drag, self.fly_mode) {
+        if crate::input::forward_to_imgui(event, self.fly_mode || self.look_drag, self.fly_mode) {
+            if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
                 let _ = p.handle_window_event(&mut self.imgui.ctx, w.id(), event);
+            } else {
+                // headless: scripted input reaches ImGui directly
+                crate::input::feed_imgui(&mut self.imgui.ctx, event);
             }
-            let io = self.imgui.ctx.io();
-            imgui_wants_mouse = io.want_capture_mouse();
-            imgui_wants_kb = io.want_capture_keyboard();
         }
+        let io = self.imgui.ctx.io();
+        let imgui_wants_mouse = io.want_capture_mouse();
+        let imgui_wants_kb = io.want_capture_keyboard();
         match event {
             WindowEvent::Resized(_) => self.resize_pending = true,
             WindowEvent::KeyboardInput { event, .. } => {
@@ -556,19 +569,17 @@ impl Engine {
         if inp.pressed(KeyCode::F5) {
             self.ui.force_reload = true;
         }
-        if inp.ctrl() && inp.pressed(KeyCode::KeyZ) {
-            if let Some((label, touched)) = self.world.overlay.undo() {
+        if inp.ctrl() && inp.pressed(KeyCode::KeyZ)
+            && let Some((label, touched)) = self.world.overlay.undo() {
                 self.world.invalidate_blocks(&touched);
                 self.ui.toast(format!("Undo: {label}"));
             }
-        }
         let inp = &self.input;
-        if inp.ctrl() && inp.pressed(KeyCode::KeyY) {
-            if let Some((label, touched)) = self.world.overlay.redo() {
+        if inp.ctrl() && inp.pressed(KeyCode::KeyY)
+            && let Some((label, touched)) = self.world.overlay.redo() {
                 self.world.invalidate_blocks(&touched);
                 self.ui.toast(format!("Redo: {label}"));
             }
-        }
     }
 
     fn handle_editing(&mut self) {
@@ -576,7 +587,7 @@ impl Engine {
         if !can_act {
             return;
         }
-        self.tools.handle_input(&self.input, self.fly_mode, self.pick, &mut self.world, &mut self.ui, &self.blocks);
+        self.tools.handle_input(&self.input, self.dt, self.fly_mode, self.pick, &mut self.world, &mut self.ui, &self.blocks);
     }
 
     /// New / changed prefabs: re-upload and recompile the generator so Prefab nodes see them.
@@ -686,7 +697,6 @@ impl Engine {
             normal,
             block,
             lod,
-            world,
             distance: rel.length(),
         });
     }
@@ -694,6 +704,12 @@ impl Engine {
     pub fn frame(&mut self) -> Result<()> {
         let now = Instant::now();
         self.dt = (now - self.last_frame).as_secs_f32().clamp(1e-5, 0.25);
+        if self.script.is_some() {
+            self.dt = 1.0 / 60.0;
+        }
+        if !self.anim_frozen {
+            self.anim_time += self.dt;
+        }
         self.last_frame = now;
         let cpu_start = now;
 
@@ -791,19 +807,20 @@ impl Engine {
         // ---- world results ----
         for (s, jobs, results) in self.wgpu.poll(completed) {
             for (i, j) in jobs.iter().enumerate() {
-                if j.readback {
-                    if let Some(v) = self.wgpu.take_voxels(s, i) {
+                if j.readback
+                    && let Some(v) = self.wgpu.take_voxels(s, i) {
                         self.world.fill_region(j.key, &v);
                     }
-                }
             }
             self.world.apply_results(s, &jobs, &results, value);
         }
         for region in self.world.take_finished_regions() {
+            let Some(region) = self.script_take_region(region) else { continue };
             self.tools.region_ready(region, &mut self.world, &self.blocks, &mut self.ui);
         }
 
         // ---- input, camera, editing ----
+        self.script_step()?;
         self.handle_shortcuts();
         if self.opts.benchmark && self.bench.is_none() && self.frame_counter == 2 {
             self.opts.benchmark = false;
@@ -877,7 +894,11 @@ impl Engine {
         // generation batch
         if self.wgpu.has_free_slot() && !self.world.frozen {
             let budget_jobs = (self.ui.gen_budget_ms / self.ms_per_job.max(0.002)) as usize;
-            let max_jobs = budget_jobs.clamp(16, self.ui.jobs_per_frame.min(MAX_JOBS));
+            let mut max_jobs = budget_jobs.clamp(16, self.ui.jobs_per_frame.min(MAX_JOBS));
+            if self.script.is_some() {
+                // fixed batch sizes keep scripted runs deterministic
+                max_jobs = self.ui.jobs_per_frame.min(MAX_JOBS);
+            }
             let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), max_jobs);
             self.batch_sizes[slot] = jobs.len();
             if !jobs.is_empty() {
@@ -957,7 +978,7 @@ impl Engine {
         let extent = self.renderer.extent;
         let aspect = extent.width as f32 / extent.height.max(1) as f32;
         let m = self.camera.matrices(aspect);
-        let pick_px = if self.fly_mode || self.window.is_none() {
+        let pick_px = if self.fly_mode || (self.window.is_none() && self.script.is_none()) {
             (extent.width / 2, extent.height / 2)
         } else {
             let scale = self.window.as_ref().map(|w| w.scale_factor()).unwrap_or(1.0);
@@ -1021,13 +1042,11 @@ impl Engine {
             retire_batch = retire;
             let mut imgui_frame = Some(imgui_frame);
             self.renderer.record_output(&self.ctx, cb, slot, &self.pm, target_view, target_extent, |cb| {
-                if draw_ui {
-                    if let Some(f) = imgui_frame.take() {
-                        if let Err(e) = unsafe { ir.cmd_draw(cb, f) } {
+                if draw_ui
+                    && let Some(f) = imgui_frame.take()
+                        && let Err(e) = unsafe { ir.cmd_draw(cb, f) } {
                             log::error!("imgui draw: {e}");
                         }
-                    }
-                }
             });
         }
         self.profiler.end(&self.ctx, cb, profiler_slot);
@@ -1155,11 +1174,10 @@ impl Engine {
         }
         self.frame_counter += 1;
         self.input.end_frame();
-        if let Some(batch) = retire_batch {
-            if let Some(ir) = self.imgui.renderer.as_mut() {
+        if let Some(batch) = retire_batch
+            && let Some(ir) = self.imgui.renderer.as_mut() {
                 ir.wait_for_texture_retirements(batch).map_err(|e| anyhow::anyhow!("{e}"))?;
             }
-        }
 
         // stats
         let ms = self.dt * 1000.0;
@@ -1173,8 +1191,8 @@ impl Engine {
         self.stats.fps = 1000.0 / avg.max(0.001);
 
         {
-            if let Some(f) = self.opts.frames {
-                if self.frame_counter >= f {
+            if let Some(f) = self.opts.frames
+                && self.frame_counter >= f {
                     // flush outstanding screenshot
                     self.timeline.wait(&self.ctx, self.frame_counter)?;
                     for s in 0..FIF {
@@ -1182,7 +1200,6 @@ impl Engine {
                     }
                     self.quit = true;
                 }
-            }
         }
         Ok(())
     }
@@ -1245,7 +1262,7 @@ impl Engine {
             fog_color: sky.fog.extend(self.atmosphere.fog_density).to_array(),
             fog_params: [self.atmosphere.fog_height_falloff, self.atmosphere.fog_start, self.atmosphere.sea_level, view_distance],
             resolution: [extent.width as f32, extent.height as f32],
-            time: self.start.elapsed().as_secs_f32(),
+            time: self.anim_time,
             dt: self.dt,
             frame_index: self.frame_counter as u32,
             debug_mode: self.ui.debug_view,
@@ -1345,23 +1362,20 @@ impl Engine {
         if a.screenshot {
             self.screenshot_request = Some(PathBuf::from(format!("screenshots/shot_{}.png", chrono_stamp())));
         }
-        if let Some(v) = a.set_vsync {
-            if let Some(sc) = &mut self.swapchain {
+        if let Some(v) = a.set_vsync
+            && let Some(sc) = &mut self.swapchain {
                 self.ctx.wait_idle();
                 let e = sc.extent;
                 sc.recreate(&self.ctx, e.width, e.height, v)?;
             }
-        }
-        if a.undo {
-            if let Some((_, touched)) = self.world.overlay.undo() {
+        if a.undo
+            && let Some((_, touched)) = self.world.overlay.undo() {
                 self.world.invalidate_blocks(&touched);
             }
-        }
-        if a.redo {
-            if let Some((_, touched)) = self.world.overlay.redo() {
+        if a.redo
+            && let Some((_, touched)) = self.world.overlay.redo() {
                 self.world.invalidate_blocks(&touched);
             }
-        }
         if a.quit {
             self.quit = true;
         }

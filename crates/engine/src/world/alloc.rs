@@ -11,7 +11,6 @@ pub struct Range {
 pub struct RangeAllocator {
     /// offset -> size of free blocks
     free: BTreeMap<u32, u32>,
-    pub capacity: u32,
     pub used: u64,
 }
 
@@ -19,7 +18,7 @@ impl RangeAllocator {
     pub fn new(capacity: u32) -> Self {
         let mut free = BTreeMap::new();
         free.insert(0, capacity);
-        Self { free, capacity, used: 0 }
+        Self { free, used: 0 }
     }
 
     pub fn alloc(&mut self, size: u32) -> Option<Range> {
@@ -45,13 +44,12 @@ impl RangeAllocator {
         let mut off = r.offset;
         let mut size = r.size;
         // merge with previous
-        if let Some((&poff, &psize)) = self.free.range(..off).next_back() {
-            if poff + psize == off {
+        if let Some((&poff, &psize)) = self.free.range(..off).next_back()
+            && poff + psize == off {
                 self.free.remove(&poff);
                 off = poff;
                 size += psize;
             }
-        }
         // merge with next
         if let Some(&nsize) = self.free.get(&(off + size)) {
             self.free.remove(&(off + size));
@@ -60,10 +58,12 @@ impl RangeAllocator {
         self.free.insert(off, size);
     }
 
+    #[cfg(test)]
     pub fn largest_free(&self) -> u32 {
         self.free.values().copied().max().unwrap_or(0)
     }
 
+    #[cfg(test)]
     pub fn fragments(&self) -> usize {
         self.free.len()
     }

@@ -86,11 +86,10 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
-        if let Some(e) = &self.engine {
-            if let Some(w) = &e.window {
+        if let Some(e) = &self.engine
+            && let Some(w) = &e.window {
                 w.request_redraw();
             }
-        }
     }
 }
 
@@ -134,6 +133,10 @@ fn parse_args() -> Options {
             "--seed" => o.seed = next(&mut i).parse().ok(),
             "--worldgen" => o.worldgen_dir = Some(next(&mut i).into()),
             "--benchmark" => o.benchmark = true,
+            "--script" => {
+                o.script = Some(next(&mut i).into());
+                o.headless = true;
+            }
             other => eprintln!("unknown argument {other}"),
         }
         i += 1;
@@ -178,7 +181,7 @@ fn main() -> Result<()> {
     let opts = parse_args();
     if opts.headless {
         let mut opts = opts;
-        if opts.frames.is_none() && !opts.benchmark {
+        if opts.frames.is_none() && !opts.benchmark && opts.script.is_none() {
             opts.frames = Some(120);
         }
         let mut engine = Engine::new(opts, None)?;
@@ -194,6 +197,24 @@ fn main() -> Result<()> {
         );
         for (name, (sum, n)) in &engine.gpu_sums {
             log::info!("gpu {name:<12} avg {:.3} ms over {n} frames (total {:.1} ms)", sum / *n as f64, sum);
+        }
+        if let Some(s) = &engine.script {
+            let mut failed = s.failures.len();
+            if engine.opts.validation && errors > 0 {
+                log::error!("script: {errors} validation error(s)");
+                failed += 1;
+            }
+            if !s.done {
+                log::error!("script did not finish");
+                failed += 1;
+            }
+            if failed > 0 {
+                for f in &s.failures {
+                    eprintln!("FAILED {f}");
+                }
+                drop(engine);
+                std::process::exit(1);
+            }
         }
         return Ok(());
     }

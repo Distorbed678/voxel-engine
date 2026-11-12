@@ -106,8 +106,8 @@ impl GpuProfiler {
             return;
         }
         let f = &mut self.frames[slot];
-        if let Some(idx) = f.open.pop() {
-            if idx != u32::MAX {
+        if let Some(idx) = f.open.pop()
+            && idx != u32::MAX {
                 unsafe {
                     ctx.device.cmd_write_timestamp2(
                         cb,
@@ -117,7 +117,6 @@ impl GpuProfiler {
                     );
                 }
             }
-        }
     }
 
     pub fn destroy(&mut self, ctx: &VkContext) {

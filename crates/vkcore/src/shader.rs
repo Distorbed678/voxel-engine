@@ -184,12 +184,11 @@ pub fn spirv_dont_inline(words: &mut [u32], pred: impl Fn(&str) -> bool) -> usiz
         }
         if op == 54 && wc >= 5 {
             // OpFunction: result type, result id, function control, function type
-            if let Some(name) = names.get(&words[i + 2]) {
-                if pred(name) {
+            if let Some(name) = names.get(&words[i + 2])
+                && pred(name) {
                     words[i + 3] = (words[i + 3] & !0x1) | 0x2;
                     n += 1;
                 }
-            }
         }
         i += wc;
     }

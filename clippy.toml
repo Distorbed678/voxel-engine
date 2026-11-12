@@ -1,0 +1,2 @@
+# Vulkan command recording and graph-building helpers legitimately take many parameters.
+too-many-arguments-threshold = 10

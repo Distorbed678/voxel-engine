@@ -1,0 +1,53 @@
+# Brushes: add, remove, paint, smooth (async region reads) and hold-to-repeat.
+ui off
+select -20 380 0 20 420 3
+block stone
+op fill
+pos 0.5 400.5 -12
+look 180 0
+settle
+expect_pick stone
+
+# add: a sphere of the selected block centred one radius out from the face
+block dirt
+brush add 2 sphere
+click left
+expect_undo 2 Brush add
+settle
+expect_block 0 400 -2 dirt
+expect_block 0 400 -4 dirt
+expect_block 0 400 -5 air
+
+# remove (Shift+LMB inverts add): carves the sphere back out, centred on the hit block
+click left shift
+expect_undo 3 Brush remove
+settle
+expect_block 0 400 -4 air
+
+# paint only recolours solid blocks
+block bricks
+brush paint 1 cube
+click left
+settle
+expect_undo 4 Brush paint
+expect_pick bricks
+
+# smooth runs on a region read and writes something
+brush smooth 3 sphere
+click left
+settle
+expect_undo 5 Brush smooth
+
+# hold-to-repeat: holding remove for one second digs several times (every 0.12 s)
+block stone
+select -20 380 -10 20 420 3
+op fill
+settle
+pos 0.5 400.5 -16
+look 180 0
+settle
+brush remove 1 sphere
+hold left 60
+settle
+expect_block 0 400 -10 air
+expect_block 0 400 -8 air

@@ -151,7 +151,6 @@ pub struct WorldGpu {
     slots: Vec<BatchSlot>,
     pub quad_capacity: u32,
     pub scratch_capacity: u32,
-    pub max_records: u32,
     pub last_batch: (u32, u32),
     pub params: Buffer,
     params_staging: Buffer,
@@ -191,7 +190,6 @@ impl WorldGpu {
             slots,
             quad_capacity,
             scratch_capacity,
-            max_records,
             last_batch: (0, 0),
             params: Buffer::gpu(ctx, "graph_params", 64 * 1024 * 4)?,
             params_staging: Buffer::upload(ctx, "graph_params_staging", 64 * 1024 * 4)?,
@@ -429,11 +427,10 @@ impl WorldGpu {
             .filter(|(_, j)| j.readback)
             .map(|(i, _)| vk::BufferCopy { src_offset: i as u64 * SLOT_U16 * 2, dst_offset: i as u64 * SLOT_U16 * 2, size: SLOT_U16 * 2 })
             .collect();
-        if !rb_regions.is_empty() {
-            if let Some(rb) = &slot.voxel_readback {
+        if !rb_regions.is_empty()
+            && let Some(rb) = &slot.voxel_readback {
                 unsafe { d.cmd_copy_buffer(cb, self.voxels.raw, rb.raw, &rb_regions) };
             }
-        }
         profiler.end(ctx, cb, frame_slot);
         profiler.begin(ctx, cb, frame_slot, "meshing");
         let mesh_push = MeshPush {

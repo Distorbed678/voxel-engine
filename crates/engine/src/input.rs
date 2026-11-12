@@ -21,6 +21,33 @@ pub fn forward_to_imgui(event: &WindowEvent, mouse_captured: bool, fly_mode: boo
     }
 }
 
+/// Deliver a mouse event straight to ImGui, the way the winit backend would. Used without a
+/// window (scripted input in headless runs), where pixels are logical coordinates.
+pub fn feed_imgui(ctx: &mut dear_imgui_rs::Context, event: &WindowEvent) {
+    use winit::event::{MouseButton, MouseScrollDelta};
+    let io = ctx.io_mut();
+    match event {
+        WindowEvent::CursorMoved { position, .. } => io.add_mouse_pos_event([position.x as f32, position.y as f32]),
+        WindowEvent::MouseInput { state, button, .. } => {
+            let b = match button {
+                MouseButton::Left => dear_imgui_rs::MouseButton::Left,
+                MouseButton::Right => dear_imgui_rs::MouseButton::Right,
+                MouseButton::Middle => dear_imgui_rs::MouseButton::Middle,
+                _ => return,
+            };
+            io.add_mouse_button_event(b, *state == ElementState::Pressed);
+        }
+        WindowEvent::MouseWheel { delta, .. } => {
+            let (x, y) = match delta {
+                MouseScrollDelta::LineDelta(x, y) => (*x, *y),
+                MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 40.0, p.y as f32 / 40.0),
+            };
+            io.add_mouse_wheel_event([x, y]);
+        }
+        _ => {}
+    }
+}
+
 #[derive(Default)]
 pub struct Input {
     pub held: HashSet<KeyCode>,
@@ -59,7 +86,7 @@ impl Input {
 
 #[cfg(test)]
 mod tests {
-    use super::forward_to_imgui;
+    use super::{feed_imgui, forward_to_imgui};
     use dear_imgui_rs as imgui;
     use winit::dpi::PhysicalPosition;
     use winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
@@ -83,21 +110,8 @@ mod tests {
 
         /// Forward an event the way the engine does, then deliver it like the winit backend.
         fn send(&mut self, ev: WindowEvent, mouse_captured: bool) {
-            if !forward_to_imgui(&ev, mouse_captured, false) {
-                return;
-            }
-            let io = self.ctx.io_mut();
-            match ev {
-                WindowEvent::CursorMoved { position, .. } => io.add_mouse_pos_event([position.x as f32, position.y as f32]),
-                WindowEvent::MouseInput { state, button, .. } => {
-                    let b = match button {
-                        MouseButton::Left => imgui::MouseButton::Left,
-                        MouseButton::Right => imgui::MouseButton::Right,
-                        _ => imgui::MouseButton::Middle,
-                    };
-                    io.add_mouse_button_event(b, state == ElementState::Pressed);
-                }
-                _ => {}
+            if forward_to_imgui(&ev, mouse_captured, false) {
+                feed_imgui(&mut self.ctx, &ev);
             }
         }
 

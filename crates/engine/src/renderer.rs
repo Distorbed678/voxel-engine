@@ -57,7 +57,6 @@ pub struct FrameData {
     pub pad: [u32; 2],
 }
 
-pub const FLAG_WIREFRAME: u32 = 1;
 pub const FLAG_SHADOWS: u32 = 2;
 pub const FLAG_FOG: u32 = 4;
 pub const FLAG_CROSSHAIR: u32 = 8;
@@ -167,7 +166,6 @@ pub struct Renderer {
     pub shadow_draws: Buffer,
     pub shadow_args: Buffer,
     pub pipes: Pipelines,
-    pub output_format: vk::Format,
 }
 
 fn create_targets(ctx: &VkContext, extent: vk::Extent2D) -> Result<(Image, Image)> {
@@ -370,7 +368,6 @@ impl Renderer {
             shadow_draws: Buffer::gpu(ctx, "shadow_draws", SHADOW_DRAWS as u64 * 16 * CASCADES as u64)?,
             shadow_args: Buffer::gpu(ctx, "shadow_args", 64 * CASCADES as u64)?,
             pipes,
-            output_format,
         })
     }
 

@@ -196,11 +196,10 @@ impl World {
                 for y in mn.y..mx.y {
                     for x in mn.x..mx.x {
                         let p = IVec3::new(x, y, z);
-                        if let Some((a, b)) = inner_box {
-                            if p.cmpge(a).all() && p.cmplt(b).all() {
+                        if let Some((a, b)) = inner_box
+                            && p.cmpge(a).all() && p.cmplt(b).all() {
                                 continue;
                             }
-                        }
                         let key = ChunkKey { lod: lod as u8, pos: p };
                         let c = self.chunks.entry(key).or_default();
                         c.desired = true;
@@ -264,11 +263,10 @@ impl World {
             }
             if covered && (key.lod as u32) + 1 < self.settings.levels {
                 let parent = ChunkKey { lod: key.lod + 1, pos: key.pos.div_euclid(IVec3::splat(2)) };
-                if let Some(p) = self.chunks.get(&parent) {
-                    if p.desired && !p.has_result {
+                if let Some(p) = self.chunks.get(&parent)
+                    && p.desired && !p.has_result {
                         covered = false;
                     }
-                }
             }
             if covered {
                 remove.push(*key);
