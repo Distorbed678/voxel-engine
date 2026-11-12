@@ -101,6 +101,8 @@ pub struct Engine {
     pub blocks: BlockRegistry,
     gen_pipeline: PipelineHandle,
     props_pipeline: PipelineHandle,
+    probe_pipeline: PipelineHandle,
+    pub probes: crate::probe::Probes,
     pub wg: WorldgenSystem,
     pub node_ui: NodeEditorUi,
     pub camera: Camera,
@@ -125,12 +127,12 @@ pub struct Engine {
     ctx: VkContext,
 }
 
-/// Full GLSL sources (terrain pass, props pass) around the generated world-generation code.
-pub fn compose_source(generated: &str) -> (String, String) {
+/// Full GLSL sources (terrain pass, props pass, probe pass) around the generated code.
+pub fn compose_source(generated: &str) -> (String, String, String) {
     let wrap = |main: &str| {
         format!("#version 460\n#include \"worldgen/prelude.glsl\"\n// ---- generated ----\n{generated}\n// ---- main ----\n#include \"{main}\"\n")
     };
-    (wrap("worldgen/terrain_main.glsl"), wrap("worldgen/props_main.glsl"))
+    (wrap("worldgen/terrain_main.glsl"), wrap("worldgen/props_main.glsl"), wrap("worldgen/probe_main.glsl"))
 }
 
 impl Engine {
@@ -194,21 +196,24 @@ impl Engine {
         let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
         let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, PathBuf::from("assets/worldgen"))?;
         // Build the generator synchronously at startup (fall back to the built-in one on error).
-        let (terrain_src, props_src) = wg.sources();
+        let (terrain_src, props_src, probe_src) = wg.sources();
         let t0 = Instant::now();
-        let (gen_pipeline, props_pipeline) = match (
-            pm.create(&ctx, "worldgen_terrain", PipelineSource::ComputeSource { name: "worldgen_terrain.comp".into(), source: terrain_src.clone(), defines: vec![] }),
-            pm.create(&ctx, "worldgen_props", PipelineSource::ComputeSource { name: "worldgen_props.comp".into(), source: props_src, defines: vec![] }),
+        let src = |n: &str, s: String| PipelineSource::ComputeSource { name: format!("{n}.comp"), source: s, defines: vec![] };
+        let (gen_pipeline, props_pipeline, probe_pipeline) = match (
+            pm.create(&ctx, "worldgen_terrain", src("worldgen_terrain", terrain_src)),
+            pm.create(&ctx, "worldgen_props", src("worldgen_props", props_src)),
+            pm.create(&ctx, "worldgen_probe", src("worldgen_probe", probe_src)),
         ) {
-            (Ok(a), Ok(b)) => (a, b),
-            (a, b) => {
-                log::error!("world generator failed to build, using defaults: {:?} {:?}", a.err(), b.err());
+            (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+            (a, b, c) => {
+                log::error!("world generator failed to build, using defaults: {:?} {:?} {:?}", a.err(), b.err(), c.err());
                 wg.reset_to_defaults();
                 wg.update();
-                let (t, p) = wg.sources();
+                let (t, p, q) = wg.sources();
                 (
-                    pm.create(&ctx, "worldgen_terrain", PipelineSource::ComputeSource { name: "worldgen_terrain.comp".into(), source: t, defines: vec![] })?,
-                    pm.create(&ctx, "worldgen_props", PipelineSource::ComputeSource { name: "worldgen_props.comp".into(), source: p, defines: vec![] })?,
+                    pm.create(&ctx, "worldgen_terrain", src("worldgen_terrain", t))?,
+                    pm.create(&ctx, "worldgen_props", src("worldgen_props", p))?,
+                    pm.create(&ctx, "worldgen_probe", src("worldgen_probe", q))?,
                 )
             }
         };
@@ -331,6 +336,8 @@ impl Engine {
             blocks,
             gen_pipeline,
             props_pipeline,
+            probe_pipeline,
+            probes: crate::probe::Probes::new(&ctx, FIF)?,
             wg,
             node_ui: NodeEditorUi::new(),
             camera,
@@ -582,6 +589,18 @@ impl Engine {
     // frame
     // ---------------------------------------------------------------------------------------
 
+    /// Blend fog colour/density toward the biome the camera is in.
+    fn apply_environment(&mut self) {
+        let Some(cam) = self.probes.camera else { return };
+        let Some(b) = self.wg.compiled.biomes.get(cam.biome as usize) else { return };
+        let k = (self.dt * 1.5).min(1.0);
+        let target = Vec3::from(b.fog_color);
+        self.atmosphere.fog_tint = self.atmosphere.fog_tint.lerp(target, k);
+        self.atmosphere.fog_tint_strength = 0.55;
+        let dens = 0.0012 * b.fog_density.max(0.05) * self.ui.fog_scale;
+        self.atmosphere.fog_density += (dens - self.atmosphere.fog_density) * k;
+    }
+
     fn read_pick(&mut self, slot: usize) {
         let words: Vec<u32> = self.renderer.per_slot[slot].pick_readback.read(0, 2);
         let payload = words[0];
@@ -641,6 +660,8 @@ impl Engine {
             self.timeline.wait(&self.ctx, value - FIF as u64)?;
             self.read_pick(slot);
             self.finish_screenshot(slot)?;
+            self.probes.read(slot);
+            self.apply_environment();
         }
         let completed = self.timeline.value(&self.ctx);
         self.profiler.begin_frame(&self.ctx, slot);
@@ -675,6 +696,13 @@ impl Engine {
             if current {
                 let (t, p) = (b.terrain_source.clone(), b.props_source.clone());
                 self.pm.replace(
+                    self.probe_pipeline,
+                    PipelineSource::ComputeSource { name: "worldgen_probe.comp".into(), source: b.probe_source.clone(), defines: vec![] },
+                    b.probe,
+                    b.deps.clone(),
+                    self.frame_counter,
+                );
+                self.pm.replace(
                     self.gen_pipeline,
                     PipelineSource::ComputeSource { name: "worldgen_terrain.comp".into(), source: t, defines: vec![] },
                     b.terrain,
@@ -699,6 +727,7 @@ impl Engine {
                 unsafe {
                     self.ctx.device.destroy_pipeline(b.terrain, None);
                     self.ctx.device.destroy_pipeline(b.props, None);
+                    self.ctx.device.destroy_pipeline(b.probe, None);
                 }
             }
         }
@@ -792,6 +821,40 @@ impl Engine {
                     }
                 }
             }
+        }
+
+        // biome probes (camera environment + minimap)
+        {
+            let pos = self.camera.pos;
+            let n = self.probes.prepare(slot, pos, self.frame_counter);
+            unsafe {
+                self.ctx.device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, self.pm.get(self.probe_pipeline));
+                self.ctx.device.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, self.pm.layout, 0, &[self.bindless.set], &[]);
+            }
+            let push = crate::world::gpu::GenPush {
+                jobs: self.probes.input[slot].address,
+                voxels: self.wgpu.voxels.address,
+                results: self.probes.output[slot].address,
+                edits: self.probes.input[slot].address,
+                params: self.wgpu.params.address,
+                columns: self.wgpu.columns.address,
+                num_jobs: n,
+                seed: self.seed,
+                edit_count: 0,
+                pad: 0,
+            };
+            unsafe {
+                self.ctx.device.cmd_push_constants(cb, self.pm.layout, vk::ShaderStageFlags::ALL, 0, bytemuck::bytes_of(&push));
+                self.ctx.device.cmd_dispatch(cb, n.div_ceil(64), 1, 1);
+            }
+            memory_barrier(
+                &self.ctx,
+                cb,
+                vk::PipelineStageFlags2::COMPUTE_SHADER,
+                vk::AccessFlags2::SHADER_WRITE,
+                vk::PipelineStageFlags2::HOST,
+                vk::AccessFlags2::HOST_READ,
+            );
         }
 
         // frame constants
@@ -1155,6 +1218,9 @@ impl Engine {
                 pool_capacity: self.wgpu.quad_capacity,
                 batch: self.wgpu.last_batch,
                 busy_slots: self.wgpu.busy_slots(),
+                probes: &self.probes,
+                biome_names: &self.wg.compiled.biomes,
+                zone_names: &self.wg.compiled.zones,
                 vsync: self.swapchain.as_ref().map(|s| s.vsync),
                 node_editor_open: &mut self.node_ui.open,
             },
@@ -1198,6 +1264,13 @@ impl Engine {
         }
         if a.quit {
             self.quit = true;
+        }
+        if let Some((x, z)) = a.teleport {
+            self.camera.pos.x = x;
+            self.camera.pos.z = z;
+            if let Some(h) = self.probes.height_at(x, z) {
+                self.camera.pos.y = h as f64 + 40.0;
+            }
         }
         if a.save_generator {
             self.wg.save();
@@ -1243,6 +1316,7 @@ impl Drop for Engine {
         self.timeline.destroy(&self.ctx);
         self.profiler.destroy(&self.ctx);
         self.wgpu.destroy(&self.ctx);
+        self.probes.destroy(&self.ctx);
         self.wg.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);
         if let Some(mut o) = self.offscreen.take() {

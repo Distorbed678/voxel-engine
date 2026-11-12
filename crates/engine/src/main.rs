@@ -8,6 +8,7 @@ mod shaders;
 mod textures;
 mod ui;
 mod node_editor;
+mod probe;
 mod wg;
 mod world;
 

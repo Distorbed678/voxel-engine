@@ -23,6 +23,9 @@ pub struct UiState {
     pub show_blocks: bool,
     pub show_help: bool,
     pub show_demo: bool,
+    pub show_map: bool,
+    pub map_zones: bool,
+    pub fog_scale: f32,
     pub debug_view: u32,
     pub wireframe: bool,
     pub fog: bool,
@@ -49,6 +52,9 @@ impl UiState {
             show_blocks: true,
             show_help: true,
             show_demo: false,
+            show_map: true,
+            map_zones: false,
+            fog_scale: 1.0,
             debug_view: 0,
             wireframe: false,
             fog: true,
@@ -85,6 +91,7 @@ pub struct UiActions {
     pub redo: bool,
     pub quit: bool,
     pub save_generator: bool,
+    pub teleport: Option<(f64, f64)>,
 }
 
 pub struct UiCtx<'a> {
@@ -105,6 +112,9 @@ pub struct UiCtx<'a> {
     pub busy_slots: usize,
     pub vsync: Option<bool>,
     pub node_editor_open: &'a mut bool,
+    pub probes: &'a crate::probe::Probes,
+    pub biome_names: &'a [worldgen::BiomeInfo],
+    pub zone_names: &'a [worldgen::ZoneInfo],
 }
 
 pub fn apply_style(ctx: &mut dear_imgui_rs::Context) {
@@ -153,6 +163,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.checkbox("Camera", &mut c.state.show_camera);
             ui.checkbox("Blocks", &mut c.state.show_blocks);
             ui.checkbox("Help", &mut c.state.show_help);
+            ui.checkbox("Minimap", &mut c.state.show_map);
             ui.checkbox("ImGui demo", &mut c.state.show_demo);
         });
         ui.text_colored([0.6, 0.8, 1.0, 1.0], format!("  {:.0} fps  {:.2} ms", c.stats.fps, 1000.0 / c.stats.fps.max(1.0)));
@@ -243,7 +254,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             }
             ui.slider("Day length (s)", 30.0f32, 3600.0f32, &mut c.atmosphere.day_length_s);
             ui.slider("Exposure", 0.1f32, 4.0f32, &mut c.atmosphere.exposure);
-            ui.slider("Fog density", 0.0f32, 0.03f32, &mut c.atmosphere.fog_density);
+            ui.slider("Fog amount", 0.0f32, 4.0f32, &mut c.state.fog_scale);
             ui.slider("Fog height falloff", 0.0f32, 0.1f32, &mut c.atmosphere.fog_height_falloff);
             if ui.button("Reload shaders (F5)") {
                 c.state.force_reload = true;
@@ -360,12 +371,79 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
         c.state.show_help = open;
     }
 
+    if c.state.show_map {
+        minimap(ui, c, &mut a);
+    }
+
     if c.state.show_demo {
         ui.show_demo_window(&mut c.state.show_demo);
     }
 
     draw_toasts(ui, c.state);
     a
+}
+
+fn minimap(ui: &Ui, c: &mut UiCtx, a: &mut UiActions) {
+    let ds = ui.io().display_size();
+    let mut open = c.state.show_map;
+    ui.window("Minimap")
+        .size([300.0, 380.0], Condition::FirstUseEver)
+        .position([ds[0] - 310.0, 640.0], Condition::FirstUseEver)
+        .opened(&mut open)
+        .build(|| {
+            if let Some(cam) = c.probes.camera {
+                let b = c.biome_names.get(cam.biome as usize).map(|b| b.name.as_str()).unwrap_or("?");
+                let z = c.zone_names.get(cam.zone as usize).map(|z| z.name.as_str()).unwrap_or("?");
+                ui.text(format!("Zone: {z}   Biome: {b}"));
+            }
+            ui.checkbox("Zones", &mut c.state.map_zones);
+            ui.same_line();
+            ui.text_disabled("click to teleport");
+            let Some(((ox, oz, sp), cells)) = &c.probes.map else {
+                ui.text("waiting for probes...");
+                return;
+            };
+            let n = crate::probe::MAP_N;
+            let avail = ui.content_region_avail();
+            let size = avail[0].min(avail[1]).max(64.0);
+            let cell = size / n as f32;
+            let p0 = ui.cursor_screen_pos();
+            ui.invisible_button("##map", [size, size]);
+            let clicked = ui.is_item_clicked();
+            let mouse = ui.mouse_pos();
+            let dl = ui.get_window_draw_list();
+            let hs: Vec<f32> = cells.iter().map(|r| r.height).filter(|h| *h > -1000.0).collect();
+            let (hmin, hmax) = hs.iter().fold((f32::MAX, f32::MIN), |(a, b), h| (a.min(*h), b.max(*h)));
+            for j in 0..n {
+                for i in 0..n {
+                    let r = cells[j * n + i];
+                    let col = if c.state.map_zones {
+                        c.zone_names.get(r.zone as usize).map(|z| z.map_color).unwrap_or([1.0, 0.0, 1.0])
+                    } else {
+                        c.biome_names.get(r.biome as usize).map(|b| b.map_color).unwrap_or([1.0, 0.0, 1.0])
+                    };
+                    let shade = if r.height > -1000.0 && hmax > hmin { 0.65 + 0.35 * (r.height - hmin) / (hmax - hmin) } else { 0.6 };
+                    let water = r.height > -1000.0 && r.height < 62.0;
+                    let col = if water { [0.15, 0.3, 0.6] } else { col };
+                    let x = p0[0] + i as f32 * cell;
+                    let y = p0[1] + j as f32 * cell;
+                    dl.add_rect([x, y], [x + cell + 0.5, y + cell + 0.5], [col[0] * shade, col[1] * shade, col[2] * shade, 1.0]).filled(true).build();
+                }
+            }
+            // camera marker
+            let cx = p0[0] + ((c.camera.pos.x - ox) / sp) as f32 * cell;
+            let cz = p0[1] + ((c.camera.pos.z - oz) / sp) as f32 * cell;
+            let f = c.camera.forward();
+            dl.add_circle([cx, cz], 4.0, [1.0, 1.0, 1.0, 1.0]).filled(true).build();
+            dl.add_line([cx, cz], [cx + f.x * 14.0, cz + f.z * 14.0], [1.0, 0.2, 0.2, 1.0]).thickness(2.0).build();
+            if clicked {
+                let wx = ox + ((mouse[0] - p0[0]) / cell) as f64 * sp;
+                let wz = oz + ((mouse[1] - p0[1]) / cell) as f64 * sp;
+                a.teleport = Some((wx, wz));
+            }
+            ui.text(format!("{:.1} km across", (n as f64 * sp) / 1000.0));
+        });
+    c.state.show_map = open;
 }
 
 fn draw_toasts(ui: &Ui, state: &mut UiState) {

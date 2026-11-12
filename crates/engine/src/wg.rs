@@ -35,6 +35,7 @@ struct Job {
     id: u64,
     terrain: String,
     props: String,
+    probe: String,
     /// skip the quick tier and go straight to the optimised build
     optimized_only: bool,
 }
@@ -45,8 +46,10 @@ pub struct BuiltPipelines {
     pub optimized: bool,
     pub terrain: vk::Pipeline,
     pub props: vk::Pipeline,
+    pub probe: vk::Pipeline,
     pub terrain_source: String,
     pub props_source: String,
+    pub probe_source: String,
     pub deps: Vec<PathBuf>,
     pub ms: f32,
 }
@@ -125,29 +128,51 @@ impl WorldgenSystem {
                         let build = || -> Result<BuiltPipelines> {
                             let mut a = compiler.compile_source("worldgen_terrain.comp", &job.terrain, ShaderKind::Compute, &[])?;
                             let mut b = compiler.compile_source("worldgen_props.comp", &job.props, ShaderKind::Compute, &[])?;
+                            let mut c = compiler.compile_source("worldgen_probe.comp", &job.probe, ShaderKind::Compute, &[])?;
                             if !optimized {
                                 vkcore::shader::spirv_dont_inline(&mut a.spirv, crate::shaders::worldgen_noinline);
                                 vkcore::shader::spirv_dont_inline(&mut b.spirv, crate::shaders::worldgen_noinline);
+                                vkcore::shader::spirv_dont_inline(&mut c.spirv, crate::shaders::worldgen_noinline);
                             }
-                            // the driver compile dominates: build both pipelines in parallel
-                            let (terrain, props) = std::thread::scope(|sc| {
+                            // the driver compile dominates: build the pipelines in parallel
+                            let (terrain, props, probe) = std::thread::scope(|sc| {
                                 let h = sc.spawn(|| create_compute(&device, layout, &b.spirv));
+                                let hp = sc.spawn(|| create_compute(&device, layout, &c.spirv));
                                 let t = create_compute(&device, layout, &a.spirv);
-                                (t, h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("props build thread panicked"))))
+                                (
+                                    t,
+                                    h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("props build thread panicked"))),
+                                    hp.join().unwrap_or_else(|_| Err(anyhow::anyhow!("probe build thread panicked"))),
+                                )
                             });
+                            let probe = match probe {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    for r in [&terrain, &props] {
+                                        if let Ok(p) = r {
+                                            unsafe { device.destroy_pipeline(*p, None) };
+                                        }
+                                    }
+                                    return Err(e);
+                                }
+                            };
                             let terrain = match terrain {
                                 Ok(t) => t,
                                 Err(e) => {
                                     if let Ok(p) = props {
                                         unsafe { device.destroy_pipeline(p, None) };
                                     }
+                                    unsafe { device.destroy_pipeline(probe, None) };
                                     return Err(e);
                                 }
                             };
                             let props = match props {
                                 Ok(p) => p,
                                 Err(e) => {
-                                    unsafe { device.destroy_pipeline(terrain, None) };
+                                    unsafe {
+                                        device.destroy_pipeline(terrain, None);
+                                        device.destroy_pipeline(probe, None);
+                                    }
                                     return Err(e);
                                 }
                             };
@@ -158,8 +183,10 @@ impl WorldgenSystem {
                                 optimized,
                                 terrain,
                                 props,
+                                probe,
                                 terrain_source: job.terrain.clone(),
                                 props_source: job.props.clone(),
+                                probe_source: job.probe.clone(),
                                 deps,
                                 ms: t0.elapsed().as_secs_f32() * 1000.0,
                             })
@@ -251,7 +278,7 @@ impl WorldgenSystem {
         self.biome_table.write(0, &t);
     }
 
-    pub fn sources(&self) -> (String, String) {
+    pub fn sources(&self) -> (String, String, String) {
         compose_source(&self.compiled.source)
     }
 
@@ -266,13 +293,13 @@ impl WorldgenSystem {
                     let src = self.compiled.source.clone();
                     let already = self.pending_source.as_ref() == Some(&src) || (self.pending_source.is_none() && self.active_source == src);
                     if !already {
-                        let (terrain, props) = self.sources();
+                        let (terrain, props, probe) = self.sources();
                         let id = self.next_id;
                         self.next_id += 1;
                         self.pending_id = Some(id);
                         self.pending_source = Some(src);
                         self.optimizing_id = None;
-                        let _ = self.tx.send(Job { id, terrain, props, optimized_only: false });
+                        let _ = self.tx.send(Job { id, terrain, props, probe, optimized_only: false });
                     }
                     self.last_error = None;
                 }
@@ -327,11 +354,11 @@ impl WorldgenSystem {
     /// Build the fully optimised pipelines for the currently active source (used at startup,
     /// which boots with the quick build).
     pub fn request_optimized(&mut self) {
-        let (terrain, props) = self.sources();
+        let (terrain, props, probe) = self.sources();
         let id = self.next_id;
         self.next_id += 1;
         self.optimizing_id = Some(id);
-        let _ = self.tx.send(Job { id, terrain, props, optimized_only: true });
+        let _ = self.tx.send(Job { id, terrain, props, probe, optimized_only: true });
     }
 
     pub fn save(&mut self) {
