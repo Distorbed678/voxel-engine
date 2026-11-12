@@ -1,0 +1,112 @@
+#version 460
+// Temporal anti-aliasing resolve. The scene is rendered with a sub-pixel jitter each frame; this
+// pass blends the new frame into an accumulated history:
+//   - reprojection (without the jitter): the closest depth in a 3x3 neighbourhood is unprojected with this frame's
+//     (jittered) inverse view-projection and projected with the previous frame's unjittered one
+//     (already corrected for camera movement); the sky reprojects as a direction
+//   - history is sampled with a 5-tap Catmull-Rom filter (stays sharp under motion)
+//   - variance clipping in YCoCg against the current 3x3 neighbourhood rejects stale history
+//   - blending happens in a luminance-compressed space so bright pixels don't flicker
+#include "common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 1, rgba16f) uniform image2D gImageRGBA16F[];
+
+layout(push_constant, scalar) uniform PC {
+    FrameRef frame;
+    uint historyIn;   // sampled (linear clamp)
+    uint historyOut;  // storage
+    uint reset;
+    uint sceneTex;    // this frame's HDR image (FrameData.hdrTex points at the TAA output)
+    vec2 jitter;      // this frame's projection jitter in pixels
+} pc;
+
+vec3 to_ycocg(vec3 c) {
+    return vec3(dot(c, vec3(0.25, 0.5, 0.25)), dot(c, vec3(0.5, 0.0, -0.5)), dot(c, vec3(-0.25, 0.5, -0.25)));
+}
+vec3 from_ycocg(vec3 c) {
+    return vec3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
+}
+// luminance compression (Karis) so bright pixels don't dominate the blend
+vec3 compress(vec3 c) { return c / (1.0 + max(c.r, max(c.g, c.b))); }
+vec3 expand(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-4); }
+
+// 5-tap Catmull-Rom history sample (Jimenez)
+vec3 sample_history(vec2 uv, vec2 res) {
+    vec2 pos = uv * res;
+    vec2 c1 = floor(pos - 0.5) + 0.5;
+    vec2 f = pos - c1;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    vec2 w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2;
+    vec2 tc12 = (c1 + w2 / w12) / res;
+    vec2 tc0 = (c1 - 1.0) / res;
+    vec2 tc3 = (c1 + 2.0) / res;
+    uint h = pc.historyIn;
+    vec3 s = texture(gTex2D[nonuniformEXT(h)], vec2(tc12.x, tc0.y)).rgb * (w12.x * w0.y)
+           + texture(gTex2D[nonuniformEXT(h)], vec2(tc0.x, tc12.y)).rgb * (w0.x * w12.y)
+           + texture(gTex2D[nonuniformEXT(h)], vec2(tc12.x, tc12.y)).rgb * (w12.x * w12.y)
+           + texture(gTex2D[nonuniformEXT(h)], vec2(tc3.x, tc12.y)).rgb * (w3.x * w12.y)
+           + texture(gTex2D[nonuniformEXT(h)], vec2(tc12.x, tc3.y)).rgb * (w12.x * w3.y);
+    float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return max(s / wsum, vec3(0.0));
+}
+
+// clip `h` towards the centre of the box [lo, hi]
+vec3 clip_box(vec3 lo, vec3 hi, vec3 h) {
+    vec3 c = 0.5 * (hi + lo);
+    vec3 e = 0.5 * (hi - lo) + 1e-5;
+    vec3 v = h - c;
+    vec3 a = abs(v / e);
+    float m = max(a.x, max(a.y, a.z));
+    return m > 1.0 ? c + v / m : h;
+}
+
+void main() {
+    FrameData f = pc.frame.d;
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = ivec2(f.resolution);
+    if (any(greaterThanEqual(px, size))) return;
+
+    vec3 cur = vec3(0.0);
+    vec3 m1 = vec3(0.0), m2 = vec3(0.0);
+    float closest = 0.0;   // reversed-Z: larger = closer
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 q = clamp(px + ivec2(x, y), ivec2(0), size - 1);
+            vec3 c = texelFetch(gTex2D[nonuniformEXT(pc.sceneTex)], q, 0).rgb;
+            if (x == 0 && y == 0) cur = c;
+            vec3 k = to_ycocg(compress(c));
+            m1 += k;
+            m2 += k * k;
+            closest = max(closest, texelFetch(gTex2D[nonuniformEXT(f.depthTex)], q, 0).r);
+        }
+    }
+    vec3 mean = m1 / 9.0;
+    vec3 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
+    vec3 lo = mean - 1.25 * sigma;
+    vec3 hi = mean + 1.25 * sigma;
+
+    // reproject
+    vec2 uv = (vec2(px) + 0.5) / f.resolution;
+    vec4 rel = f.invViewProj * vec4(uv * 2.0 - 1.0, closest, 1.0);
+    vec4 prev = closest > 0.0 ? f.prevViewProj * vec4(rel.xyz / rel.w, 1.0) : f.prevViewProj * vec4(rel.xyz, 0.0);
+    // the surface seen at this pixel sits at (pixel - jitter) in the unjittered image: add the
+    // jitter back so a static scene samples the history in place instead of drifting with it
+    vec2 puv = prev.xy / prev.w * 0.5 + 0.5 + pc.jitter / f.resolution;
+    bool valid = pc.reset == 0u && prev.w > 0.0 && all(greaterThanEqual(puv, vec2(0.0))) && all(lessThanEqual(puv, vec2(1.0)));
+
+    vec3 c = to_ycocg(compress(cur));
+    vec3 result = c;
+    if (valid) {
+        vec3 h = clip_box(lo, hi, to_ycocg(compress(sample_history(puv, f.resolution))));
+        // more weight on the new frame when the history moved a lot (less smearing)
+        vec2 motion = (puv - uv) * f.resolution;
+        float alpha = mix(0.08, 0.2, clamp(length(motion) / 8.0, 0.0, 1.0));
+        result = mix(h, c, alpha);
+    }
+    imageStore(gImageRGBA16F[pc.historyOut], px, vec4(expand(from_ycocg(result)), 1.0));
+}

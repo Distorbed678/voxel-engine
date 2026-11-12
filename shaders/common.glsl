@@ -87,6 +87,7 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) buffer F32Buf { flo
 #define FLAG_SHADOWS 2u
 #define FLAG_FOG 4u
 #define FLAG_CROSSHAIR 8u
+#define FLAG_TAA 16u
 
 vec3 hsv2rgb(vec3 c) {
     vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);

@@ -7,6 +7,7 @@ mod input;
 mod light;
 mod renderer;
 mod shaders;
+mod taa;
 mod textures;
 mod ui;
 mod node_editor;

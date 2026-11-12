@@ -63,6 +63,7 @@ pub struct FrameData {
 pub const FLAG_SHADOWS: u32 = 2;
 pub const FLAG_FOG: u32 = 4;
 pub const FLAG_CROSSHAIR: u32 = 8;
+pub const FLAG_TAA: u32 = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]

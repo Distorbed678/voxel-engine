@@ -15,7 +15,8 @@ probes (camera biome, minimap)        probe dispatch
                                       shadow cascades x4 (cull + task/mesh depth)
                                       main pass: terrain (task/mesh) + models + sky
                                       translucent pass: water + volumetric clouds
-                                      tonemap + ImGui -> swapchain
+                                      TAA resolve (compute) -> history
+                                      tonemap (+ TAA sharpen) + ImGui -> swapchain
 ```
 
 All buffers are reached through buffer device addresses in push constants. There is one
@@ -57,6 +58,23 @@ Streams per chunk: 6 opaque directions, 6 transparent directions, and model inst
   (f64). Only faces turned away from the sun are drawn, plus a slope bias.
 - **Precision**: rendering is camera-relative, with an integer camera block plus a fractional
   offset, so it stays precise anywhere in the i32 world.
+
+## Temporal anti-aliasing
+
+The projection is jittered by a sub-pixel Halton (2,3) offset every frame (8-frame cycle). Culling,
+shadows and the editing overlay stay unjittered. `shaders/render/taa.comp` resolves each frame into
+a ping-ponged RGBA16F history:
+
+- **Reprojection**: the closest depth in the 3×3 neighbourhood is unprojected with this frame's
+  jittered inverse view-projection, then projected with the previous frame's unjittered one. That
+  one is re-based on the current camera position (rendering is camera-relative). The current jitter
+  is added back, so a static scene samples the history in place. Sky pixels reproject as
+  directions.
+- **History**: a 5-tap Catmull-Rom sample, clipped against the current neighbourhood's mean ±1.25σ
+  in YCoCg. Blending runs in a luminance-compressed space, with 8–20% new frame (more under fast
+  motion).
+- The tonemap pass reads the resolved image and applies a light 4-neighbour sharpen, clamped to
+  the neighbourhood so it doesn't ring.
 
 ## Block light and sky light
 

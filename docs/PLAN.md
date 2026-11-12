@@ -144,6 +144,9 @@ These follow from the choices above.
   GPU, smooth trilinear sampling. Lava, magma, lamps, lanterns, crystals and glow mushrooms light
   their surroundings in colour; caves without sky access go dark. About 0.25 ms on frames where
   it runs (only after changes). Golden images cover a lit room and a removed light source.
+- [x] **TAA**: Halton-jittered projection, compute resolve with depth reprojection (jitter
+  removed), Catmull-Rom history, YCoCg variance clipping, clamped sharpen in the tonemap pass.
+  About 0.04 ms at 720p. Toggle in the Render panel (`taa on|off` in scripts).
 
 **Measured** (RTX 4080, 1080p, `--benchmark`):
 - 279 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
@@ -214,15 +217,19 @@ suggestions; the rest is the earlier roadmap.
    hand-test checklist.
 4. ~~Colored block light + sky light~~. Follow-ups worth considering: a larger volume or a
    cheap far-field glow for distant lava (the volume reaches ±64 blocks), bloom.
-5. TAA.
-6. Cave biomes + river node (completes the requested terrain features).
-7. Small open items: per-biome colour grading, overdraw debug view, node comments / group boxes.
-8. Ambient particles + weather.
-9. GPU graph interpreter, so structural edits are instant while the compiled shader builds
+5. ~~TAA~~, then **bloom** (approved 2026-11-11).
+6. **Far-field lava glow** (approved 2026-11-11): distant emissive areas light their
+   surroundings beyond the ±64-block light volume.
+7. Cave biomes + river node (completes the requested terrain features).
+8. Small open items: per-biome colour grading, overdraw debug view, node comments / group boxes,
+   **node auto-layout** (approved 2026-11-11; also tidies the overlapping default biome graphs),
+   the known issues above.
+9. Ambient particles + weather.
+10. GPU graph interpreter, so structural edits are instant while the compiled shader builds
    (today: about 3 s cold, about 50 ms cached).
-10. Hi-Z occlusion culling (main pass is 2–2.5 ms in dense views).
-11. Hytale-style noise/height biome selectors (alongside Voronoi).
-12. Block rotation states (stairs, logs) and partial-height water.
+11. Hi-Z occlusion culling (main pass is 2–2.5 ms in dense views).
+12. Hytale-style noise/height biome selectors (alongside Voronoi).
+13. Block rotation states (stairs, logs) and partial-height water.
 
 Still not selected (ask before doing): node preview thumbnails, isolated biome preview,
 camera bookmarks / cinematic paths.

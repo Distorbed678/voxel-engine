@@ -109,6 +109,11 @@ pub struct Engine {
     probe_pipeline: PipelineHandle,
     pub probes: crate::probe::Probes,
     pub light: crate::light::LightGpu,
+    taa: crate::taa::Taa,
+    /// Camera position of the previous frame (TAA reprojection).
+    prev_cam_pos: DVec3,
+    /// Whether the previous frame used TAA (turning it on resets the history).
+    prev_taa: bool,
     pub wg: WorldgenSystem,
     pub node_ui: NodeEditorUi,
     pub tools: crate::tools::Tools,
@@ -212,6 +217,7 @@ impl Engine {
 
         let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, &blocks, extent, out_format, FIF)?;
         let light = crate::light::LightGpu::new(&ctx, &mut pm, &mut bindless)?;
+        let taa = crate::taa::Taa::new(&ctx, &mut pm, &mut bindless, extent)?;
         let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
         let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
         prefabs.upload(&ctx)?;
@@ -368,6 +374,9 @@ impl Engine {
             probe_pipeline,
             probes: crate::probe::Probes::new(&ctx, FIF)?,
             light,
+            taa,
+            prev_cam_pos: DVec3::ZERO,
+            prev_taa: false,
             wg,
             node_ui: NodeEditorUi::new(),
             tools: crate::tools::Tools::new(prefabs),
@@ -998,7 +1007,19 @@ impl Engine {
         // frame constants
         let extent = self.renderer.extent;
         let aspect = extent.width as f32 / extent.height.max(1) as f32;
-        let m = self.camera.matrices(aspect);
+        let unjittered = self.camera.matrices(aspect);
+        let mut m = self.camera.matrices(aspect);
+        if self.ui.taa {
+            // sub-pixel jitter (culling keeps the unjittered frustum)
+            let j = crate::taa::jitter_matrix(crate::taa::jitter(self.frame_counter), extent);
+            m.view_proj = j * m.view_proj;
+            m.proj = j * m.proj;
+            m.inv_view_proj = m.view_proj.inverse();
+            if !self.prev_taa || (self.camera.pos - self.prev_cam_pos).length() > 64.0 {
+                self.taa.reset = true;
+            }
+        }
+        self.prev_taa = self.ui.taa;
         let pick_px = if self.fly_mode || (self.window.is_none() && self.script.is_none()) {
             (extent.width / 2, extent.height / 2)
         } else {
@@ -1014,7 +1035,8 @@ impl Engine {
             fr.pick_px = pick_px;
             fr.extent = extent;
         }
-        self.prev_view_proj = m.view_proj;
+        self.prev_view_proj = unjittered.view_proj;
+        self.prev_cam_pos = self.camera.pos;
 
         self.renderer.record_scene(
             &self.ctx,
@@ -1031,6 +1053,10 @@ impl Engine {
             self.ui.shadows,
             self.ui.clouds,
         );
+        if self.ui.taa {
+            let frame_addr = self.renderer.per_slot[slot].frame_buf.address;
+            self.taa.record(&self.ctx, cb, &self.pm, self.bindless.set, frame_addr, self.renderer.hdr_tex, extent, self.frame_counter, &mut self.profiler, profiler_slot);
+        }
 
         // ---- output (tonemap + UI) ----
         let (target_image, target_view, target_extent) = if let Some(sc) = &self.swapchain {
@@ -1271,7 +1297,8 @@ impl Engine {
             inv_view_proj: m.inv_view_proj.to_cols_array_2d(),
             view: m.view.to_cols_array_2d(),
             proj: m.proj.to_cols_array_2d(),
-            prev_view_proj: self.prev_view_proj.to_cols_array_2d(),
+            // previous frame's unjittered view-projection, re-based on this frame's camera
+            prev_view_proj: (self.prev_view_proj * Mat4::from_translation((self.camera.pos - self.prev_cam_pos).as_vec3())).to_cols_array_2d(),
             frustum: m.frustum.map(|p| p.to_array()),
             cam_block: [m.cam_block.x, m.cam_block.y, m.cam_block.z, 0],
             cam_frac: [m.cam_frac.x, m.cam_frac.y, m.cam_frac.z, 0.0],
@@ -1291,7 +1318,8 @@ impl Engine {
             pick_pixel: pick_px.0.min(0xFFFF) | (pick_px.1.min(0xFFFF) << 16),
             block_tex_albedo: self.renderer.albedo_tex,
             block_tex_normal: self.renderer.normal_tex,
-            hdr_tex: self.renderer.hdr_tex,
+            // what the tonemap pass reads: the TAA resolve when enabled
+            hdr_tex: if self.ui.taa { self.taa.sampled[self.taa.output_index(self.frame_counter)] } else { self.renderer.hdr_tex },
             depth_tex: self.renderer.depth_tex,
             exposure: [self.atmosphere.exposure, self.atmosphere.time_of_day, 0.0, 0.0],
             shadow_vp: [[[0.0; 4]; 4]; 4],
@@ -1325,6 +1353,9 @@ impl Engine {
         fd.cam_forward = [fw.x, fw.y, fw.z, self.ui.shadow_strength * (1.0 - night)];
         if self.ui.shadows {
             fd.flags |= crate::renderer::FLAG_SHADOWS;
+        }
+        if self.ui.taa {
+            fd.flags |= crate::renderer::FLAG_TAA;
         }
         self.renderer.per_slot[slot].frame_buf.write(0, std::slice::from_ref(&fd));
     }
@@ -1448,6 +1479,7 @@ impl Engine {
         sc.recreate(&self.ctx, size.width, size.height, vsync)?;
         let extent = sc.extent;
         self.renderer.resize(&self.ctx, &mut self.bindless, extent)?;
+        self.taa.resize(&self.ctx, &mut self.bindless, extent)?;
         Ok(())
     }
 }
@@ -1477,6 +1509,7 @@ impl Drop for Engine {
         self.tools.prefabs.destroy(&self.ctx);
         self.probes.destroy(&self.ctx);
         self.light.destroy(&self.ctx, &mut self.bindless);
+        self.taa.destroy(&self.ctx, &mut self.bindless);
         self.wg.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);
         if let Some(mut o) = self.offscreen.take() {
