@@ -185,7 +185,8 @@ uint shape_prefab(in PropLayer L, vec3 r, uint seed) {
     for (uint i = 0u; i < rot; ++i) c = ivec2(-c.y, c.x);
     ivec3 l = ivec3(c.x + size.x / 2, q.y, c.y + size.z / 2);
     if (any(lessThan(l, ivec3(0))) || any(greaterThanEqual(l, size))) return 0u;
-    return uint(pc.prefabData.c[e.x + uint((l.y * size.z + l.z) * size.x + l.x)]);
+    // local directions map to world ones by `rot` turns the other way
+    return rotate_value(uint(pc.prefabData.c[e.x + uint((l.y * size.z + l.z) * size.x + l.x)]), (4u - rot) & 3u);
 }
 
 uint prop_shape(in PropLayer L, vec3 r, uint seed) {

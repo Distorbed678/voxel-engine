@@ -31,7 +31,15 @@ float gScale;   // cell size in blocks (1 << gLod)
 // Node parameters are read through this so dragging a slider never recompiles the shader.
 float P(uint i) { return pc.params.p[i]; }
 
-uint block_kind(uint b) { return b < NUM_BLOCKS ? BLOCK_KIND[b] : 0u; }
+uint block_kind(uint b) { b &= 0xFFFu; return b < NUM_BLOCKS ? BLOCK_KIND[b] : 0u; }
+// a voxel value turned `steps` quarter turns around Y, +X towards +Z (BlockRegistry::rotated_y)
+uint rotate_value(uint v, uint steps) {
+    uint id = v & 0xFFFu, st = v >> 12;
+    if (id >= NUM_BLOCKS || st == 0u) return v;
+    if (BLOCK_ROT[id] == 1u && (steps & 1u) == 1u && st <= 2u) st = 3u - st;  // column axis X <-> Z
+    else if (BLOCK_ROT[id] == 2u) st = ((st - 1u + steps) & 3u) + 1u;       // stairs facing
+    return id | (st << 12);
+}
 
 // ---- helpers available to generated code -------------------------------------------------
 float curve_eval(uint base, uint count, float x) {

@@ -26,7 +26,7 @@ uint gBase;
 uint gJob;
 
 uint vox(ivec3 p) { return uint(pc.voxels.v[gBase + vidx(p)]); }
-uint kindOf(uint b) { return pc.blocks.b[b].flags & 15u; }
+uint kindOf(uint b) { return pc.blocks.b[BLOCK_ID(b)].flags & 15u; }
 
 // Does neighbour block `nb` hide the face of block `b` (kind kb)?
 bool occludes(uint nb, uint b, uint kb) {

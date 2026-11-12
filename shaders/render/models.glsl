@@ -52,7 +52,7 @@ vec3 rot_v(vec3 v, uint rot) {
 }
 
 // Returns false for unused slots.
-bool model_quad(uint model, uint i, uint seed, uint nmask, out ModelQuad q) {
+bool model_quad(uint model, uint i, uint seed, uint nmask, uint state, out ModelQuad q) {
     q.twoSided = false;
     q.wind = false;
     switch (model) {
@@ -84,6 +84,7 @@ bool model_quad(uint model, uint i, uint seed, uint nmask, out ModelQuad q) {
         else if ((nmask & (1u << 1u)) != 0u) rot = 1u;  // -X
         else if ((nmask & (1u << 5u)) != 0u) rot = 2u;  // -Z
         else if ((nmask & (1u << 0u)) != 0u) rot = 3u;  // +X
+        if (state != 0u) rot = (state - 1u) & 3u;       // placed with a fixed facing
         if (i < 6u) q = box_face(vec3(0), vec3(1, 0.5, 1), i);
         else if (i < 10u) {
             uint faces[4] = uint[4](2u, 5u, 0u, 1u); // top, front(-Z), +X, -X of the back step

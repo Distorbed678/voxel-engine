@@ -40,6 +40,43 @@ pub struct BlockDef {
     pub category: &'static str,
 }
 
+/// Voxel values: block id in the low 12 bits, state in the high 4 (`shaders/voxel.glsl`).
+pub const STATE_SHIFT: u16 = 12;
+
+pub fn block_id(v: u16) -> u16 {
+    v & 0x0FFF
+}
+
+/// What a block's state means, which decides how it turns with a rotated selection or prefab.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rotation {
+    /// no state
+    None = 0,
+    /// the axis: 0 = Y, 1 = X, 2 = Z
+    Column = 1,
+    /// the facing: 0 = automatic, 1..4 = model rotations 0..3
+    Facing = 2,
+}
+
+impl BlockDef {
+    /// A cube with one texture on top/bottom and another on the sides (logs, basalt, cactus):
+    /// it can lie along X or Z.
+    pub fn is_column(&self) -> bool {
+        let f = &self.faces;
+        self.kind == BlockKind::Opaque && f[2] == f[3] && f[0] == f[1] && f[0] == f[4] && f[0] == f[5] && f[0] != f[2]
+    }
+
+    pub fn rotation(&self) -> Rotation {
+        if self.is_column() {
+            Rotation::Column
+        } else if self.kind == BlockKind::Model && self.model == models::STAIRS {
+            Rotation::Facing
+        } else {
+            Rotation::None
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuBlockInfo {
@@ -233,6 +270,60 @@ impl BlockRegistry {
         self.by_name.get(name).copied()
     }
 
+    /// The definition of a voxel value (the state bits are ignored; unknown ids give air).
+    pub fn get(&self, v: u16) -> &BlockDef {
+        self.blocks.get(block_id(v) as usize).unwrap_or(&self.blocks[0])
+    }
+
+    /// `v` with the state it gets when placed against a face with `normal`, the camera looking
+    /// along `forward`: column blocks (logs) take the face's axis, stairs face away from the camera.
+    pub fn oriented(&self, v: u16, normal: glam::IVec3, forward: glam::Vec3) -> u16 {
+        let state = match self.get(v).rotation() {
+            Rotation::Column => {
+                if normal.x != 0 { 1 } else if normal.z != 0 { 2 } else { 0 }
+            }
+            Rotation::Facing => {
+            // facing 1..4 = rotations 0..3 of the stairs model (back step towards +Z, -X, -Z, +X)
+                if forward.z.abs() >= forward.x.abs() {
+                    if forward.z >= 0.0 { 1 } else { 3 }
+                } else if forward.x < 0.0 {
+                    2
+                } else {
+                    4
+                }
+            }
+            Rotation::None => return v,
+        };
+        block_id(v) | (state << STATE_SHIFT)
+    }
+
+    /// `v` turned `steps` quarter turns around Y, +X towards +Z (as `Prefab::rotated` turns
+    /// positions; `rotate_value` in `shaders/worldgen/prelude.glsl` is the GPU copy).
+    pub fn rotated_y(&self, v: u16, steps: u32) -> u16 {
+        let st = v >> STATE_SHIFT;
+        let st = match self.get(v).rotation() {
+            Rotation::Column if steps % 2 == 1 && (st == 1 || st == 2) => 3 - st,
+            Rotation::Facing if st != 0 => ((st - 1 + steps as u16) & 3) + 1,
+            _ => return v,
+        };
+        block_id(v) | (st << STATE_SHIFT)
+    }
+
+    /// `name`, or `name:state` for a block with a state (prefab files, test scripts).
+    pub fn value_name(&self, v: u16) -> String {
+        match v >> STATE_SHIFT {
+            0 => self.get(v).name.to_string(),
+            st => format!("{}:{st}", self.get(v).name),
+        }
+    }
+
+    /// The inverse of `value_name`.
+    pub fn parse_value(&self, s: &str) -> Option<u16> {
+        let (name, state) = s.split_once(':').unwrap_or((s, "0"));
+        let state = state.parse::<u16>().ok().filter(|&st| st < 16)?;
+        Some(self.try_id(name)? | (state << STATE_SHIFT))
+    }
+
     pub fn gpu_table(&self) -> Vec<GpuBlockInfo> {
         self.blocks
             .iter()
@@ -261,8 +352,10 @@ impl BlockRegistry {
             s.push_str(&format!("#define B_{} {}u\n", d.name.to_uppercase(), i));
         }
         s.push_str(&format!("#define NUM_BLOCKS {}u\n", self.blocks.len()));
-        let kinds: Vec<String> = self.blocks.iter().map(|d| format!("{}u", d.kind as u32)).collect();
-        s.push_str(&format!("const uint BLOCK_KIND[{}] = uint[]({});\n#endif\n", self.blocks.len(), kinds.join(", ")));
+        let table = |f: &dyn Fn(&BlockDef) -> u32| self.blocks.iter().map(|d| format!("{}u", f(d))).collect::<Vec<_>>().join(", ");
+        let n = self.blocks.len();
+        s.push_str(&format!("const uint BLOCK_KIND[{n}] = uint[]({});\n", table(&|d| d.kind as u32)));
+        s.push_str(&format!("const uint BLOCK_ROT[{n}] = uint[]({});\n#endif\n", table(&|d| d.rotation() as u32)));
         s
     }
 }
@@ -270,5 +363,53 @@ impl BlockRegistry {
 impl Default for BlockRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::{IVec3, Vec3};
+
+    #[test]
+    fn placing_orients_logs_and_stairs() {
+        let r = BlockRegistry::new();
+        let log = r.id("oak_log");
+        // logs take the axis of the face they're placed against
+        assert_eq!(r.oriented(log, IVec3::Y, Vec3::Z), log);
+        assert_eq!(r.oriented(log, IVec3::X, Vec3::Z), log | (1 << STATE_SHIFT));
+        assert_eq!(r.oriented(log, -IVec3::Z, Vec3::Z), log | (2 << STATE_SHIFT));
+        // stairs face away from the camera
+        let st = r.id("stone_stairs");
+        assert_eq!(r.oriented(st, IVec3::Y, Vec3::new(0.1, -0.5, 0.9)) >> STATE_SHIFT, 1);
+        assert_eq!(r.oriented(st, IVec3::Y, Vec3::new(-0.9, -0.5, 0.1)) >> STATE_SHIFT, 2);
+        assert_eq!(r.oriented(st, IVec3::Y, Vec3::new(0.0, -0.5, -1.0)) >> STATE_SHIFT, 3);
+        assert_eq!(r.oriented(st, IVec3::Y, Vec3::new(1.0, -0.5, 0.0)) >> STATE_SHIFT, 4);
+        // other blocks are placed as they are, and lookups ignore the state
+        let stone = r.id("stone");
+        assert_eq!(r.oriented(stone, IVec3::X, Vec3::Z), stone);
+        assert_eq!(r.get(log | (2 << STATE_SHIFT)).name, "oak_log");
+        assert!(r.get(log).is_column() && !r.get(stone).is_column());
+    }
+
+    #[test]
+    fn rotating_turns_states() {
+        let r = BlockRegistry::new();
+        let (log, st, stone) = (r.id("oak_log"), r.id("stone_stairs"), r.id("stone"));
+        let s = |v: u16, k: u16| v | (k << STATE_SHIFT);
+        assert_eq!(r.rotated_y(s(log, 1), 1), s(log, 2));
+        assert_eq!(r.rotated_y(s(log, 2), 3), s(log, 1));
+        assert_eq!(r.rotated_y(s(log, 1), 2), s(log, 1));
+        assert_eq!(r.rotated_y(log, 1), log);
+        // stairs: back step +Z -> -X -> -Z -> +X
+        assert_eq!(r.rotated_y(s(st, 1), 1), s(st, 2));
+        assert_eq!(r.rotated_y(s(st, 4), 1), s(st, 1));
+        assert_eq!(r.rotated_y(s(st, 2), 3), s(st, 1));
+        assert_eq!(r.rotated_y(st, 1), st); // automatic stays automatic
+        assert_eq!(r.rotated_y(stone, 1), stone);
+        for v in [stone, s(log, 2), s(st, 3)] {
+            assert_eq!(r.parse_value(&r.value_name(v)), Some(v));
+        }
+        assert_eq!(r.parse_value("oak_log:16"), None);
     }
 }

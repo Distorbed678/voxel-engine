@@ -65,6 +65,12 @@ void main() {
 
     // texture coordinates in block units (repeat sampler => tiles per block)
     vec2 uv = vec2(dot(vLocal, T), dot(vLocal, B));
+    // rotated logs: the bark grain (texture v) follows the log's axis on its side faces
+    uint logAxis = BLOCK_STATE(block) & 3u;
+    if (logAxis != 0u && (pc.blocks.b[BLOCK_ID(block)].flags & 15u) != KIND_MODEL) {
+        uint la = logAxis == 1u ? 0u : 2u;
+        if (axis != la && abs(B[la]) < 0.5) uv = uv.yx;
+    }
     uint layer = face_layer(pc.blocks, block, dir);
     vec4 albedo = texture(gTex2DArray[nonuniformEXT(f.blockTexAlbedo)], vec3(uv, float(layer)));
 #ifdef TRANSPARENT
@@ -78,7 +84,7 @@ void main() {
     vec4 nmap = texture(gTex2DArray[nonuniformEXT(f.blockTexNormal)], vec3(uv, float(layer)));
 
     // Hytale-style biome tinting: recolour the green/blue parts of tintable blocks
-    uint tint = (pc.blocks.b[block].flags >> 4) & 15u;
+    uint tint = (pc.blocks.b[BLOCK_ID(block)].flags >> 4) & 15u;
     if (tint != 0u) {
         vec3 tc = tint == 1u ? bio.grass.rgb : (tint == 2u ? bio.foliage.rgb : bio.water.rgb);
         tc = pow(tc, vec3(2.2));
@@ -116,7 +122,7 @@ void main() {
     vec3 blockL = Lv.rgb * Lv.rgb * BLOCK_LIGHT_GAIN;
     vec3 lit = albedo.rgb * (sun * ndl * shadow * sunVis + skyAmb * aoV * 0.55 * skyVis + (blockL + CAVE_AMBIENT) * aoV);
     // emissive blocks
-    uint emission = (pc.blocks.b[block].flags >> 8) & 0xFFu;
+    uint emission = (pc.blocks.b[BLOCK_ID(block)].flags >> 8) & 0xFFu;
     // self-glow: squared albedo keeps saturated colours (lava stays orange instead of white)
     lit += albedo.rgb * albedo.rgb * float(emission) / 255.0 * EMISSIVE_GAIN;
 

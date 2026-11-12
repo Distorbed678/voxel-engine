@@ -134,7 +134,18 @@ impl Tools {
     }
 
     /// Handle mouse input for the active tool. Returns true if the input was consumed.
-    pub fn handle_input(&mut self, input: &Input, dt: f32, fly_mode: bool, pick: Option<PickHit>, world: &mut World, ui: &mut UiState, blocks: &BlockRegistry) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn handle_input(
+        &mut self,
+        input: &Input,
+        dt: f32,
+        fly_mode: bool,
+        pick: Option<PickHit>,
+        cam_forward: glam::Vec3,
+        world: &mut World,
+        ui: &mut UiState,
+        blocks: &BlockRegistry,
+    ) {
         self.since_apply += dt;
         // Alt + wheel: brush radius
         if input.alt() && input.scroll != 0.0 {
@@ -147,8 +158,8 @@ impl Tools {
         let secondary_held = if fly_mode { input.mouse_held[1] } else { input.mouse_held[0] && input.shift() };
         if input.mouse_pressed[2] {
             if hit.block != 0 {
-                ui.selected_block = hit.block;
-                ui.toast(format!("Picked {}", blocks.blocks[hit.block as usize].display));
+                ui.selected_block = crate::blocks::block_id(hit.block); // placing orients it again
+                ui.toast(format!("Picked {}", blocks.get(hit.block).display));
             }
             return;
         }
@@ -157,7 +168,8 @@ impl Tools {
                 if primary {
                     Self::write(world, "Break", &[(hit.block_pos, 0)]);
                 } else if secondary {
-                    Self::write(world, "Place", &[(hit.block_pos + hit.normal, ui.selected_block)]);
+                    let b = blocks.oriented(ui.selected_block, hit.normal, cam_forward);
+                    Self::write(world, "Place", &[(hit.block_pos + hit.normal, b)]);
                 }
             }
             ToolKind::Brush => {
@@ -215,7 +227,7 @@ impl Tools {
     /// A region read finished: run the operation that requested it.
     pub fn region_ready(&mut self, r: RegionRead, world: &mut World, blocks: &BlockRegistry, ui: &mut UiState) {
         let Some(op) = self.pending.remove(&r.id) else { return };
-        let solid = |b: u16| b != 0 && matches!(blocks.blocks[b as usize].kind, BlockKind::Opaque | BlockKind::Cutout);
+        let solid = |b: u16| b != 0 && matches!(blocks.get(b).kind, BlockKind::Opaque | BlockKind::Cutout);
         match op {
             Pending::Paint { positions, block } => {
                 let w: Vec<(IVec3, u16)> = positions.into_iter().filter(|p| solid(r.get(*p))).map(|p| (p, block)).collect();
@@ -251,7 +263,7 @@ impl Tools {
                     for z in 0..r.size.z {
                         for x in 0..r.size.x {
                             let p = r.min + IVec3::new(x, y, z);
-                            if r.get(p) == from {
+                            if crate::blocks::block_id(r.get(p)) == from {
                                 w.push((p, to));
                             }
                         }
@@ -311,9 +323,9 @@ impl Tools {
         }
     }
 
-    pub fn rotate_clipboard(&mut self) {
+    pub fn rotate_clipboard(&mut self, blocks: &BlockRegistry) {
         if let Some(c) = &self.clipboard {
-            self.clipboard = Some(c.rotated());
+            self.clipboard = Some(c.rotated(blocks));
         }
     }
 
@@ -357,7 +369,7 @@ impl Tools {
             let mut open = self.show_tools;
             let ds = ui.io().display_size();
             ui.window("Tools").size([300.0, 420.0], Condition::FirstUseEver).position([ds[0] - 620.0, 30.0], Condition::FirstUseEver).opened(&mut open).build(|| {
-                let sel = &blocks.blocks[state.selected_block as usize];
+                let sel = blocks.get(state.selected_block);
                 ui.text(format!("Block: {}", sel.display));
                 if ui.radio_button("Block", self.kind == ToolKind::Block) {
                     self.kind = ToolKind::Block;
@@ -433,7 +445,7 @@ impl Tools {
                         }
                         ui.same_line();
                         if ui.button("Rotate 90") {
-                            self.rotate_clipboard();
+                            self.rotate_clipboard(blocks);
                         }
                         ui.checkbox("Paste air", &mut self.paste_air);
                         if let Some(c) = &self.clipboard {

@@ -24,7 +24,7 @@ void main() {
     for (int z = 0; z < COARSE_CELL; ++z)
     for (int y = 0; y < COARSE_CELL; ++y)
     for (int x = 0; x < COARSE_CELL; ++x) {
-        uint b = uint(pc.voxels.v[job * SLOT_U16 + vidx(c * COARSE_CELL + ivec3(x, y, z))]);
+        uint b = BLOCK_ID(uint(pc.voxels.v[job * SLOT_U16 + vidx(c * COARSE_CELL + ivec3(x, y, z))]));
         uint l = pc.blocks.b[b].light;
         emit = max(emit, uvec3(l & 255u, (l >> 8) & 255u, (l >> 16) & 255u));
         blocked += (l >> 28) & 1u;

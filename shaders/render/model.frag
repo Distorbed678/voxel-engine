@@ -27,7 +27,7 @@ void main() {
     if (albedo.a < 0.5) discard;
 
     BiomeGpu bio = pc.biomes.b[biome];
-    uint tint = (pc.blocks.b[block].flags >> 4) & 15u;
+    uint tint = (pc.blocks.b[BLOCK_ID(block)].flags >> 4) & 15u;
     if (tint != 0u) {
         vec3 tc = pow(tint == 1u ? bio.grass.rgb : bio.foliage.rgb, vec3(2.2));
         float lum = dot(albedo.rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -48,7 +48,7 @@ void main() {
     float sunVis = smoothstep(0.3, 0.8, Lv.a);
     vec3 blockL = Lv.rgb * Lv.rgb * BLOCK_LIGHT_GAIN;
     vec3 lit = albedo.rgb * (sun * ndl * sunVis + skyAmb * ao * 0.55 * skyVis + (blockL + CAVE_AMBIENT) * ao);
-    uint emission = (pc.blocks.b[block].flags >> 8) & 0xFFu;
+    uint emission = (pc.blocks.b[BLOCK_ID(block)].flags >> 8) & 0xFFu;
     // self-glow: squared albedo keeps saturated colours (lava stays orange instead of white)
     lit += albedo.rgb * albedo.rgb * float(emission) / 255.0 * EMISSIVE_GAIN;
     vec3 color = apply_fog(f, lit, vRel, normalize(vRel));

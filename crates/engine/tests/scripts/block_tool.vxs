@@ -53,5 +53,15 @@ click right
 settle
 expect_block 0 400 0 planks
 expect_pick planks
+
+# logs lie along the axis of the face they're placed against; stairs face away from the camera
+block oak_log
+click right
+settle
+expect_block 0 400 -1 oak_log:2
+block stone_stairs
+click right
+settle
+expect_block 0 400 -2 stone_stairs:1
 fly off
-expect_undo 5 Place
+expect_undo 7 Place

@@ -50,3 +50,21 @@ select -2 398 0 2 402 1
 op save_prefab zz_script_test
 settle
 expect_prefab zz_script_test
+
+# rotating the clipboard turns block states too: an X log becomes a Z log, stairs turn a step
+select 8 400 0 8 400 0
+block oak_log:1
+op fill
+select 9 400 0 9 400 0
+block stone_stairs:1
+op fill
+settle
+select 8 400 0 9 400 0
+op copy
+settle
+op rotate
+expect_clipboard 1 1 2
+op paste
+settle
+expect_block 0 400 -1 oak_log:2
+expect_block 0 400 0 stone_stairs:2

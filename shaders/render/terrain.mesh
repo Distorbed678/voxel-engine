@@ -49,10 +49,15 @@ void main() {
         vec3 corners[4] = vec3[4](c0, c0 + U * float(w), c0 + U * float(w) + V * float(h), c0 + V * float(h));
         uint vb = qi * 4u;
         uint blk = q.y & 0xFFFFu;
-        bool sway = lod == 0u && (pc.blocks.b[blk].flags & 15u) == KIND_CUTOUT;
+        bool sway = lod == 0u && (pc.blocks.b[BLOCK_ID(blk)].flags & 15u) == KIND_CUTOUT;
+        // water surfaces sit 1/8 block below the top of their cell (the same at every LOD); the top
+        // edge of an exposed water side drops with them so it doesn't stick up past the surface
+        bool water = dir != 3u && ((pc.blocks.b[BLOCK_ID(blk)].flags >> 4) & 15u) == 3u;
+        float topY = max(max(corners[0].y, corners[1].y), max(corners[2].y, corners[3].y));
         for (uint c = 0u; c < 4u; ++c) {
             vec3 local = corners[c] * scale;
             vec3 rel = vec3(relOriginI + ivec3(local)) - f.camFrac.xyz;
+            if (water && corners[c].y == topY) rel.y -= 0.125;
             if (sway) {
                 // position-based sway keeps neighbouring leaf quads welded together
                 vec3 wp = vec3(rec.origin & 1023) + local;

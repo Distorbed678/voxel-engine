@@ -252,7 +252,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             }
             if let Some(p) = c.pick {
                 ui.separator();
-                let name = c.blocks.blocks.get(p.block as usize).map(|b| b.display).unwrap_or("?");
+                let name = c.blocks.get(p.block).display;
                 ui.text(format!("looking at {} @ {} {} {}", name, p.block_pos.x, p.block_pos.y, p.block_pos.z));
                 ui.text(format!("normal {:?} lod {} dist {:.1}", p.normal.to_array(), p.lod, p.distance));
             }
@@ -398,7 +398,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
     if c.state.show_blocks {
         let mut open = true;
         ui.window("Blocks").size([300.0, 300.0], Condition::FirstUseEver).position([ds[0] - 310.0, 330.0], Condition::FirstUseEver).opened(&mut open).build(|| {
-            let sel = &c.blocks.blocks[c.state.selected_block as usize];
+            let sel = c.blocks.get(c.state.selected_block);
             ui.text(format!("Selected: {}", sel.display));
             ui.input_text("Filter", &mut c.state.block_filter).build();
             let filter = c.state.block_filter.to_lowercase();
@@ -416,7 +416,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
                     BlockKind::Model => format!("{} (model)##{i}", b.display),
                     _ => format!("{}##{i}", b.display),
                 };
-                if ui.selectable_config(&label).selected(c.state.selected_block as usize == i).build() {
+                if ui.selectable_config(&label).selected(crate::blocks::block_id(c.state.selected_block) as usize == i).build() {
                     c.state.selected_block = i as u16;
                 }
             }

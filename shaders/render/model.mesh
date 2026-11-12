@@ -46,11 +46,11 @@ void main() {
         uint nmask = (m.x >> 15) & 63u;
         uint block = m.y & 0xFFFFu;
         uint biome = (m.y >> 24) & 127u;
-        uint model = (pc.blocks.b[block].flags >> 16) & 0xFFFFu;
+        uint model = (pc.blocks.b[BLOCK_ID(block)].flags >> 16) & 0xFFFFu;
         ivec3 wp = rec.origin + lp * int(scale);
         uint seed = hash_u32(uint(wp.x) * 73856093u ^ uint(wp.y) * 19349663u ^ uint(wp.z) * 83492791u);
         ModelQuad q;
-        bool ok = model_quad(model, qi, seed, nmask, q);
+        bool ok = model_quad(model, qi, seed, nmask, BLOCK_STATE(block), q);
         if (ok) {
             // cull faces lying on the block boundary against opaque neighbours
             vec3 nrm = normalize(cross(q.U, q.V));

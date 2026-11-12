@@ -36,6 +36,24 @@ pipeline layout: a bindless image set plus 256 bytes of push constants.
 - Voxels are transient. They only exist between generation and meshing inside a batch, so
   only meshes are resident: 8-byte quads in a 512 MiB pool with a CPU range allocator.
 
+## Block values
+
+- A voxel is a u16: the block id in the low 12 bits and a state in the high 4 (`BLOCK_ID` /
+  `BLOCK_STATE` in `shaders/voxel.glsl`, `blocks::block_id` on the CPU). Table lookups mask
+  the id. Greedy merging compares whole values, so blocks with different states never merge.
+- **Column blocks** (logs, basalt, cactus: one texture on the ends, another on the sides) store
+  their axis: 0 = Y, 1 = X, 2 = Z. `face_layer` puts the end texture on that axis, and the
+  fragment shader turns the bark grain to follow it.
+- **Stairs** store a facing. 0 keeps the automatic orientation (back step against an opaque
+  neighbour), and 1..4 fix the model rotation.
+- Placing a block orients it: a log takes the axis of the face it is placed against, and stairs
+  face away from the camera. Rotating the clipboard turns the states along with the blocks
+  (`BlockRegistry::rotated_y`), and so do prefab props placed with a random rotation
+  (`rotate_value` in the generator prelude).
+- Prefab files store `name` or `name:state` palette entries. Test scripts use the same form.
+- **Water** surfaces are drawn 1/8 block below the top of their cell. The mesh shader lowers the
+  top face and the top edge of exposed sides, so a lake sits a little below its banks.
+
 ## GPU meshing
 
 1. The count pass runs one invocation per (chunk, face direction, 32×32 slice). It builds a

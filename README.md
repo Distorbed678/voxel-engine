@@ -38,7 +38,7 @@ Dear ImGui debug UI.
 | **Light** | Colored block light and sky light are propagated on the GPU in a volume around the camera, with a coarse far-field volume so distant lava still lights its banks. Caves go dark and lanterns, lava and crystals light them. |
 | **Weather and particles** | Snow, rain, drifting ash, rising embers, fireflies at night and pollen by day, set per biome and scaled by a weather cycle. Rain and snow stay out of caves and from under roofs. |
 | **Stylized rendering** | Cascaded sun shadows, TAA, bloom, day/night with sun, moon and stars, volumetric clouds, waves with Fresnel reflections, per-biome fog and tints, wind on leaves, per-cell AO and normal-mapped 32×32 procedural textures. |
-| **Editing that survives regeneration** | Blocks, brushes (add, remove, paint, smooth), box selection with fill/replace/copy/paste/rotate, undo and redo, and prefabs the generator can place. Edits live in an overlay, so they survive any graph change. |
+| **Editing that survives regeneration** | Blocks (logs and stairs orient to the face and view you place them from), brushes (add, remove, paint, smooth), box selection with fill/replace/copy/paste/rotate, undo and redo, and prefabs the generator can place. Edits live in an overlay, so they survive any graph change. |
 | **Tested without a human** | A scripting mode drives the engine headless: camera, mouse and keys, tools, screenshots. GPU regression tests check picking, edits, UI capture and golden images. |
 
 ## Gallery

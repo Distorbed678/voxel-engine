@@ -618,7 +618,7 @@ impl Engine {
         if !can_act {
             return;
         }
-        self.tools.handle_input(&self.input, self.dt, self.fly_mode, self.pick, &mut self.world, &mut self.ui, &self.blocks);
+        self.tools.handle_input(&self.input, self.dt, self.fly_mode, self.pick, self.camera.forward(), &mut self.world, &mut self.ui, &self.blocks);
     }
 
     /// New / changed prefabs: re-upload and recompile the generator so Prefab nodes see them.

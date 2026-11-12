@@ -85,9 +85,22 @@ uint vidx(ivec3 p) {
     return uint((p.y + 1) * CA * CA + (p.z + 1) * CA + (p.x + 1));
 }
 
-uint block_kind(BlockTable t, uint b) { return t.b[b].flags & 15u; }
+// A voxel value is a block id (low 12 bits) plus a state (high 4 bits): the axis of column blocks
+// such as logs (0 = Y, 1 = X, 2 = Z) or the facing of stairs (0 = automatic, 1..4 = fixed).
+#define BLOCK_ID(v) ((v) & 0xFFFu)
+#define BLOCK_STATE(v) ((v) >> 12)
 
-uint face_layer(BlockTable t, uint b, uint dir) {
+uint block_kind(BlockTable t, uint b) { return t.b[BLOCK_ID(b)].flags & 15u; }
+
+uint face_layer(BlockTable t, uint v, uint dir) {
+    uint b = BLOCK_ID(v);
+    uint axis = BLOCK_STATE(v) & 3u;
+    if (axis != 0u && (t.b[b].flags & 15u) != KIND_MODEL) {
+        // rotated column block: the end textures go on its axis, the Y faces show the side
+        uint la = axis == 1u ? 0u : 2u;
+        if ((dir >> 1) == la) dir = 2u + (dir & 1u);
+        else if ((dir >> 1) == 1u) dir = 0u;
+    }
     uint packed = t.b[b].faces[dir >> 1];
     return (dir & 1u) == 0u ? (packed & 0xFFFFu) : (packed >> 16);
 }

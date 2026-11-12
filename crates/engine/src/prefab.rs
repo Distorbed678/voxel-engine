@@ -35,8 +35,8 @@ impl Prefab {
         self.blocks[((p.y * self.size.z + p.z) * self.size.x + p.x) as usize]
     }
 
-    /// Rotate 90 degrees around Y.
-    pub fn rotated(&self) -> Prefab {
+    /// Rotate 90 degrees around Y (+X towards +Z); block states turn with it.
+    pub fn rotated(&self, reg: &BlockRegistry) -> Prefab {
         let s = self.size;
         let ns = IVec3::new(s.z, s.y, s.x);
         let mut out = vec![0u16; self.blocks.len()];
@@ -44,7 +44,7 @@ impl Prefab {
             for z in 0..s.z {
                 for x in 0..s.x {
                     let (nx, nz) = (s.z - 1 - z, x);
-                    out[((y * ns.z + nz) * ns.x + nx) as usize] = self.get(IVec3::new(x, y, z));
+                    out[((y * ns.z + nz) * ns.x + nx) as usize] = reg.rotated_y(self.get(IVec3::new(x, y, z)), 1);
                 }
             }
         }
@@ -71,7 +71,7 @@ impl PrefabLibrary {
                 let name = f.file_stem().unwrap().to_string_lossy().to_string();
                 match std::fs::read_to_string(&f).map_err(anyhow::Error::from).and_then(|s| ron::from_str::<PrefabFile>(&s).map_err(Into::into)) {
                     Ok(pf) => {
-                        let ids: Vec<u16> = pf.palette.iter().map(|n| reg.try_id(n).unwrap_or(0)).collect();
+                        let ids: Vec<u16> = pf.palette.iter().map(|n| reg.parse_value(n).unwrap_or(0)).collect();
                         let mut blocks = Vec::new();
                         for (run, idx) in pf.runs {
                             blocks.extend(std::iter::repeat_n(ids.get(idx as usize).copied().unwrap_or(0), run as usize));
@@ -98,7 +98,7 @@ impl PrefabLibrary {
         let mut runs: Vec<(u32, u16)> = Vec::new();
         for &b in &p.blocks {
             let i = *index.entry(b).or_insert_with(|| {
-                palette.push(reg.blocks[b as usize].name.to_string());
+                palette.push(reg.value_name(b));
                 (palette.len() - 1) as u16
             });
             match runs.last_mut() {

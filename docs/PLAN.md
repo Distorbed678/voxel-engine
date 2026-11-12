@@ -88,7 +88,9 @@ These follow from the choices above.
   first, then a fully inlined build (about 8 s cold, roughly 5× faster generation) replaces it
   in the background. The NVIDIA shader cache makes repeat builds about 50 ms.
 - **Edits at coarse LODs** are point-sampled. They are exact at LOD0.
-- **Stairs** auto-orient against an opaque neighbour, because blocks have no rotation state yet.
+- **Block states**: voxels keep the u16 format, with the id in the low 12 bits and a state in
+  the high 4, rather than a second state buffer. Stairs placed by the generator keep state 0
+  (auto-orient against an opaque neighbour).
 
 ## 4. Status
 
@@ -176,6 +178,10 @@ These follow from the choices above.
 - [x] **Far-field block light**: a coarse 4-blocks-per-cell volume (block light only) over the
   LOD0 box, filled by LOD0 jobs as a side effect, sampled beyond the fine volume. Distant lava
   lights its banks.
+- [x] **Block rotation states and lower water**: logs and other column blocks lie along X, Y or Z
+  (end texture and bark grain follow the axis), stairs have a fixed facing. Placing orients them
+  (face axis / away from the camera); clipboard rotation and rotated prefab props turn them;
+  prefab files and scripts write `name:state`. Water surfaces sit 1/8 block lower.
 
 **Measured** (RTX 4080, 1080p, `--benchmark`):
 - 279 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
@@ -187,9 +193,13 @@ These follow from the choices above.
 Covered by the GPU script tests (`cargo test --release -p voxel-engine -- --ignored`):
 - [x] Picking: break/place/pick block in fly mode and in editor mode, undo/redo shortcuts
 - [x] Brushes: add/remove/paint/smooth (async region reads) and hold-to-repeat
-- [x] Selection: replace/clear/copy/rotate/paste, saving a prefab
+- [x] Selection: replace/clear/copy/rotate/paste, saving a prefab, block states turning with
+  a rotated clipboard
+- [x] Block states: logs take the axis of the face they're placed on, stairs face away from the
+  camera
 - [x] UI capture: panels own the mouse after an RMB look-drag (the input fix)
-- [x] Rendering: six golden images (daylight, badlands, night, lava, biome view, normals)
+- [x] Rendering: eleven golden images (daylight, badlands, night, lava, biome view, normals,
+  a lamp-lit room before/after removing the lamp, cave, rivers, weather)
 - [x] ImGui window drag/resize and node-canvas zoom via synthetic input (used by the media
   script)
 
@@ -222,9 +232,8 @@ Still needs a hand test (real input devices or complex UI flows):
   regression scripts + golden images in `crates/engine/tests/`.
 - [x] **GitHub Actions CI.** Clippy (`-D warnings`) and the CPU tests on every push, with a badge
   in the README. GPU rendering can't run in CI.
-- [ ] **Anti-aliasing (TAA).** There is no AA today, so the 4 km view shimmers. Temporal AA
-  with jittered projection, motion vectors from the previous view-projection, neighbourhood
-  clamping.
+- [x] **Anti-aliasing (TAA).** Jittered projection, reprojection from depth and the previous
+  view-projection, YCoCg variance clipping, then a clamped sharpen.
 - [x] **Ambient particles + weather.** 24k GPU particles in a camera-wrapping box: snow, rain,
   ash, embers, fireflies (night), pollen (day), from Biome Output settings × weather intensity
   (auto cycle or slider; also thickens clouds and fog). Killed inside blocks / under roofs via the
@@ -252,7 +261,7 @@ suggestions; the rest is the earlier roadmap.
     pipelines in parallel (4.7 s -> 2.4 s cold). Revisit if rebuild waits still bother.
 11. ~~Hi-Z occlusion culling~~.
 12. ~~Hytale-style noise/height biome selectors~~.
-13. Block rotation states (stairs, logs) and partial-height water.
+13. ~~Block rotation states (stairs, logs) and partial-height water~~.
 
 Still not selected (ask before doing): node preview thumbnails, isolated biome preview,
 camera bookmarks / cinematic paths.

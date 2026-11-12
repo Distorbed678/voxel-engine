@@ -27,12 +27,12 @@
 //! | `click left\|right\|middle [shift]` / `hold BUTTON FRAMES [shift]` / `scroll DY` | mouse input |
 //! | `drag X1 Y1 X2 Y2 FRAMES [BUTTON]` | press at one pixel, move to another over FRAMES, release |
 //! | `key [ctrl+][shift+]NAME` | press a key for one frame, e.g. `key ctrl+z` |
-//! | `tool block\|brush\|select` / `block NAME` | choose the tool / selected block |
+//! | `tool block\|brush\|select` / `block NAME[:STATE]` | choose the tool / selected block |
 //! | `brush add\|remove\|paint\|smooth [RADIUS] [sphere\|cube\|cylinder]` | brush settings |
 //! | `select X1 Y1 Z1 X2 Y2 Z2` | set the box selection |
 //! | `op fill\|clear\|copy\|paste\|rotate\|replace FROM\|save_prefab NAME` | selection operations |
 //! | `expect_pick NAME\|none` | block under the cursor (from the GPU pick) |
-//! | `expect_block X Y Z NAME` | actual block at a position (GPU region read: generation + edits) |
+//! | `expect_block X Y Z NAME[:STATE]` | actual block at a position (GPU region read: generation + edits) |
 //! | `expect_capture true\|false` | whether the UI owns the mouse |
 //! | `expect_undo N [LABEL]` | undo history length and the label of the newest entry |
 //! | `expect_prefab NAME` | a prefab of that name is loaded (e.g. after `op save_prefab`) |
@@ -546,7 +546,7 @@ impl Engine {
                                 let want = r.get(origin + l);
                                 if got != want {
                                     if bad < 8 {
-                                        let name = |b: u16| self.blocks.blocks.get(b as usize).map(|d| d.name).unwrap_or("?");
+                                        let name = |b: u16| self.blocks.get(b).name;
                                         log::warn!("script: apron {} has {} but the world has {}", origin + l, name(got), name(want));
                                     }
                                     bad += 1;
@@ -617,7 +617,7 @@ impl Engine {
         let (pos, want) = (*pos, *want);
         let got = r.get(pos);
         if got != want {
-            let name = |b: u16| self.blocks.blocks.get(b as usize).map(|d| d.name).unwrap_or("?");
+            let name = |b: u16| self.blocks.value_name(b);
             let msg = format!("block at {pos}: expected {}, got {}", name(want), name(got));
             let line = s.line;
             s.fail(line, msg);
@@ -852,7 +852,8 @@ impl Engine {
     }
 
     fn exec(&mut self, s: &mut Script, line: usize, cmd: Cmd) -> Result<Option<Busy>> {
-        let block_id = |e: &Engine, name: &str| e.blocks.try_id(name);
+        // NAME or NAME:STATE (column blocks: axis 1 = X, 2 = Z; stairs: facing 1..4)
+        let block_id = |e: &Engine, name: &str| e.blocks.parse_value(name);
         match cmd {
             Cmd::Pos(p) => self.camera.pos = p,
             Cmd::Look(yaw, pitch) => {
@@ -1011,15 +1012,16 @@ impl Engine {
                 Op::Clear => self.tools.fill_selection(&mut self.world, 0),
                 Op::Copy => self.tools.copy_selection(&mut self.world),
                 Op::Paste => self.tools.paste_at_pick(&mut self.world, self.pick),
-                Op::Rotate => self.tools.rotate_clipboard(),
+                Op::Rotate => self.tools.rotate_clipboard(&self.blocks),
                 Op::Replace(name) => match block_id(self, &name) {
-                    Some(from) => self.tools.replace_in_selection(&mut self.world, from, self.ui.selected_block),
+                    // replace matches ids whatever their state
+                    Some(from) => self.tools.replace_in_selection(&mut self.world, crate::blocks::block_id(from), self.ui.selected_block),
                     None => s.fail(line, format!("unknown block `{name}`")),
                 },
                 Op::SavePrefab(name) => self.tools.save_selection_as_prefab(&mut self.world, &name),
             },
             Cmd::ExpectPick(want) => {
-                let got = self.pick.map(|h| self.blocks.blocks[h.block as usize].name.to_string());
+                let got = self.pick.map(|h| self.blocks.get(h.block).name.to_string());
                 if got != want {
                     s.fail(line, format!("expected pick {want:?}, got {got:?}"));
                 }
@@ -1050,7 +1052,7 @@ impl Engine {
                 }
             }
             Cmd::ExpectSelected(want) => {
-                let got = self.blocks.blocks[self.ui.selected_block as usize].name;
+                let got = self.blocks.get(self.ui.selected_block).name;
                 if got != want {
                     s.fail(line, format!("expected selected block {want}, got {got}"));
                 }
