@@ -35,6 +35,16 @@ void main() {
     uint nonAir = 0u;
     uint opaque = 0u;
 
+    if ((job.flags & GENJOB_PREVIEW) != 0u) {
+        // a prop preview stands on nothing: the props pass draws it into empty space
+        if (valid) {
+            uint base = jobIdx * SLOT_U16;
+            for (int ly = 0; ly < CA; ++ly) pc.voxels.v[base + uint(ly * CA * CA + lc.y * CA + lc.x)] = uint16_t(0u);
+            pc.columns.c[jobIdx * uint(CA * CA) + uint(lc.y * CA + lc.x)] = uint16_t(0u);
+        }
+        valid = false;
+    }
+
     if (valid) {
         int scale = 1 << job.lod;
         int half_ = scale >> 1;

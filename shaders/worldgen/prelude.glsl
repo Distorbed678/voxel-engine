@@ -22,6 +22,8 @@ layout(push_constant, scalar) uniform GenPC {
     uint editCount;
     uint pad;
     BlockTable blocks;   // kinds and rotations (BlockInfo.flags), so block edits never recompile
+    uint64_t propPrims;  // props pass: scratch for building prop instances (props_lib.glsl)
+    uint64_t propSegs;
 } pc;
 
 // Globals set by the main template before calling into generated code.
@@ -154,25 +156,25 @@ uint ground_cover(vec3 p, uint ground, uint on, float chance, vec4 w, uvec4 b, u
 }
 
 // ---- props ------------------------------------------------------------------------------
-#define PROP_TREE 1u
-#define PROP_MUSHROOM 2u
-#define PROP_BOULDER 3u
-#define PROP_COLUMN 4u
-#define PROP_SPIKE 5u
-#define PROP_GEODE 6u
+#define PROP_GRAPH 1u
 #define PROP_PREFAB 7u
 
 struct PropLayer {
     uint biome;
-    uint kind;
-    uint variant;
+    uint kind;       // PROP_GRAPH or PROP_PREFAB
+    uint graph;      // prop graph index (PROP_GRAPH)
+    uint variant;    // prefab index (PROP_PREFAB)
     uint b0; uint b1; uint b2;
     float a; float b; float c;
+    float R; float H; float below;   // the box searched around an anchor
     float spacing;
     float chance;
     float jitter;
     uint surface;
     bool anySurface;
+    bool buried;     // inside the ground (geodes) instead of on open surfaces
+    bool far;        // kept on coarse LODs
+    bool replaceAll; // overwrites terrain, not only air
     float yMin; float yMax;
     uint seed;
     bool hasMask;
@@ -180,8 +182,15 @@ struct PropLayer {
 
 PropLayer prop_default() {
     PropLayer L;
-    L.biome = 0xFFFFu; L.kind = 0u; L.variant = 0u; L.b0 = 0u; L.b1 = 0u; L.b2 = 0u;
-    L.a = 1.0; L.b = 1.0; L.c = 1.0; L.spacing = 16.0; L.chance = 0.0; L.jitter = 0.8;
-    L.surface = 0u; L.anySurface = false; L.yMin = -1e9; L.yMax = 1e9; L.seed = 0u; L.hasMask = false;
+    L.biome = 0xFFFFu; L.kind = 0u; L.graph = 0u; L.variant = 0u; L.b0 = 0u; L.b1 = 0u; L.b2 = 0u;
+    L.a = 1.0; L.b = 1.0; L.c = 1.0; L.R = 1.0; L.H = 1.0; L.below = 0.0;
+    L.spacing = 16.0; L.chance = 0.0; L.jitter = 0.8;
+    L.surface = 0u; L.anySurface = false; L.buried = false; L.far = false; L.replaceAll = false;
+    L.yMin = -1e9; L.yMax = 1e9; L.seed = 0u; L.hasMask = false;
     return L;
 }
+
+// prop graph library (props pass only: the build functions use its shared arrays)
+#ifdef PROPS_PASS
+#include "worldgen/props_lib.glsl"
+#endif

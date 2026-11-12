@@ -51,6 +51,8 @@
 //! | `texel X Y` / `drag_texel X1 Y1 X2 Y2 FRAMES` | move the mouse over a texel of the texture editor's canvas / drag across it |
 //! | `window NAME on\|off` / `edit_block NAME` | show or hide a window (`block_editor`, `texture_editor`, `node_editor`, `tools`, `stats`, `render`, `world`, `camera`, `blocks`, `help`, `map`) / open a block in the block editor |
 //! | `expect_texel NAME FRAME X Y RRGGBB[AA]` | a texel of a texture as the world has it |
+//! | `place_prop NAME X Y Z [SEED]` | build one instance of a Prop graph (the real props pass, alone) and place it as an edit with its anchor at X Y Z |
+//! | `open_graph world\|zone\|biome\|function\|prop NAME` | open a graph in the node editor (a Prop graph shows its preview) |
 //! | `log TEXT` | print a line |
 
 use std::path::{Path, PathBuf};
@@ -160,6 +162,8 @@ enum Cmd {
     Window(String, bool),
     EditBlock(String),
     ExpectTexel { name: String, frame: usize, x: i32, y: i32, color: [u8; 4] },
+    PlaceProp { name: String, at: IVec3, seed: u32 },
+    OpenGraph(worldgen::GraphKind, String),
     Log(String),
 }
 
@@ -232,6 +236,8 @@ enum Busy {
     /// Column read for `find_cave`.
     Cave { id: u64, min_height: i32, tries: u32, left: u32 },
     Image { shot: PathBuf, golden: PathBuf, tol: f32, left: u32 },
+    /// A prop instance being built for `place_prop`.
+    PropPlace { id: u64, at: IVec3, left: u32 },
 }
 
 pub struct Script {
@@ -519,6 +525,22 @@ fn parse(line: &str) -> Result<Cmd> {
             y: num(a.get(3), "y")?,
             color: color8(a.get(4))?,
         },
+        "place_prop" => Cmd::PlaceProp {
+            name: a.first().context("missing prop graph")?.to_string(),
+            at: ivec(a.get(1..).unwrap_or(&[]), "position")?,
+            seed: a.get(4).map(|s| s.parse()).transpose()?.unwrap_or(1),
+        },
+        "open_graph" => Cmd::OpenGraph(
+            match a.first().copied() {
+                Some("world") => worldgen::GraphKind::World,
+                Some("zone") => worldgen::GraphKind::Zone,
+                Some("biome") => worldgen::GraphKind::Biome,
+                Some("function") => worldgen::GraphKind::Function,
+                Some("prop") => worldgen::GraphKind::Prop,
+                other => bail!("unknown graph kind {other:?}"),
+            },
+            a.get(1).context("missing graph name")?.to_string(),
+        ),
         "log" => Cmd::Log(a.join(" ")),
         other => bail!("unknown command `{other}`"),
     })
@@ -648,6 +670,28 @@ impl Engine {
     /// Region reads requested by `expect_block` end here; other reads are handed back.
     pub(super) fn script_take_region(&mut self, r: RegionRead) -> Option<RegionRead> {
         let Some(s) = &mut self.script else { return Some(r) };
+        if let Some(Busy::PropPlace { id, at, .. }) = &s.busy
+            && *id == r.id
+        {
+            let at = *at;
+            let mut writes = Vec::new();
+            for y in 0..r.size.y {
+                for z in 0..r.size.z {
+                    for x in 0..r.size.x {
+                        let p = r.min + IVec3::new(x, y, z);
+                        let v = r.get(p);
+                        if v != 0 {
+                            writes.push((at + p, v));
+                        }
+                    }
+                }
+            }
+            log::info!("script: placed a prop of {} blocks at {at}", writes.len());
+            let touched = self.world.overlay.apply("Place prop", &writes);
+            self.world.invalidate_blocks(&touched);
+            s.busy = None;
+            return None;
+        }
         if let Some(Busy::Ground { id, height, .. }) = &s.busy {
             if *id != r.id {
                 return Some(r);
@@ -1024,6 +1068,14 @@ impl Engine {
                     self.handle_window_event(&mouse_event(button, false));
                 }
                 (i < n + 5).then_some(Busy::Drag { from, to, button, i, n })
+            }
+            Busy::PropPlace { id, at, left } => {
+                if left == 0 {
+                    s.fail(line, "place_prop timed out");
+                    None
+                } else {
+                    Some(Busy::PropPlace { id, at, left: left - 1 })
+                }
             }
             Busy::Profile { left, label } => {
                 if left > 0 {
@@ -1470,6 +1522,28 @@ impl Engine {
                 });
                 if got != Some(color) {
                     s.fail(line, format!("expected texel {x},{y} of {name} frame {frame} to be {color:?}, got {got:?}"));
+                }
+            }
+            Cmd::PlaceProp { name, at, seed } => {
+                let names = self.wg.project.names(worldgen::GraphKind::Prop);
+                match (names.iter().position(|n| *n == name), self.wg.project.get(worldgen::GraphKind::Prop, &name)) {
+                    (Some(idx), Some(g)) => {
+                        let out = g.output_node();
+                        let b = |k: &str, d: f32| out.and_then(|o| o.params.get(k)).map(|v| v.as_f32()).unwrap_or(d).clamp(1.0, 96.0).ceil() as i32;
+                        let (r, h, below) = (b("radius", 6.0), b("height", 12.0), b("below", 2.0));
+                        let id = self.world.request_prop_preview(idx as u32, seed, IVec3::new(-r - 1, -below - 1, -r - 1), IVec3::new(r + 1, h + 1, r + 1));
+                        return Ok(Some(Busy::PropPlace { id, at, left: 600 }));
+                    }
+                    _ => s.fail(line, format!("unknown prop graph `{name}`")),
+                }
+            }
+            Cmd::OpenGraph(kind, name) => {
+                if self.wg.project.get(kind, &name).is_some() {
+                    self.node_ui.open = true;
+                    self.node_ui.current = (kind, name);
+                    self.node_ui.navigate = true;
+                } else {
+                    s.fail(line, format!("unknown {} graph `{name}`", kind.label()));
                 }
             }
             Cmd::Log(text) => log::info!("script: {text}"),

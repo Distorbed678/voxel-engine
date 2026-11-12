@@ -12,6 +12,12 @@ pub const MAX_JOBS: usize = 256;
 pub const SLOT_U16: u64 = 39424;
 pub const NUM_STREAMS: usize = 13;
 pub const BATCH_SLOTS: usize = 4;
+/// Props pass scratch (`shaders/worldgen/props_lib.glsl`, `props_main.glsl`): per job, 16 prop
+/// instances are built at a time, each with up to 192 primitives (80 bytes) and 96 skeleton
+/// segments (36 bytes).
+const PROP_BUILD_BATCH: u64 = 16;
+const PROP_PRIM_SCRATCH: u64 = MAX_JOBS as u64 * PROP_BUILD_BATCH * 192 * 80;
+const PROP_SEG_SCRATCH: u64 = MAX_JOBS as u64 * PROP_BUILD_BATCH * 96 * 36;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
@@ -44,6 +50,8 @@ pub struct GpuGenJob {
 pub const GENJOB_LIGHT: u32 = 1;
 /// Summarise the job's blocks into the coarse (far-field) light volume.
 pub const GENJOB_COARSE: u32 = 2;
+/// A prop preview (prop editor): no terrain, one prop graph at the origin.
+pub const GENJOB_PREVIEW: u32 = 4;
 /// Result flag: don't mesh (region reads, light-only jobs).
 const JOB_NO_MESH: u32 = 4;
 
@@ -69,6 +77,8 @@ pub struct JobDesc {
     pub light: u32,
     /// (cell index in the 34^3 slot, block)
     pub edits: Vec<(u32, u16)>,
+    /// A prop preview: (prop graph index, seed). Implies `readback`.
+    pub preview: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,6 +117,9 @@ pub struct GenPush {
     pub pad: u32,
     /// the GPU block table (kinds and rotations for props and prefabs)
     pub blocks: u64,
+    /// scratch for building prop instances (props pass)
+    pub prop_prims: u64,
+    pub prop_segs: u64,
 }
 
 #[repr(C)]
@@ -180,6 +193,9 @@ pub struct WorldPipelines {
 pub struct WorldGpu {
     pub voxels: Buffer,
     pub columns: Buffer,
+    /// props pass: prop instances are built here before they are drawn
+    pub prop_prims: Buffer,
+    pub prop_segs: Buffer,
     pub quads: Buffer,
     pub records: Buffer,
     table: Buffer,
@@ -219,6 +235,8 @@ impl WorldGpu {
         Ok(Self {
             voxels: Buffer::gpu(ctx, "voxel_slots", MAX_JOBS as u64 * SLOT_U16 * 2)?,
             columns: Buffer::gpu(ctx, "column_info", (MAX_JOBS * 34 * 34 * 2) as u64)?,
+            prop_prims: Buffer::gpu(ctx, "prop_prim_scratch", PROP_PRIM_SCRATCH)?,
+            prop_segs: Buffer::gpu(ctx, "prop_seg_scratch", PROP_SEG_SCRATCH)?,
             quads: Buffer::gpu(ctx, "quad_pool", quad_capacity as u64 * 8)?,
             records: Buffer::gpu(ctx, "chunk_records", max_records as u64 * std::mem::size_of::<GpuChunkRecord>() as u64)?,
             table: Buffer::gpu(ctx, "mesh_table", (MAX_JOBS * NUM_STREAMS * 32 * 4) as u64)?,
@@ -405,13 +423,23 @@ impl WorldGpu {
             let mut gpu_jobs = Vec::with_capacity(n);
             let mut edits: Vec<[u32; 2]> = Vec::with_capacity(total_edits);
             for (i, j) in jobs.iter().take(n).enumerate() {
-                gpu_jobs.push(GpuGenJob {
-                    origin: j.key.origin().to_array(),
-                    lod: j.key.lod as u32,
-                    edit_offset: edits.len() as u32,
-                    edit_count: j.edits.len() as u32,
-                    flags: j.light,
-                    pad: 0,
+                gpu_jobs.push(match j.preview {
+                    Some((graph, seed)) => GpuGenJob {
+                        origin: j.key.origin().to_array(),
+                        lod: 0,
+                        edit_offset: seed,
+                        edit_count: 0,
+                        flags: GENJOB_PREVIEW,
+                        pad: graph,
+                    },
+                    None => GpuGenJob {
+                        origin: j.key.origin().to_array(),
+                        lod: j.key.lod as u32,
+                        edit_offset: edits.len() as u32,
+                        edit_count: j.edits.len() as u32,
+                        flags: j.light,
+                        pad: 0,
+                    },
                 });
                 for &(idx, b) in &j.edits {
                     edits.push([i as u32 | ((b as u32) << 8), idx]);
@@ -475,6 +503,8 @@ impl WorldGpu {
                 edit_count,
                 pad: 0,
                 blocks: block_table,
+                prop_prims: self.prop_prims.address,
+                prop_segs: self.prop_segs.address,
         };
         unsafe {
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.generate);
@@ -626,6 +656,8 @@ impl WorldGpu {
         }
         self.voxels.destroy(ctx);
         self.columns.destroy(ctx);
+        self.prop_prims.destroy(ctx);
+        self.prop_segs.destroy(ctx);
         self.quads.destroy(ctx);
         self.records.destroy(ctx);
         self.table.destroy(ctx);

@@ -1,4 +1,5 @@
-//! The built-in example world: 4 zones (temperate, arid, frozen, volcanic) with 12 biomes.
+//! The built-in example world: 4 zones (temperate, arid, frozen, volcanic) with 12 biomes, and
+//! the Prop graphs its biomes scatter (trees, rocks, spikes, geodes).
 //! Everything here is ordinary node graphs - open them in the node editor and change anything.
 
 use crate::graph::{Graph, GraphKind, Project, Value};
@@ -40,6 +41,15 @@ impl B {
     fn l(&mut self, from: u32, to: u32, pin: u8) {
         let ok = self.g.connect(from, 0, to, pin);
         debug_assert!(ok, "bad default link {from}->{to}:{pin} in {}", self.g.name);
+    }
+    /// link from output pin `out` (e.g. a trunk's Skeleton)
+    fn l2(&mut self, from: u32, out: u8, to: u32, pin: u8) {
+        let ok = self.g.connect(from, out, to, pin);
+        debug_assert!(ok, "bad default link {from}:{out}->{to}:{pin} in {}", self.g.name);
+    }
+    /// a Prop node for a biome's Scatter
+    fn prop(&mut self, name: &str, x: f32, y: f32) -> u32 {
+        self.n("prop", x, y, &[("prop", rv(name))])
     }
     fn out_params(&mut self, params: &[(&str, Value)]) {
         let o = self.out();
@@ -115,9 +125,9 @@ fn meadow() -> Graph {
     let gc = b.n("ground_cover", 260.0, 500.0, &[("chance", fv(0.45)), ("weight1", fv(10.0)), ("weight2", fv(1.5)), ("weight3", fv(1.5)), ("plant4", bk("flower_white")), ("weight4", fv(1.0))]);
     b.l(flowers, gc, 0);
     b.l(gc, o, 2);
-    let oak = b.n("tree", 0.0, 650.0, &[("species", ev("Round")), ("height_min", fv(5.0)), ("height_max", fv(7.0)), ("radius", fv(2.5))]);
+    let oak = b.prop("oak", 0.0, 650.0);
     b.scatter(oak, 260.0, 650.0, &[("spacing", fv(28.0)), ("chance", fv(0.35))], 3, None);
-    let rock = b.n("boulder", 0.0, 800.0, &[("radius_min", fv(1.0)), ("radius_max", fv(2.0))]);
+    let rock = b.prop("boulder", 0.0, 800.0);
     b.scatter(rock, 260.0, 800.0, &[("spacing", fv(40.0)), ("chance", fv(0.25)), ("seed", iv(3))], 4, None);
     let ruin = b.n("prefab", 0.0, 950.0, &[("prefab", rv("ruin"))]);
     b.scatter(ruin, 260.0, 950.0, &[("spacing", fv(220.0)), ("chance", fv(0.35)), ("seed", iv(8))], 5, None);
@@ -154,11 +164,11 @@ fn oak_forest() -> Graph {
     let forest_mask = b.n("simplex2d", 0.0, 860.0, &[("size", fv(180.0)), ("octaves", iv(3)), ("seed", iv(21))]);
     let mask = b.n("remap", 220.0, 860.0, &[("in_min", fv(-0.6)), ("in_max", fv(0.3)), ("out_min", fv(0.0)), ("out_max", fv(1.0)), ("clamp", Value::B(true))]);
     b.l(forest_mask, mask, 0);
-    let oak = b.n("tree", 0.0, 1000.0, &[("species", ev("Round")), ("height_min", fv(5.0)), ("height_max", fv(9.0)), ("radius", fv(3.0))]);
+    let oak = b.prop("oak", 0.0, 1000.0);
     b.scatter(oak, 260.0, 1000.0, &[("spacing", fv(8.0)), ("chance", fv(0.75))], 3, Some(mask));
-    let birch = b.n("tree", 0.0, 1150.0, &[("species", ev("Birch")), ("trunk", bk("birch_log")), ("leaves", bk("birch_leaves")), ("height_min", fv(7.0)), ("height_max", fv(11.0)), ("radius", fv(2.0))]);
+    let birch = b.prop("birch", 0.0, 1150.0);
     b.scatter(birch, 260.0, 1150.0, &[("spacing", fv(13.0)), ("chance", fv(0.4)), ("seed", iv(5))], 4, Some(mask));
-    let bush = b.n("tree", 0.0, 1300.0, &[("species", ev("Bush")), ("height_min", fv(1.0)), ("height_max", fv(2.0)), ("radius", fv(2.0))]);
+    let bush = b.prop("bush", 0.0, 1300.0);
     b.scatter(bush, 260.0, 1300.0, &[("spacing", fv(11.0)), ("chance", fv(0.3)), ("seed", iv(6))], 5, None);
     b.out_params(&[("grass_tint", Value::Color([0.38, 0.7, 0.26])), ("foliage_tint", Value::Color([0.3, 0.6, 0.2])), ("map_color", Value::Color([0.2, 0.55, 0.2]))]);
     b.g
@@ -186,9 +196,9 @@ fn birch_hills() -> Graph {
     b.l(hs, o, 1);
     let gc = b.n("ground_cover", 260.0, 760.0, &[("chance", fv(0.3)), ("plant2", bk("flower_blue")), ("weight2", fv(1.0)), ("weight3", fv(0.0))]);
     b.l(gc, o, 2);
-    let birch = b.n("tree", 0.0, 900.0, &[("species", ev("Birch")), ("trunk", bk("birch_log")), ("leaves", bk("birch_leaves")), ("height_min", fv(8.0)), ("height_max", fv(13.0)), ("radius", fv(2.5))]);
+    let birch = b.prop("birch", 0.0, 900.0);
     b.scatter(birch, 260.0, 900.0, &[("spacing", fv(10.0)), ("chance", fv(0.55))], 3, None);
-    let rock = b.n("boulder", 0.0, 1050.0, &[("radius_min", fv(1.5)), ("radius_max", fv(3.0)), ("block", bk("andesite")), ("block2", bk("mossy_cobblestone"))]);
+    let rock = b.prop("boulder_andesite", 0.0, 1050.0);
     b.scatter(rock, 260.0, 1050.0, &[("spacing", fv(30.0)), ("chance", fv(0.3)), ("seed", iv(9))], 4, None);
     b.out_params(&[("grass_tint", Value::Color([0.55, 0.78, 0.35])), ("foliage_tint", Value::Color([0.5, 0.72, 0.3])), ("map_color", Value::Color([0.6, 0.75, 0.4]))]);
     b.g
@@ -223,7 +233,7 @@ fn floating_isles() -> Graph {
     b.l(s, o, 1);
     let gc = b.n("ground_cover", 260.0, 700.0, &[("chance", fv(0.5)), ("plant2", bk("flower_white")), ("weight2", fv(2.0))]);
     b.l(gc, o, 2);
-    let tree = b.n("tree", 0.0, 840.0, &[("species", ev("Willow")), ("height_min", fv(6.0)), ("height_max", fv(9.0)), ("radius", fv(3.5))]);
+    let tree = b.prop("willow", 0.0, 840.0);
     b.scatter(tree, 260.0, 840.0, &[("spacing", fv(16.0)), ("chance", fv(0.5))], 3, None);
     b.out_params(&[("grass_tint", Value::Color([0.42, 0.85, 0.45])), ("fog_color", Value::Color([0.8, 0.85, 1.0])), ("map_color", Value::Color([0.4, 0.85, 0.6]))]);
     b.g
@@ -249,9 +259,9 @@ fn desert() -> Graph {
     b.l(s, o, 1);
     let gc = b.n("ground_cover", 260.0, 600.0, &[("on", bk("sand")), ("chance", fv(0.02)), ("plant1", bk("dead_bush")), ("weight1", fv(4.0)), ("plant2", bk("pebbles")), ("weight2", fv(1.0)), ("weight3", fv(0.0)), ("weight4", fv(0.0))]);
     b.l(gc, o, 2);
-    let cactus = b.n("column", 0.0, 760.0, &[("block", bk("cactus")), ("height_min", fv(2.0)), ("height_max", fv(5.0)), ("arms", Value::B(true))]);
+    let cactus = b.prop("cactus", 0.0, 760.0);
     b.scatter(cactus, 260.0, 760.0, &[("spacing", fv(14.0)), ("chance", fv(0.35)), ("surface", bk("sand"))], 3, None);
-    let palm = b.n("tree", 0.0, 900.0, &[("species", ev("Palm")), ("trunk", bk("palm_log")), ("leaves", bk("palm_leaves")), ("height_min", fv(6.0)), ("height_max", fv(9.0)), ("radius", fv(4.0))]);
+    let palm = b.prop("palm", 0.0, 900.0);
     let oasis = b.noise("simplex2d", 0.0, 1040.0, 200.0, 2, 1.0, 13);
     let om = b.n("remap", 220.0, 1040.0, &[("in_min", fv(0.45)), ("in_max", fv(0.6)), ("out_min", fv(0.0)), ("out_max", fv(1.0)), ("clamp", Value::B(true))]);
     b.l(oasis, om, 0);
@@ -277,7 +287,7 @@ fn badlands() -> Graph {
     b.l(s, o, 1);
     let gc = b.n("ground_cover", 260.0, 500.0, &[("on", bk("red_sand")), ("chance", fv(0.03)), ("plant1", bk("dead_bush")), ("weight2", fv(0.0)), ("weight3", fv(0.0)), ("weight4", fv(0.0))]);
     b.l(gc, o, 2);
-    let rock = b.n("boulder", 0.0, 640.0, &[("block", bk("terracotta_red")), ("block2", bk("terracotta")), ("radius_min", fv(1.0)), ("radius_max", fv(2.5))]);
+    let rock = b.prop("boulder_terracotta", 0.0, 640.0);
     b.scatter(rock, 260.0, 640.0, &[("spacing", fv(24.0)), ("chance", fv(0.3)), ("any_surface", Value::B(true))], 3, None);
     b.out_params(&[("grass_tint", Value::Color([0.7, 0.62, 0.35])), ("fog_color", Value::Color([0.95, 0.75, 0.6])), ("map_color", Value::Color([0.8, 0.45, 0.25]))]);
     b.g
@@ -301,7 +311,7 @@ fn savanna() -> Graph {
     b.l(s, o, 1);
     let gc = b.n("ground_cover", 260.0, 600.0, &[("on", bk("dry_grass")), ("chance", fv(0.35)), ("plant1", bk("tall_grass")), ("weight1", fv(6.0)), ("plant2", bk("dry_shrub")), ("weight2", fv(3.0)), ("weight3", fv(0.3)), ("weight4", fv(0.0))]);
     b.l(gc, o, 2);
-    let acacia = b.n("tree", 0.0, 760.0, &[("species", ev("Acacia")), ("trunk", bk("acacia_log")), ("leaves", bk("acacia_leaves")), ("height_min", fv(5.0)), ("height_max", fv(8.0)), ("radius", fv(4.0))]);
+    let acacia = b.prop("acacia", 0.0, 760.0);
     b.scatter(acacia, 260.0, 760.0, &[("spacing", fv(24.0)), ("chance", fv(0.45)), ("surface", bk("dry_grass"))], 3, None);
     b.out_params(&[("grass_tint", Value::Color([0.75, 0.72, 0.38])), ("foliage_tint", Value::Color([0.6, 0.65, 0.25])), ("fog_color", Value::Color([0.95, 0.88, 0.7])), ("map_color", Value::Color([0.75, 0.7, 0.35]))]);
     b.g
@@ -328,11 +338,10 @@ fn taiga() -> Graph {
     b.l(ds, o, 1);
     let gc = b.n("ground_cover", 260.0, 680.0, &[("on", bk("snowy_grass")), ("chance", fv(0.18)), ("plant1", bk("snow_shrub")), ("weight1", fv(3.0)), ("plant2", bk("fern")), ("weight2", fv(2.0)), ("weight3", fv(0.0)), ("weight4", fv(0.0))]);
     b.l(gc, o, 2);
-    let spruce = b.n("tree", 0.0, 820.0, &[("species", ev("Spruce")), ("trunk", bk("spruce_log")), ("leaves", bk("spruce_leaves")), ("height_min", fv(8.0)), ("height_max", fv(16.0)), ("radius", fv(3.5))]);
+    let spruce = b.prop("spruce", 0.0, 820.0);
     b.scatter(spruce, 260.0, 820.0, &[("spacing", fv(7.0)), ("chance", fv(0.6)), ("any_surface", Value::B(true))], 3, None);
-    let geode = b.n("geode", 260.0, 980.0, &[]);
-    let o2 = b.out();
-    b.l(geode, o2, 4);
+    let geode = b.prop("geode", 0.0, 980.0);
+    b.scatter(geode, 260.0, 980.0, &[("spacing", fv(96.0)), ("chance", fv(0.5)), ("jitter", fv(0.8)), ("y_min", fv(-200.0)), ("y_max", fv(20.0)), ("placement", ev("Buried"))], 4, None);
     b.out_params(&[("grass_tint", Value::Color([0.45, 0.62, 0.45])), ("foliage_tint", Value::Color([0.3, 0.5, 0.35])), ("fog_color", Value::Color([0.75, 0.82, 0.9])), ("map_color", Value::Color([0.3, 0.5, 0.4]))]);
     b.g
 }
@@ -346,9 +355,9 @@ fn glacier() -> Graph {
     let st = b.deep(0.0, 200.0);
     let s = surface(&mut b, "snow", "packed_ice", "packed_ice", 6.0, 300.0, 200.0, st);
     b.l(s, o, 1);
-    let spike = b.n("spike", 0.0, 400.0, &[("height_min", fv(10.0)), ("height_max", fv(30.0)), ("radius", fv(2.5))]);
+    let spike = b.prop("ice_spike", 0.0, 400.0);
     b.scatter(spike, 260.0, 400.0, &[("spacing", fv(26.0)), ("chance", fv(0.35)), ("any_surface", Value::B(true))], 3, None);
-    let ice = b.n("boulder", 0.0, 560.0, &[("block", bk("packed_ice")), ("block2", bk("ice")), ("radius_min", fv(1.5)), ("radius_max", fv(3.0))]);
+    let ice = b.prop("boulder_ice", 0.0, 560.0);
     b.scatter(ice, 260.0, 560.0, &[("spacing", fv(30.0)), ("chance", fv(0.3)), ("any_surface", Value::B(true)), ("seed", iv(2))], 4, None);
     b.out_params(&[("fluid", ev("Ice")), ("water_tint", Value::Color([0.3, 0.5, 0.8])), ("fog_color", Value::Color([0.85, 0.9, 1.0])), ("fog_density", fv(1.8)), ("map_color", Value::Color([0.85, 0.92, 1.0]))]);
     b.g
@@ -393,11 +402,10 @@ fn snowy_peaks() -> Graph {
     b.l(snowcap, ds, 0);
     b.l(rocky, ds, 1);
     b.l(ds, o, 1);
-    let spruce = b.n("tree", 0.0, 1080.0, &[("species", ev("Spruce")), ("trunk", bk("spruce_log")), ("leaves", bk("spruce_leaves")), ("height_min", fv(7.0)), ("height_max", fv(12.0)), ("radius", fv(3.0))]);
+    let spruce = b.prop("spruce", 0.0, 1080.0);
     b.scatter(spruce, 260.0, 1080.0, &[("spacing", fv(11.0)), ("chance", fv(0.5)), ("surface", bk("snowy_grass")), ("y_max", fv(140.0))], 3, None);
-    let geode = b.n("geode", 260.0, 1220.0, &[("y_max", fv(60.0))]);
-    let o2 = b.out();
-    b.l(geode, o2, 4);
+    let geode = b.prop("geode", 0.0, 1220.0);
+    b.scatter(geode, 260.0, 1220.0, &[("spacing", fv(96.0)), ("chance", fv(0.5)), ("jitter", fv(0.8)), ("y_min", fv(-200.0)), ("y_max", fv(60.0)), ("placement", ev("Buried"))], 4, None);
     b.out_params(&[("grass_tint", Value::Color([0.5, 0.65, 0.5])), ("fog_color", Value::Color([0.8, 0.86, 0.95])), ("map_color", Value::Color([0.95, 0.95, 0.98]))]);
     b.g
 }
@@ -420,9 +428,9 @@ fn ashlands() -> Graph {
     b.l(ns, o, 1);
     let gc = b.n("ground_cover", 260.0, 640.0, &[("on", bk("ash")), ("chance", fv(0.06)), ("plant1", bk("ember_weed")), ("weight1", fv(3.0)), ("plant2", bk("dead_bush")), ("weight2", fv(2.0)), ("weight3", fv(0.0)), ("weight4", fv(0.0))]);
     b.l(gc, o, 2);
-    let dead = b.n("tree", 0.0, 780.0, &[("species", ev("Dead")), ("trunk", bk("charred_log")), ("leaves", bk("charred_log")), ("height_min", fv(4.0)), ("height_max", fv(8.0)), ("radius", fv(2.0))]);
+    let dead = b.prop("dead_tree", 0.0, 780.0);
     b.scatter(dead, 260.0, 780.0, &[("spacing", fv(16.0)), ("chance", fv(0.4)), ("surface", bk("ash"))], 3, None);
-    let col = b.n("column", 0.0, 920.0, &[("block", bk("basalt")), ("height_min", fv(3.0)), ("height_max", fv(14.0)), ("radius", fv(1.5)), ("arms", Value::B(false))]);
+    let col = b.prop("basalt_column", 0.0, 920.0);
     b.scatter(col, 260.0, 920.0, &[("spacing", fv(12.0)), ("chance", fv(0.35)), ("any_surface", Value::B(true)), ("seed", iv(7))], 4, None);
     b.out_params(&[("fluid", ev("Lava")), ("grass_tint", Value::Color([0.4, 0.38, 0.32])), ("fog_color", Value::Color([0.45, 0.38, 0.35])), ("fog_density", fv(3.0)), ("map_color", Value::Color([0.35, 0.33, 0.32]))]);
     b.g
@@ -451,7 +459,7 @@ fn lava_fields() -> Graph {
     b.l(sel, ns, 2);
     let _ = obs;
     b.l(ns, o, 1);
-    let spike = b.n("spike", 0.0, 640.0, &[("block", bk("obsidian")), ("height_min", fv(4.0)), ("height_max", fv(12.0)), ("radius", fv(1.5))]);
+    let spike = b.prop("obsidian_spike", 0.0, 640.0);
     b.scatter(spike, 260.0, 640.0, &[("spacing", fv(30.0)), ("chance", fv(0.3)), ("any_surface", Value::B(true))], 3, None);
     b.out_params(&[("fluid", ev("Lava")), ("fog_color", Value::Color([0.55, 0.3, 0.2])), ("fog_density", fv(3.5)), ("map_color", Value::Color([0.75, 0.25, 0.1]))]);
     b.g
@@ -612,6 +620,202 @@ fn ridge_function() -> Graph {
     b.g
 }
 
+// ---- prop graphs ------------------------------------------------------------------------------
+
+/// A prop graph: its output's box (radius, height, below) and whether it stays on far LODs.
+fn prop_graph(name: &str, radius: f32, height: f32, below: f32, far: bool) -> B {
+    let mut b = B::new(name, GraphKind::Prop);
+    b.out_params(&[("radius", fv(radius)), ("height", fv(height)), ("below", fv(below)), ("far", Value::B(far))]);
+    b
+}
+
+/// Connect up to four shapes to the output through a Union (or directly if there is one).
+fn finish(mut b: B, shapes: &[(u32, u8)]) -> Graph {
+    let o = b.out();
+    if let [(s, pin)] = shapes {
+        b.l2(*s, *pin, o, 0);
+    } else {
+        let u = b.n("union", 0.0, 0.0, &[]);
+        for (i, (s, pin)) in shapes.iter().enumerate() {
+            b.l2(*s, *pin, u, i as u8);
+        }
+        b.l(u, o, 0);
+    }
+    b.g
+}
+
+fn trunk(b: &mut B, block: &str, hmin: f32, hmax: f32, extra: &[(&str, Value)]) -> u32 {
+    let t = b.n("trunk", 0.0, 0.0, &[("block", bk(block)), ("height_min", fv(hmin)), ("height_max", fv(hmax))]);
+    for (k, v) in extra {
+        b.g.set(t, k, v.clone());
+    }
+    t
+}
+
+fn leaves(b: &mut B, skeleton: u32, block: &str, params: &[(&str, Value)]) -> u32 {
+    let l = b.n("leaves", 0.0, 0.0, &[("block", bk(block))]);
+    for (k, v) in params {
+        b.g.set(l, k, v.clone());
+    }
+    b.l2(skeleton, 1, l, 0);
+    l
+}
+
+fn branches(b: &mut B, parent: u32, block: &str, params: &[(&str, Value)]) -> u32 {
+    let br = b.n("branches", 0.0, 0.0, &[("block", bk(block))]);
+    for (k, v) in params {
+        b.g.set(br, k, v.clone());
+    }
+    b.l2(parent, 1, br, 0);
+    br
+}
+
+fn oak() -> Graph {
+    let mut b = prop_graph("oak", 7.0, 15.0, 1.0, true);
+    let t = trunk(&mut b, "oak_log", 5.0, 8.0, &[("segments", iv(4))]);
+    let br = branches(&mut b, t, "oak_log", &[("count", iv(3)), ("start", fv(0.55)), ("end", fv(0.9)), ("angle", fv(55.0)), ("length", fv(0.45)), ("radius", fv(0.55)), ("droop", fv(0.5))]);
+    let l = leaves(&mut b, br, "oak_leaves", &[("radius", fv(2.6)), ("y_scale", fv(0.8)), ("density", fv(0.88)), ("bumps", fv(0.7))]);
+    finish(b, &[(t, 0), (br, 0), (l, 0)])
+}
+
+fn birch() -> Graph {
+    let mut b = prop_graph("birch", 5.0, 16.0, 1.0, true);
+    let t = trunk(&mut b, "birch_log", 7.0, 12.0, &[("segments", iv(4))]);
+    let l = leaves(&mut b, t, "birch_leaves", &[("shape", ev("Ellipsoid")), ("at", ev("Along")), ("start", fv(0.45)), ("spacing", fv(2.0)), ("radius", fv(2.2)), ("y_scale", fv(1.2)), ("top_scale", fv(0.55)), ("density", fv(0.86)), ("bumps", fv(0.5))]);
+    finish(b, &[(t, 0), (l, 0)])
+}
+
+fn spruce() -> Graph {
+    let mut b = prop_graph("spruce", 5.0, 19.0, 1.0, true);
+    let t = trunk(&mut b, "spruce_log", 8.0, 15.0, &[("segments", iv(4)), ("taper", fv(0.8))]);
+    let l = leaves(&mut b, t, "spruce_leaves", &[("shape", ev("Cone")), ("at", ev("Along")), ("start", fv(0.2)), ("spacing", fv(1.7)), ("radius", fv(3.2)), ("y_scale", fv(0.9)), ("top_scale", fv(0.3)), ("density", fv(0.96)), ("bumps", fv(0.3)), ("var", fv(0.08))]);
+    let top = leaves(&mut b, t, "spruce_leaves", &[("shape", ev("Cone")), ("radius", fv(1.3)), ("y_scale", fv(1.6)), ("y_offset", fv(-0.5)), ("density", fv(1.0)), ("bumps", fv(0.0)), ("var", fv(0.0))]);
+    finish(b, &[(t, 0), (l, 0), (top, 0)])
+}
+
+fn palm() -> Graph {
+    let mut b = prop_graph("palm", 8.0, 13.0, 1.0, true);
+    let t = trunk(&mut b, "palm_log", 6.0, 9.0, &[("segments", iv(6)), ("bend", fv(3.0))]);
+    let l = leaves(&mut b, t, "palm_leaves", &[("shape", ev("Fronds")), ("radius", fv(4.5)), ("y_scale", fv(0.9)), ("density", fv(1.0)), ("bumps", fv(0.0)), ("var", fv(0.1))]);
+    finish(b, &[(t, 0), (l, 0)])
+}
+
+fn acacia() -> Graph {
+    let mut b = prop_graph("acacia", 9.0, 12.0, 1.0, true);
+    let t = trunk(&mut b, "acacia_log", 5.0, 7.0, &[("segments", iv(4)), ("bend", fv(2.0))]);
+    let br = branches(&mut b, t, "acacia_log", &[("count", iv(2)), ("start", fv(0.6)), ("end", fv(0.9)), ("angle", fv(45.0)), ("length", fv(0.55)), ("radius", fv(0.55)), ("droop", fv(-0.5))]);
+    let l = leaves(&mut b, br, "acacia_leaves", &[("shape", ev("Disc")), ("radius", fv(3.4)), ("y_scale", fv(0.6)), ("y_offset", fv(0.6)), ("density", fv(0.9)), ("bumps", fv(0.6))]);
+    finish(b, &[(t, 0), (br, 0), (l, 0)])
+}
+
+fn dead_tree() -> Graph {
+    let mut b = prop_graph("dead_tree", 6.0, 11.0, 1.0, true);
+    let t = trunk(&mut b, "charred_log", 4.0, 8.0, &[("segments", iv(4)), ("twist", fv(0.25))]);
+    let br = branches(&mut b, t, "charred_log", &[("count", iv(3)), ("levels", iv(2)), ("start", fv(0.45)), ("end", fv(0.9)), ("angle", fv(60.0)), ("length", fv(0.4)), ("radius", fv(0.55)), ("droop", fv(-0.6))]);
+    finish(b, &[(t, 0), (br, 0)])
+}
+
+fn bush() -> Graph {
+    let mut b = prop_graph("bush", 3.0, 4.0, 1.0, false);
+    let blob = b.n("blob", 0.0, 0.0, &[("y", fv(0.6)), ("radius", fv(1.8)), ("var", fv(0.25)), ("squash", fv(1.4)), ("bumps", fv(0.6)), ("bump_size", fv(2.0)), ("block", bk("oak_leaves"))]);
+    let h = b.n("holes", 0.0, 0.0, &[("amount", fv(0.15))]);
+    b.l(blob, h, 0);
+    finish(b, &[(h, 0)])
+}
+
+fn willow() -> Graph {
+    let mut b = prop_graph("willow", 8.0, 13.0, 1.0, true);
+    let t = trunk(&mut b, "oak_log", 6.0, 9.0, &[("segments", iv(4)), ("radius", fv(0.6))]);
+    let br = branches(&mut b, t, "oak_log", &[("count", iv(4)), ("start", fv(0.6)), ("end", fv(0.95)), ("angle", fv(70.0)), ("length", fv(0.45)), ("radius", fv(0.55)), ("droop", fv(1.0))]);
+    let l = leaves(&mut b, br, "oak_leaves", &[("shape", ev("Ellipsoid")), ("radius", fv(2.6)), ("y_scale", fv(0.7)), ("y_offset", fv(0.5)), ("density", fv(0.88)), ("bumps", fv(0.6))]);
+    let v = b.n("vines", 0.0, 0.0, &[("count", iv(14)), ("spread", fv(2.8)), ("length_min", fv(2.0)), ("length_max", fv(5.0)), ("y_offset", fv(0.5)), ("block", bk("oak_leaves"))]);
+    b.l2(br, 1, v, 0);
+    finish(b, &[(t, 0), (br, 0), (l, 0), (v, 0)])
+}
+
+fn giant_mushroom() -> Graph {
+    let mut b = prop_graph("giant_mushroom", 7.0, 14.0, 1.0, true);
+    let t = trunk(&mut b, "mushroom_stem", 6.0, 11.0, &[("segments", iv(3)), ("radius", fv(1.1)), ("bend", fv(1.0))]);
+    let cap = leaves(&mut b, t, "mushroom_cap_red", &[("shape", ev("Disc")), ("radius", fv(4.5)), ("y_scale", fv(0.75)), ("y_offset", fv(0.5)), ("density", fv(1.0)), ("bumps", fv(0.25)), ("var", fv(0.15))]);
+    finish(b, &[(t, 0), (cap, 0)])
+}
+
+fn boulder(name: &str, block: &str, block2: &str, radius: f32) -> Graph {
+    let mut b = prop_graph(name, radius * 1.6 + 2.0, radius * 1.6 + 1.0, radius + 1.0, false);
+    let blob = b.n("blob", 0.0, 0.0, &[("y", fv(radius * 0.25 - 0.6)), ("radius", fv(radius)), ("var", fv(0.3)), ("squash", fv(1.25)), ("bumps", fv(0.7)), ("bump_size", fv(2.5)), ("block", bk(block))]);
+    let sb = b.n("set_block", 0.0, 0.0, &[("block", bk(block)), ("block2", bk(block2)), ("mix", fv(0.4))]);
+    b.l(blob, sb, 0);
+    finish(b, &[(sb, 0)])
+}
+
+fn cactus() -> Graph {
+    let mut b = prop_graph("cactus", 4.0, 7.0, 1.0, false);
+    let t = trunk(&mut b, "cactus", 2.0, 5.0, &[("segments", iv(1))]);
+    let br = branches(&mut b, t, "cactus", &[("count", iv(2)), ("start", fv(0.35)), ("end", fv(0.75)), ("angle", fv(90.0)), ("length", fv(0.3)), ("radius", fv(0.55)), ("droop", fv(-2.0)), ("elbow", Value::B(true))]);
+    finish(b, &[(t, 0), (br, 0)])
+}
+
+fn spike(name: &str, block: &str, hmin: f32, hmax: f32, radius: f32) -> Graph {
+    let mut b = prop_graph(name, radius + 2.0, hmax + 1.0, 4.0, true);
+    let t = trunk(&mut b, block, hmin, hmax, &[("radius", fv(radius)), ("taper", fv(0.14)), ("taper_curve", fv(0.8)), ("sink", fv(3.0)), ("segments", iv(6))]);
+    finish(b, &[(t, 0)])
+}
+
+fn basalt_column() -> Graph {
+    let mut b = prop_graph("basalt_column", 3.0, 15.0, 2.0, true);
+    let t = trunk(&mut b, "basalt", 3.0, 14.0, &[("radius", fv(1.5)), ("sink", fv(1.0)), ("segments", iv(1))]);
+    finish(b, &[(t, 0)])
+}
+
+/// A hollow geode: shells of basalt, calcite and crystal around air, all sized by one random
+/// scale and roughened by one displacement, so the shells stay concentric.
+fn geode() -> Graph {
+    let mut b = prop_graph("geode", 8.0, 8.0, 8.0, false);
+    let o = b.out();
+    b.g.set(o, "replace", ev("Everything"));
+    let shells = [("basalt", 6.0, 1), ("calcite", 5.0, 2), ("crystal", 4.0, 3)];
+    let u = b.n("union", 0.0, 0.0, &[]);
+    for (i, (block, r, prio)) in shells.iter().enumerate() {
+        let s = b.n("sphere", 0.0, 0.0, &[("y", fv(0.0)), ("radius", fv(*r)), ("block", bk(block)), ("priority", iv(*prio))]);
+        b.l(s, u, i as u8);
+    }
+    let core = b.n("sphere", 0.0, 0.0, &[("y", fv(0.0)), ("radius", fv(3.0)), ("priority", iv(4))]);
+    let carve = b.n("carve", 0.0, 0.0, &[]);
+    b.l(core, carve, 0);
+    b.l(carve, u, 3);
+    let d = b.n("displace", 0.0, 0.0, &[("amount", fv(0.4)), ("size", fv(2.0))]);
+    b.l(u, d, 0);
+    let rnd = b.n("random", 0.0, 0.0, &[("min", fv(0.8)), ("max", fv(1.1))]);
+    let tf = b.n("transform", 0.0, 0.0, &[]);
+    b.l(d, tf, 0);
+    b.l(rnd, tf, 1);
+    finish(b, &[(tf, 0)])
+}
+
+/// Every built-in prop graph.
+pub fn default_props() -> Vec<Graph> {
+    vec![
+        oak(),
+        birch(),
+        spruce(),
+        palm(),
+        acacia(),
+        dead_tree(),
+        bush(),
+        willow(),
+        giant_mushroom(),
+        boulder("boulder", "cobblestone", "mossy_cobblestone", 1.5),
+        boulder("boulder_andesite", "andesite", "mossy_cobblestone", 2.2),
+        boulder("boulder_terracotta", "terracotta_red", "terracotta", 1.7),
+        boulder("boulder_ice", "packed_ice", "ice", 2.2),
+        cactus(),
+        spike("ice_spike", "packed_ice", 10.0, 30.0, 2.5),
+        spike("obsidian_spike", "obsidian", 4.0, 12.0, 1.5),
+        basalt_column(),
+        geode(),
+    ]
+}
+
 pub fn default_project() -> Project {
     let mut p = Project {
         graphs: vec![
@@ -651,6 +855,7 @@ pub fn default_project() -> Project {
             ridge_function(),
         ],
     };
+    p.graphs.extend(default_props());
     // colour grading while the camera is in a biome: tint, saturation, contrast
     let grading: &[(&str, [f32; 3], f32, f32)] = &[
         ("meadow", [1.0, 1.0, 0.97], 1.08, 1.0),
@@ -763,6 +968,37 @@ mod tests {
         };
         assert!(case("desert").contains(&12.0), "{fun}");
         assert_eq!(case("meadow"), [1.0, 3.0], "{fun}");
+    }
+
+    #[test]
+    fn prop_graphs_compile_to_build_functions() {
+        let p = default_project();
+        let c = compile::compile(&p, &blocks(), &prefabs()).unwrap();
+        let names = p.names(GraphKind::Prop);
+        assert_eq!(names.len(), default_props().len());
+        // one build function per prop graph, behind the props pass define
+        let props = &c.source[c.source.find("#ifdef PROPS_PASS").unwrap()..];
+        for k in 0..names.len() {
+            assert!(props.contains(&format!("void prop{k}_build()")), "prop {k}");
+        }
+        let oak = names.iter().position(|n| n == "oak").unwrap();
+        let body = &props[props.find(&format!("void prop{oak}_build()")).unwrap()..];
+        let body = &body[..body.find("\n}").unwrap()];
+        for call in ["tree_trunk(", "tree_branches(", "tree_leaves(", "tree_wood("] {
+            assert!(body.contains(call), "oak: {call}\n{body}");
+        }
+        // the trunk is grown once although wood, branches and leaves all use it
+        assert_eq!(body.matches("tree_trunk(").count(), 1, "{body}");
+        let geode = names.iter().position(|n| n == "geode").unwrap();
+        let body = &props[props.find(&format!("void prop{geode}_build()")).unwrap()..];
+        let body = &body[..body.find("\n}").unwrap()];
+        for call in ["xf_make(", "pb_displace(", "OP_CARVE", "pb_sphere("] {
+            assert!(body.contains(call), "geode: {call}\n{body}");
+        }
+        // scatters point at prop graphs, geodes are buried
+        assert!(c.source.contains("L.kind = PROP_GRAPH;") && c.source.contains("L.buried = true;"));
+        // the prop's box is a live parameter of the prop graph
+        assert!(c.param_index.keys().any(|k| k.graph == (GraphKind::Prop, "oak".to_string()) && k.param == "radius"));
     }
 
     #[test]

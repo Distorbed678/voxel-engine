@@ -300,6 +300,9 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
   reads block kinds and rotations from the GPU block table, and only the ids of the core blocks
   it falls back to are compiled in (they can't be deleted), so block edits never rebuild the
   generator. See "Blocks and textures as data" in ARCHITECTURE.md.
+- **Owner, at the phase A check-in (2026-11-12)**: only the default lava is animated for now;
+  water, magma, glowing crystals and fungi and the new magic blocks get animated textures in the
+  content phases (F–I), when those blocks are made.
 
 ### Phase B (item 20): Prop graphs, trees included
 - **New graph kind `Prop`**:
@@ -325,6 +328,11 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
   orbit camera), a re-roll seed button, bounds shown.
 - **Tests**: golden images of the default trees in a preview row; `check_apron` across props;
   benchmark the props pass against today's (it is ~1.7 ms per loading frame now).
+- **Done 2026-11-12.** Building runs 16 instances at a time into device-memory scratch (not
+  shared memory: a tree's primitives don't fit 16 times), then each instance is copied to shared
+  memory for the per-cell tests. The default props are rebuilt as graphs, so they look different
+  from the hand-coded shapes (they get their real design pass in phase F). Props pass 0.99 → 1.21
+  ms per loading frame (measured before this phase at 0.94–0.99, not 1.7).
 
 ### Phase C (item 21): layered world and per-layer generators + interpreter
 - **Layers in the World graph**:

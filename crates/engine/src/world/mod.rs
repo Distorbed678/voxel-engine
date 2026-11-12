@@ -108,6 +108,8 @@ pub struct RegionRead {
     pub min: IVec3,
     pub size: IVec3,
     pub blocks: Vec<u16>,
+    /// A prop preview (prop graph, seed) instead of the world.
+    pub preview: Option<(u32, u32)>,
     pending: std::collections::HashSet<IVec3>,
     queued: Vec<IVec3>,
 }
@@ -401,6 +403,16 @@ impl World {
 
     /// Request the real block contents of [min, max] (inclusive). Returns a request id.
     pub fn request_region(&mut self, a: IVec3, b: IVec3) -> u64 {
+        self.request_read(a, b, None)
+    }
+
+    /// Generate one instance of a prop graph at the origin, alone, and read [min, max] of it back
+    /// (the prop editor's preview). Returns a request id.
+    pub fn request_prop_preview(&mut self, graph: u32, seed: u32, a: IVec3, b: IVec3) -> u64 {
+        self.request_read(a, b, Some((graph, seed)))
+    }
+
+    fn request_read(&mut self, a: IVec3, b: IVec3, preview: Option<(u32, u32)>) -> u64 {
         let min = a.min(b);
         let max = a.max(b);
         let size = max - min + IVec3::ONE;
@@ -417,21 +429,22 @@ impl World {
         let id = self.next_region_id;
         self.next_region_id += 1;
         let queued = pending.iter().copied().collect();
-        self.region_reads.push(RegionRead { id, min, size, blocks: vec![0; (size.x * size.y * size.z) as usize], pending, queued });
+        self.region_reads.push(RegionRead { id, min, size, blocks: vec![0; (size.x * size.y * size.z) as usize], preview, pending, queued });
         id
     }
 
-    /// Feed voxel data from a readback job into any region reads waiting for that chunk.
-    pub fn fill_region(&mut self, key: ChunkKey, voxels: &[u16]) {
+    /// Feed voxel data from a readback job into any region reads waiting for that chunk (prop
+    /// previews only into the preview they were made for).
+    pub fn fill_region(&mut self, key: ChunkKey, preview: Option<(u32, u32)>, voxels: &[u16]) {
         if key.lod != 0 {
             return;
         }
-        if self.capture_raw.remove(&key.pos) {
+        if preview.is_none() && self.capture_raw.remove(&key.pos) {
             self.raw_slots.insert(key.pos, voxels.to_vec());
         }
         let origin = key.origin();
         for r in &mut self.region_reads {
-            if !r.pending.remove(&key.pos) {
+            if r.preview != preview || !r.pending.remove(&key.pos) {
                 continue;
             }
             for ly in 0..CHUNK {
@@ -485,28 +498,30 @@ impl World {
         cands.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut jobs = Vec::with_capacity(cands.len());
         // region-read chunks go first (they don't need to be in the streamed set)
-        let mut rb: Vec<IVec3> = Vec::new();
+        let mut rb: Vec<(IVec3, Option<(u32, u32)>)> = Vec::new();
         for r in &mut self.region_reads {
             while let Some(c) = r.queued.pop() {
                 if rb.len() >= max / 2 {
                     r.queued.push(c);
                     break;
                 }
-                rb.push(c);
+                rb.push((c, r.preview));
             }
         }
-        for c in rb {
+        for (c, preview) in rb {
             let key = ChunkKey { lod: 0, pos: c };
             let origin = key.origin();
             let min = origin - IVec3::ONE;
             let maxp = origin + IVec3::splat(CHUNK + 1);
             let mut edits = Vec::new();
-            self.overlay.entries_in(min, maxp, |p, b| {
-                let cell = p - min;
-                edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
-            });
+            if preview.is_none() {
+                self.overlay.entries_in(min, maxp, |p, b| {
+                    let cell = p - min;
+                    edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
+                });
+            }
             // counter u32::MAX marks a pure read (results are not applied to the streamed chunk)
-            jobs.push(JobDesc { key, counter: u32::MAX, readback: true, light: 0, edits });
+            jobs.push(JobDesc { key, counter: u32::MAX, readback: true, light: 0, edits, preview });
         }
         // light-only jobs: chunks that scrolled into a light volume while already up to date
         // (chunks still waiting for generation fill the volumes when they are meshed)
@@ -535,7 +550,7 @@ impl World {
                 let cell = q - min;
                 edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
             });
-            jobs.push(JobDesc { key, counter: u32::MAX, readback: false, light: flags, edits });
+            jobs.push(JobDesc { key, counter: u32::MAX, readback: false, light: flags, edits, preview: None });
         }
         let cands: Vec<(f32, ChunkKey)> = cands.into_iter().take(max.saturating_sub(jobs.len())).collect();
         for (_, key) in cands {
@@ -568,7 +583,7 @@ impl World {
                 self.coarse_light.filled(key.pos);
                 light |= GENJOB_COARSE;
             }
-            jobs.push(JobDesc { key, counter, readback: false, light, edits });
+            jobs.push(JobDesc { key, counter, readback: false, light, edits, preview: None });
         }
         self.stats.jobs_total += jobs.len() as u64;
         self.jobs_window.1 += jobs.len() as u32;

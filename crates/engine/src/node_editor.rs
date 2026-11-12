@@ -36,7 +36,7 @@ pub struct NodeEditorUi {
     clipboard: Option<(Vec<Node>, Vec<Link>)>,
     undo: Vec<(GraphKey, Graph)>,
     redo: Vec<(GraphKey, Graph)>,
-    navigate: bool,
+    pub navigate: bool,
     status: String,
     /// Last on-screen size of each comment box, to turn resizes into width/height changes.
     comment_sizes: HashMap<u32, [f32; 2]>,
@@ -240,7 +240,7 @@ impl NodeEditorUi {
     }
 
     fn graph_list(&mut self, ui: &Ui, wg: &mut WorldgenSystem) {
-        for kind in [GraphKind::World, GraphKind::Zone, GraphKind::Biome, GraphKind::Function] {
+        for kind in GraphKind::ALL {
             ui.text_colored([0.7, 0.75, 0.9, 1.0], format!("{}s", kind.label()));
             for name in wg.project.names(kind) {
                 let sel = self.current.0 == kind && self.current.1 == name;
@@ -255,11 +255,11 @@ impl NodeEditorUi {
         }
         ui.separator();
         ui.text("New graph");
-        let kinds = ["Zone", "Biome", "Function"];
+        let kinds = ["Zone", "Biome", "Function", "Prop"];
         ui.combo_simple_string("##kind", &mut self.new_kind, &kinds);
         ui.input_text("##name", &mut self.new_name).build();
         if ui.button("Create") {
-            let kind = [GraphKind::Zone, GraphKind::Biome, GraphKind::Function][self.new_kind.min(2)];
+            let kind = [GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop][self.new_kind.min(3)];
             let name = worldgen::compile::sanitize(self.new_name.trim()).to_lowercase();
             if !name.is_empty() && wg.project.get(kind, &name).is_none() {
                 wg.project.graphs.push(Graph::new(&name, kind));
@@ -681,6 +681,7 @@ impl NodeEditorUi {
         let biome_names = wg.project.names(GraphKind::Biome);
         let zone_names = wg.project.names(GraphKind::Zone);
         let fn_names = wg.project.names(GraphKind::Function);
+        let prop_names = wg.project.names(GraphKind::Prop);
         let block_names: Vec<&str> = std::iter::once("air").chain(blocks.live().map(|(_, b)| b.name.as_str())).collect();
         let prefab_names = wg.prefab_names.clone();
         let mut changed = false;
@@ -751,6 +752,7 @@ impl NodeEditorUi {
                         let list = match kind {
                             GraphKind::Biome => &biome_names,
                             GraphKind::Zone => &zone_names,
+                            GraphKind::Prop => &prop_names,
                             _ => &fn_names,
                         };
                         let cur = match node.params.get(pd.name) {

@@ -201,15 +201,10 @@
         ),
         (
             id: 15,
-            kind: "tree",
+            kind: "prop",
             pos: (1650.0, 836.0),
             params: {
-                "height_max": F(7.0),
-                "height_min": F(5.0),
-                "leaves": Block("oak_leaves"),
-                "radius": F(2.5),
-                "species": E("Round"),
-                "trunk": Block("oak_log"),
+                "prop": Ref("oak"),
             },
             comment: "",
         ),
@@ -221,6 +216,7 @@
                 "any_surface": B(false),
                 "chance": F(0.35),
                 "jitter": F(0.9),
+                "placement": E("Surface"),
                 "seed": I(0),
                 "spacing": F(28.0),
                 "surface": Block("grass"),
@@ -231,24 +227,22 @@
         ),
         (
             id: 17,
-            kind: "boulder",
-            pos: (1650.0, 1150.0),
+            kind: "prop",
+            pos: (1650.0, 1173.0),
             params: {
-                "block": Block("cobblestone"),
-                "block2": Block("mossy_cobblestone"),
-                "radius_max": F(2.0),
-                "radius_min": F(1.0),
+                "prop": Ref("boulder"),
             },
             comment: "",
         ),
         (
             id: 18,
             kind: "scatter",
-            pos: (1980.0, 1150.0),
+            pos: (1980.0, 1173.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.25),
                 "jitter": F(0.9),
+                "placement": E("Surface"),
                 "seed": I(3),
                 "spacing": F(40.0),
                 "surface": Block("grass"),
@@ -260,7 +254,7 @@
         (
             id: 19,
             kind: "prefab",
-            pos: (1650.0, 1464.0),
+            pos: (1650.0, 1510.0),
             params: {
                 "prefab": Ref("ruin"),
                 "random_rotation": B(true),
@@ -271,11 +265,12 @@
         (
             id: 20,
             kind: "scatter",
-            pos: (1980.0, 1464.0),
+            pos: (1980.0, 1510.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.35),
                 "jitter": F(0.9),
+                "placement": E("Surface"),
                 "seed": I(8),
                 "spacing": F(220.0),
                 "surface": Block("grass"),

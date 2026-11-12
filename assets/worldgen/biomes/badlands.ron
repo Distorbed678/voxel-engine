@@ -164,13 +164,10 @@
         ),
         (
             id: 13,
-            kind: "boulder",
+            kind: "prop",
             pos: (660.0, 836.0),
             params: {
-                "block": Block("terracotta_red"),
-                "block2": Block("terracotta"),
-                "radius_max": F(2.5),
-                "radius_min": F(1.0),
+                "prop": Ref("boulder_terracotta"),
             },
             comment: "",
         ),
@@ -182,6 +179,7 @@
                 "any_surface": B(true),
                 "chance": F(0.3),
                 "jitter": F(0.9),
+                "placement": E("Surface"),
                 "seed": I(0),
                 "spacing": F(24.0),
                 "surface": Block("grass"),

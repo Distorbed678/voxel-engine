@@ -205,6 +205,23 @@ These follow from the choices above.
   painting. Benchmark unchanged within noise: 277–287 fps over three runs (289 before), main pass
   +0.05 ms.
 
+- [x] **Prop graphs, trees included** (item 20, phase B): a Prop graph kind compiled to a build
+  function that runs once per instance (one thread, 16 instances at a time) and writes primitives
+  (sphere, ellipsoid, tapered capsule, box, cylinder/cone) with blocks, priorities and ops (add,
+  carve, remove, keep); every cell is then tested against the list. Shape nodes (sphere, ellipsoid,
+  capsule, box, cylinder, blob; union, subtract, intersect, smooth union, displace, holes, set
+  block with speckle, carve; transform, mirror, repeat; random values) and tree nodes on them
+  (trunk, branches with levels, leaves at tips or along, roots, vines, fruit). Scatter takes a
+  Prop node and a Surface/Buried placement; the 8 tree species, giant mushroom, boulders (4),
+  cactus, spikes (2), basalt column and geode are default Prop graphs; prefabs stay. Prop editor:
+  a 3D preview of the open Prop graph (GPU preview jobs read back and drawn with the block atlas),
+  orbit and zoom, re-roll, the search box, place in world (clipboard). Script commands
+  `place_prop`, `open_graph`; GPU test `props.vxs` (two goldens of every default prop, apron
+  checks in a forest and a taiga). Also fixed, found on the way: cutout mipmaps lost their alpha
+  coverage, so distant leaves vanished (far forests looked bare). Benchmark: props pass 0.99 →
+  1.21 ms per loading frame; 260–266 fps average (283–287 after phase A), partly because distant
+  canopies now draw.
+
 **Measured** (RTX 4080, 1080p, `--benchmark`):
 - 289 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
 - Full 4 km world regeneration takes about 0.5 s of GPU time.
@@ -243,6 +260,8 @@ Still needs a hand test (real input devices or complex UI flows):
 - [ ] Block Editor in a real window: the texture picker popup, New/Duplicate/Delete popups,
   sliders and colour edits, Save now, autosave writing `assets/blocks` (the GPU test drives the
   same registry calls and paints with synthetic mouse input)
+- [ ] Prop preview in a real window: orbit drag, wheel zoom, Re-roll, Place in world then Paste;
+  creating a new Prop graph in the node editor and wiring trunk/branches/leaves by hand
 - [ ] Texture Editor in a real window: long pencil strokes, line/rectangle previews while
   dragging, right-click colour pick, keyboard tool keys, frame buttons, Play and onion skin,
   New/Open popups, PNG files written by autosave
@@ -343,7 +362,7 @@ is part of item 21.
 
 19. ~~Blocks and textures as data: block editor, texture editor (pixel painting, animated
     textures).~~
-20. Prop graphs (trees included): shape nodes, tree nodes, Prop editor with 3D preview.
+20. ~~Prop graphs (trees included): shape nodes, tree nodes, Prop editor with 3D preview.~~
 21. Layered world: layers in the World graph, per-layer generators, GPU graph interpreter,
     wider biome ids, cross-layer streaming, cloud sea, layer jump UI.
 22. Environment as graphs: sky & atmosphere, particles & weather, fluids, light & time.

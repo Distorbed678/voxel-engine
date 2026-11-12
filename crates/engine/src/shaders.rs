@@ -70,8 +70,25 @@ pub struct PipelineManager {
     pub reload_count: u32,
 }
 
+/// Prop graph building (props pass): one thread runs it once per placed instance, so the quick
+/// tier keeps it out of line. (The optimised tier inlines it too: out of line, the NVIDIA driver
+/// compile took 30 s instead of 9.5 s.) The per-cell evaluation (`prop_eval`) is hot.
+pub fn worldgen_cold(name: &str) -> bool {
+    // (not the transform helpers xf_* / rot_*: with them and the build functions both out of line,
+    // the NVIDIA driver miscompiled the quick tier and lost parts of props)
+    const PREFIXES: &[&str] = &["prop_build", "tree_", "pb_", "sk_", "leaf_cluster", "quat_from_mat", "orient_column", "any_perp"];
+    if PREFIXES.iter().any(|p| name.starts_with(p)) {
+        return true;
+    }
+    // generated build functions: p3_..., prop3_build
+    name.strip_prefix("prop").and_then(|r| r.split('_').next()).is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// Functions of the generated world generator that should stay out-of-line (compile time).
 pub fn worldgen_noinline(name: &str) -> bool {
+    if worldgen_cold(name) {
+        return true;
+    }
     // Tier-1 ("quick") builds keep every sizeable function out of line: ~3x faster driver
     // compile, ~5x slower generation. The tier-2 build inlines everything and replaces it.
     const PREFIXES: &[&str] = &[

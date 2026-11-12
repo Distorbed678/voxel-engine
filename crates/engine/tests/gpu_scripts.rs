@@ -88,3 +88,9 @@ fn water() {
 fn blocks() {
     run("blocks");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn props() {
+    run("props");
+}

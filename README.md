@@ -34,6 +34,7 @@ Dear ImGui debug UI.
 |---|---|
 | **GPU world pipeline** | Compute shaders generate terrain, place props and greedy-mesh chunks into packed 8-byte quads. Task and mesh shaders cull every chunk and face direction and expand the quads, all from one indirect dispatch. |
 | **Node-graph world generator** | Typed World → Zone → Biome graphs plus reusable Function graphs, compiled to GLSL. Parameter edits regenerate the world instantly; structural edits rebuild the shaders in the background. |
+| **Props are graphs too** | Every tree, rock, spike and geode is a Prop graph: shape nodes (spheres, capsules, boxes, blobs, combine, transform, mirror, repeat) and tree nodes built on them (trunk, recursive branches, leaves, roots, vines, fruit). Each instance is built once on the GPU and voxelised; the prop editor shows a 3D preview you can orbit, re-roll and place in the world. |
 | **4 zones, 12 biomes, 4 cave biomes** | Meadows, forests, birch hills, floating isles, desert, badlands, savanna, taiga, glaciers, snowy peaks, ashlands and lava fields above ground. Below it: lush, crystal, magma and frost caves in spaghetti, cheese and noodle cave systems and ravines. Rivers run at sea level, with ores, geodes and prefab ruins. All of it is ordinary, editable graphs. |
 | **Light** | Colored block light and sky light are propagated on the GPU in a volume around the camera, with a coarse far-field volume so distant lava still lights its banks. Caves go dark and lanterns, lava and crystals light them. |
 | **Weather and particles** | Snow, rain, drifting ash, rising embers, fireflies at night and pollen by day, set per biome and scaled by a weather cycle. Rain and snow stay out of caves and from under roofs. |
@@ -71,6 +72,9 @@ The generator is a set of graphs, modelled on Hytale's world generation:
 - **Biome**: terrain density, materials, ground cover, up to six prop layers and environment
   colours.
 - **Function**: a reusable density subgraph with four arguments.
+- **Prop**: a tree, rock, ruin or anything else a biome scatters, built from shape and tree nodes
+  (a trunk, branches that branch again, leaf clusters on the tips, roots, vines...). Opening one in
+  the node editor shows a live 3D preview of an instance.
 
 The compiler turns them into GLSL. Every number in a graph is a live parameter in a GPU buffer, so
 dragging a slider regenerates the world without recompiling. Values that only depend on X/Z are
@@ -201,7 +205,7 @@ crates/vkcore     Vulkan foundation: device, bindless, swapchain, shader compile
 crates/worldgen   graph model (RON), node registry, GLSL compiler, default world
 crates/engine     app: streaming, GPU world pipeline, renderer, UI, node editor, tools, scripts
 shaders/          GLSL (hot reloaded); worldgen/ is wrapped around the generated code
-assets/worldgen   the world generator graphs (edit in-app or by hand)
+assets/worldgen   the world generator graphs, prop graphs included (edit in-app or by hand)
 assets/blocks     block definitions, one RON file per block (edit in-app or by hand)
 assets/textures   painted and overriding textures (PNG, frames stacked vertically)
 assets/prefabs    saved prefabs

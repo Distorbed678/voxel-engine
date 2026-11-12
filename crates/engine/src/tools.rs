@@ -273,11 +273,11 @@ impl Tools {
                 Self::write(world, "Replace", &w);
             }
             Pending::Copy => {
-                self.clipboard = Some(Prefab { name: "clipboard".into(), size: r.size, blocks: r.blocks });
+                self.clipboard = Some(Prefab { name: "clipboard".into(), size: r.size, blocks: r.blocks, origin: IVec3::ZERO });
                 ui.toast(format!("Copied {}x{}x{}", r.size.x, r.size.y, r.size.z));
             }
             Pending::SavePrefab(name) => {
-                let p = Prefab { name: name.clone(), size: r.size, blocks: r.blocks };
+                let p = Prefab { name: name.clone(), size: r.size, blocks: r.blocks, origin: IVec3::ZERO };
                 match self.prefabs.save(p, blocks) {
                     Ok(()) => ui.toast(format!("Saved prefab '{name}' (usable in the Prefab node)")),
                     Err(e) => ui.toast(format!("Prefab save failed: {e}")),
@@ -348,6 +348,7 @@ impl Tools {
 
     fn paste_at(&mut self, world: &mut World, at: IVec3) {
         let Some(cb) = &self.clipboard else { return };
+        let at = at - cb.origin;
         let mut w = Vec::with_capacity(cb.blocks.len());
         for y in 0..cb.size.y {
             for z in 0..cb.size.z {

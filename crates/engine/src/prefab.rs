@@ -25,6 +25,8 @@ pub struct Prefab {
     pub size: IVec3,
     /// block ids, x fastest, then z, then y
     pub blocks: Vec<u16>,
+    /// The cell that lands where it is pasted (a prop's anchor; zero for copies).
+    pub origin: IVec3,
 }
 
 impl Prefab {
@@ -48,7 +50,8 @@ impl Prefab {
                 }
             }
         }
-        Prefab { name: self.name.clone(), size: ns, blocks: out }
+        let o = self.origin;
+        Prefab { name: self.name.clone(), size: ns, blocks: out, origin: IVec3::new(s.z - 1 - o.z, o.y, o.x) }
     }
 }
 
@@ -78,7 +81,7 @@ impl PrefabLibrary {
                         }
                         let size = IVec3::from(pf.size);
                         blocks.resize((size.x * size.y * size.z).max(0) as usize, 0);
-                        prefabs.push(Prefab { name, size, blocks });
+                        prefabs.push(Prefab { name, size, blocks, origin: IVec3::ZERO });
                     }
                     Err(e) => log::warn!("prefab {}: {e}", f.display()),
                 }
@@ -199,5 +202,5 @@ fn default_ruin(reg: &BlockRegistry) -> Prefab {
             set(x, y, 0, 0);
         }
     }
-    Prefab { name: "ruin".into(), size, blocks }
+    Prefab { name: "ruin".into(), size, blocks, origin: IVec3::ZERO }
 }

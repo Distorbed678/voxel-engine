@@ -137,6 +137,10 @@ pub struct Engine {
     /// The UI atlas as an ImGui texture.
     atlas_tex: Option<dear_imgui_rs::TextureId>,
     pub block_ui: crate::block_editor::BlockEditorUi,
+    /// The prop editor's 3D preview (shown with a Prop graph open in the node editor).
+    pub prop_preview: crate::prop_preview::PropPreview,
+    /// the prop graph whose preview the user closed (it stays closed until another one opens)
+    prop_preview_closed: Option<String>,
     pub tex_ui: crate::texture_editor::TextureEditorUi,
     gen_pipeline: PipelineHandle,
     props_pipeline: PipelineHandle,
@@ -204,10 +208,11 @@ pub struct Engine {
 
 /// Full GLSL sources (terrain pass, props pass, probe pass) around the generated code.
 pub fn compose_source(generated: &str) -> (String, String, String) {
-    let wrap = |main: &str| {
-        format!("#version 460\n#include \"worldgen/prelude.glsl\"\n// ---- generated ----\n{generated}\n// ---- main ----\n#include \"{main}\"\n")
+    let wrap = |main: &str, defines: &str| {
+        format!("#version 460\n{defines}#include \"worldgen/prelude.glsl\"\n// ---- generated ----\n{generated}\n// ---- main ----\n#include \"{main}\"\n")
     };
-    (wrap("worldgen/terrain_main.glsl"), wrap("worldgen/props_main.glsl"), wrap("worldgen/probe_main.glsl"))
+    // only the props pass builds prop graphs (their shared arrays and build functions)
+    (wrap("worldgen/terrain_main.glsl", ""), wrap("worldgen/props_main.glsl", "#define PROPS_PASS\n"), wrap("worldgen/probe_main.glsl", ""))
 }
 
 impl Engine {
@@ -439,6 +444,8 @@ impl Engine {
             blockgpu,
             atlas_tex,
             block_ui: crate::block_editor::BlockEditorUi::new(),
+            prop_preview: crate::prop_preview::PropPreview::new(),
+            prop_preview_closed: None,
             tex_ui: crate::texture_editor::TextureEditorUi::new(),
             gen_pipeline,
             props_pipeline,
@@ -999,6 +1006,9 @@ impl Engine {
         }
         // ---- world generator edits ----
         let (params_changed, built) = self.wg.update();
+        if params_changed || built.iter().any(|(current, _)| *current) {
+            self.prop_preview.stale = true;
+        }
         if params_changed {
             self.wgpu.set_params(&self.wg.compiled.params);
             if self.wg.compiled.source == self.wg.active_source {
@@ -1050,12 +1060,13 @@ impl Engine {
             for (i, j) in jobs.iter().enumerate() {
                 if j.readback
                     && let Some(v) = self.wgpu.take_voxels(s, i) {
-                        self.world.fill_region(j.key, &v);
+                        self.world.fill_region(j.key, j.preview, &v);
                     }
             }
             self.world.apply_results(s, &jobs, &results, value);
         }
         for region in self.world.take_finished_regions() {
+            let Some(region) = self.prop_preview.take(region, &self.blocks) else { continue };
             let Some(region) = self.fluid.region_ready(region) else { continue };
             let Some(region) = self.script_take_region(region) else { continue };
             self.tools.region_ready(region, &mut self.world, &self.blocks, &mut self.ui);
@@ -1103,6 +1114,7 @@ impl Engine {
         let actions = self.build_ui()?;
         self.apply_ui_actions(actions, value)?;
         self.sync_blocks(slot)?;
+        self.prop_preview.update(&mut self.world);
 
         // ---- acquire ----
         let mut image_index = 0u32;
@@ -1198,7 +1210,7 @@ impl Engine {
                 ) {
                     for j in rest {
                         if j.readback {
-                            for r in &mut self.world.region_reads {
+                            for r in self.world.region_reads.iter_mut().filter(|r| r.preview == j.preview) {
                                 r.requeue(j.key.pos);
                             }
                         } else if let Some(c) = self.world.chunks.get_mut(&j.key) {
@@ -1257,6 +1269,8 @@ impl Engine {
                 edit_count: 0,
                 pad: 0,
                 blocks: self.blockgpu.table_address(slot),
+                prop_prims: 0,
+                prop_segs: 0,
             };
             unsafe {
                 self.ctx.device.cmd_push_constants(cb, self.pm.layout, vk::ShaderStageFlags::ALL, 0, bytemuck::bytes_of(&push));
@@ -1749,6 +1763,29 @@ impl Engine {
             let atlas = self.atlas_tex.map(|id| self.blockgpu.atlas_ref(id));
             block_act = self.block_ui.draw(ui, &mut self.blocks, atlas, &mut self.tex_ui, self.anim_time);
             self.tex_ui.draw(ui, &mut self.blocks, self.anim_time);
+            // the prop preview follows the Prop graph open in the node editor
+            let cur = &self.node_ui.current;
+            if self.node_ui.open && cur.0 == worldgen::GraphKind::Prop && self.prop_preview_closed.as_deref() != Some(cur.1.as_str()) {
+                let names = self.wg.project.names(worldgen::GraphKind::Prop);
+                if let (Some(idx), Some(g)) = (names.iter().position(|n| *n == cur.1), self.wg.project.get(worldgen::GraphKind::Prop, &cur.1)) {
+                    let out = g.output_node();
+                    let b = |k: &str, d: f32| out.and_then(|o| o.params.get(k)).map(|v| v.as_f32()).unwrap_or(d);
+                    self.prop_preview.show(&cur.1, idx as u32, [b("radius", 6.0), b("height", 12.0), b("below", 2.0)]);
+                    self.prop_preview.open = true;
+                }
+            } else {
+                self.prop_preview.open = false;
+            }
+            if self.prop_preview.open {
+                self.prop_preview.draw(ui, atlas);
+                if !self.prop_preview.open {
+                    self.prop_preview_closed = Some(cur.1.clone());
+                }
+            }
+            // opening another graph forgets that a preview was closed
+            if cur.0 != worldgen::GraphKind::Prop || self.prop_preview_closed.as_deref() != Some(cur.1.as_str()) {
+                self.prop_preview_closed = None;
+            }
         }
         self.tools.draw_overlay(ui, &self.camera, self.pick);
         let unsaved = self.world.overlay.revision != self.saved_revision;
@@ -1786,6 +1823,15 @@ impl Engine {
         );
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
             p.prepare_render(ui, w)?;
+        }
+        if std::mem::take(&mut self.prop_preview.place) {
+            match self.prop_preview.to_clipboard() {
+                Some(c) => {
+                    self.ui.toast(format!("Prop '{}' in clipboard: use Paste (Tools > Select)", c.name));
+                    self.tools.clipboard = Some(c);
+                }
+                None => self.ui.toast("The preview is empty".into()),
+            }
         }
         if let Some(id) = block_act.select {
             self.ui.selected_block = id;

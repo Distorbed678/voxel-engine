@@ -884,18 +884,20 @@ pub fn mip_chain(base: &[u8], srgb: bool) -> Vec<Vec<u8>> {
             }
         }
         if has_cutout {
-            // scale alpha so that the fraction of texels passing the 0.5 test matches mip 0
-            let mut lo = 0.5f32;
-            let mut hi = 4.0f32;
+            // scale alpha so that the fraction of texels passing the 0.5 test matches mip 0: the
+            // smallest scale that reaches it (the upper end of the search, which passes; the
+            // midpoint may not, which once left distant leaves fully transparent)
+            let mut lo = 0.25f32;
+            let mut hi = 16.0f32;
             let alphas: Vec<f32> = out.chunks(4).map(|p| p[3] as f32 / 255.0).collect();
-            for _ in 0..12 {
+            let covers = |s: f32| alphas.iter().filter(|a| (**a * s).min(1.0) >= 0.5).count() as f32 / alphas.len() as f32;
+            for _ in 0..16 {
                 let mid = (lo + hi) * 0.5;
-                let cov = alphas.iter().filter(|a| *a * mid >= 0.5).count() as f32 / alphas.len() as f32;
-                if cov < base_cov { lo = mid } else { hi = mid }
+                if covers(mid) < base_cov { lo = mid } else { hi = mid }
             }
-            let scale = (lo + hi) * 0.5;
+            let scale = hi;
             for (i, a) in alphas.iter().enumerate() {
-                out[i * 4 + 3] = ((a * scale).min(1.0) * 255.0) as u8;
+                out[i * 4 + 3] = ((a * scale).min(1.0) * 255.0).ceil() as u8;
             }
         }
         mips.push(out);
@@ -914,6 +916,20 @@ mod tests {
             assert_eq!(t.color.len(), TEX * TEX);
         }
         assert_eq!(mip_chain(&vec![255u8; TEX * TEX * 4], true).len(), 6);
+    }
+
+    #[test]
+    fn cutout_mips_keep_their_coverage() {
+        // leaves far away (small mips) must not turn transparent
+        for name in ["oak_leaves", "spruce_leaves", "palm_leaves", "tall_grass"] {
+            let t = generate_builtin(name);
+            let mips = mip_chain(&t.albedo_rgba8(), true);
+            let cov = |m: &Vec<u8>| m.chunks(4).filter(|p| p[3] >= 128).count() as f32 / (m.len() / 4) as f32;
+            let base = cov(&mips[0]);
+            for (i, m) in mips.iter().enumerate().skip(1) {
+                assert!(cov(m) + 1e-3 >= base.min(0.999) - 0.15, "{name} mip {i}: coverage {} vs {base}", cov(m));
+            }
+        }
     }
 
     #[test]
@@ -957,3 +973,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+

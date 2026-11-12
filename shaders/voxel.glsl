@@ -53,6 +53,7 @@ struct GenJob {
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer GenJobBuf { GenJob j[]; };
 #define GENJOB_LIGHT 1u   // copy the final blocks into the light volume
 #define GENJOB_COARSE 2u  // summarise the blocks into the coarse light volume
+#define GENJOB_PREVIEW 4u // prop editor preview: no terrain, one prop graph (pad1) with seed editOffset at the origin
 
 struct JobResult {
     uint total;

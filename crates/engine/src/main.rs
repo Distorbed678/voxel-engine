@@ -18,6 +18,7 @@ mod ui;
 mod node_editor;
 mod particles;
 mod prefab;
+mod prop_preview;
 mod probe;
 mod tools;
 mod wg;

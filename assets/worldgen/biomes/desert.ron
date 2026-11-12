@@ -226,14 +226,10 @@
         ),
         (
             id: 18,
-            kind: "column",
+            kind: "prop",
             pos: (1980.0, 836.0),
             params: {
-                "arms": B(true),
-                "block": Block("cactus"),
-                "height_max": F(5.0),
-                "height_min": F(2.0),
-                "radius": F(0.5),
+                "prop": Ref("cactus"),
             },
             comment: "",
         ),
@@ -245,6 +241,7 @@
                 "any_surface": B(false),
                 "chance": F(0.35),
                 "jitter": F(0.9),
+                "placement": E("Surface"),
                 "seed": I(0),
                 "spacing": F(14.0),
                 "surface": Block("sand"),
@@ -255,22 +252,17 @@
         ),
         (
             id: 20,
-            kind: "tree",
-            pos: (1980.0, 1150.0),
+            kind: "prop",
+            pos: (1980.0, 1173.0),
             params: {
-                "height_max": F(9.0),
-                "height_min": F(6.0),
-                "leaves": Block("palm_leaves"),
-                "radius": F(4.0),
-                "species": E("Palm"),
-                "trunk": Block("palm_log"),
+                "prop": Ref("palm"),
             },
             comment: "",
         ),
         (
             id: 21,
             kind: "simplex2d",
-            pos: (1650.0, 1378.0),
+            pos: (1650.0, 1286.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -284,7 +276,7 @@
         (
             id: 22,
             kind: "remap",
-            pos: (1980.0, 1378.0),
+            pos: (1980.0, 1286.0),
             params: {
                 "clamp": B(true),
                 "in_max": F(0.6),
@@ -297,11 +289,12 @@
         (
             id: 23,
             kind: "scatter",
-            pos: (2310.0, 1150.0),
+            pos: (2310.0, 1173.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.8),
                 "jitter": F(0.9),
+                "placement": E("Surface"),
                 "seed": I(4),
                 "spacing": F(12.0),
                 "surface": Block("sand"),

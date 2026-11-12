@@ -56,6 +56,10 @@ pipeline layout: a bindless image set plus 256 bytes of push constants.
   generates the built-in procedural texture. The height map of a PNG or a painted texture comes
   from its brightness. The built-in lava is animated: 16 frames whose noise and crust drift a
   whole texture width over the loop, so it repeats seamlessly.
+- **Mipmaps** of cutout textures (leaves, plants) keep the share of texels that pass the alpha
+  test: each mip's alpha is scaled by the smallest factor that reaches mip 0's coverage. (The
+  search used to keep a midpoint that could still fail, which left the smallest mips fully
+  transparent: distant leaves vanished.)
 - **Layers**: each texture some block uses gets `frames` consecutive layers of the albedo and
   normal arrays. `BlockInfo` holds the first layer of each face plus an animation word per face
   (frames − 1 in 6 bits, frames per second × 8 in 10 bits); `face_layer` adds
@@ -243,6 +247,7 @@ Graph kinds:
 - **Biome**: Terrain (density > 0 means solid), Material, Ground Cover, up to 6 prop layers,
   and environment colours.
 - **Function**: a reusable density subgraph with 4 arguments.
+- **Prop**: a tree, rock, ruin or any other prop: shapes built once per placed instance (below).
 
 The compiler emits GLSL:
 
@@ -264,13 +269,55 @@ The compiler emits GLSL:
   survive. Rivers fill with the column biome's fluid at sea level (water, ice or lava) and get a
   bed block. The River node follows the zero line of warped noise, using `|n| / |grad n|` as the
   distance, so channel width stays even.
-- **Props**: one workgroup per chunk. Candidate anchors on a jittered grid go through biome,
-  chance, mask, surface-scan and surface-block tests, then all threads rasterise the shapes.
-  The surface scan takes every open surface the prop could reach the chunk from: a solid cell
-  under 8 cells of air that no carver removed, which rules out cave floors and spots under low
-  overhangs. It only covers heights the layer accepts (height limits, dry ground). Anchors are
-  sorted by layer and position and drawn one at a time, since overlapping props resolve by order.
-  So every chunk a prop touches draws the same blocks.
+- **Props**: one workgroup per chunk. A biome's Scatter places a Prop graph (or a prefab) on a
+  jittered grid, on open surfaces or buried in the ground (geodes). Candidate anchors go through
+  biome, chance, mask, surface-scan and surface-block tests. The surface scan takes every open
+  surface the prop could reach the chunk from: a solid cell under 8 cells of air that no carver
+  removed, which rules out cave floors and spots under low overhangs. It only covers heights the
+  layer accepts (height limits, dry ground). Anchors are sorted by layer and position and drawn
+  one at a time, since overlapping props resolve by order. So every chunk a prop touches draws
+  the same blocks.
+
+### Prop graphs
+
+A Prop graph (`crates/worldgen/src/compile_props.rs`, `shaders/worldgen/props_lib.glsl`) compiles
+to a *build* function, `propN_build()`, that runs once per placed instance and writes a list of
+primitives; then every cell the instance can reach is tested against the list. Trees are never
+re-derived per voxel.
+
+- **Prop space**: the anchor column's centre is at x = z = 0 and y = 0 is the top of the ground,
+  so cell centres sit at integer x/z and half-integer y. The Prop Output's box (radius, height,
+  depth below) is what the anchor search uses and what the instance is clipped to, so it is the
+  same in every chunk.
+- **Primitives**: sphere, ellipsoid, tapered capsule, box and cylinder/cone, each with a block (and a
+  second, speckled block), a priority and an op. Add places its block where no higher priority did
+  (the later one wins ties), Carve places air (geode cores), Remove takes back what was placed
+  before it, Keep takes back what lies outside it. Smooth unions melt consecutive primitives of a
+  group together; Displace adds value noise to their surface; Holes leaves out a share of the cells
+  (hashed per cell, so chunks agree). Transform, Mirror and Repeat wrap their input in a saved and
+  restored transform; each Repeat copy gets its own random values. Column blocks (logs) along a
+  capsule take its axis.
+- **Trees**: Trunk grows a chain of segments (height range, taper, flare, bend, twist, sink);
+  Branches grow from a skeleton's chains (count, levels, angle, length, falloff, droop, elbow);
+  Leaves, Roots, Vines and Fruit emit primitives from a skeleton's tips or along it. A skeleton is
+  grown once per build and shared by every node that uses it.
+- **Values** (Density pins) are ordinary density expressions evaluated at the anchor (`p` is its
+  world position), so a regional noise can size the trees; Random gives a value per instance.
+- **Building**: 16 instances at a time, one thread each, into the job's scratch in device memory
+  (192 primitives and 96 skeleton segments per instance); then each instance, in the fixed order,
+  is copied to shared memory and all 256 threads test the cells inside its primitives' bounds.
+  The quick generator tier keeps the build functions out of line (startup 3.3 s instead of
+  7.6 s); the optimised tier inlines them (with them out of line the NVIDIA driver compile took
+  30 s instead of 9.5 s). The small transform helpers stay inlined in both: out of line together
+  with the build functions, the driver miscompiled the quick tier. Both tiers give the same blocks.
+- **Coarse LODs** sample one point per big cell: wood stays at least 0.72 cell thick (connected on
+  diagonals, visible far away) and other shapes grow by half a cell, so canopies don't fall
+  between the samples. Holes only apply at LOD 0.
+- **Preview** (prop editor): preview jobs (`GENJOB_PREVIEW`) skip the terrain and put one
+  instance of a prop graph at the origin, with a chosen seed; they are region reads, so the voxels
+  come back to the CPU (`prop_preview.rs`), which draws their visible faces with the block atlas
+  and an orbit camera. "Place in world" puts the instance in the clipboard with its anchor as the
+  paste point. Scripts place props the same way (`place_prop`), which the prop goldens use.
 
 ### Solo preview
 

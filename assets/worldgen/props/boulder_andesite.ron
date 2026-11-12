@@ -1,0 +1,64 @@
+(
+    name: "boulder_andesite",
+    kind: Prop,
+    nodes: [
+        (
+            id: 1,
+            kind: "prop_output",
+            pos: (660.0, 0.0),
+            params: {
+                "below": F(3.2),
+                "far": B(false),
+                "height": F(4.5200005),
+                "radius": F(5.5200005),
+                "replace": E("Air only"),
+            },
+            comment: "",
+        ),
+        (
+            id: 2,
+            kind: "blob",
+            pos: (0.0, 0.0),
+            params: {
+                "block": Block("andesite"),
+                "bump_size": F(2.5),
+                "bumps": F(0.7),
+                "priority": I(1),
+                "radius": F(2.2),
+                "squash": F(1.25),
+                "var": F(0.3),
+                "x": F(0.0),
+                "y": F(-0.050000012),
+                "z": F(0.0),
+            },
+            comment: "",
+        ),
+        (
+            id: 3,
+            kind: "set_block",
+            pos: (330.0, 0.0),
+            params: {
+                "block": Block("andesite"),
+                "block2": Block("mossy_cobblestone"),
+                "mix": F(0.4),
+                "priority": I(1),
+            },
+            comment: "",
+        ),
+    ],
+    links: [
+        (
+            from_node: 2,
+            from_pin: 0,
+            to_node: 3,
+            to_pin: 0,
+        ),
+        (
+            from_node: 3,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 0,
+        ),
+    ],
+    next_id: 4,
+)

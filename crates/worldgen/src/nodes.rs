@@ -11,8 +11,13 @@ pub enum PinType {
     Material,
     /// Single-block surface decoration chooser.
     Decor,
-    /// A prop shape (tree, boulder, ...).
+    /// A prop for a Scatter (a Prop graph or a prefab).
     Prop,
+    /// Shapes of a Prop graph: primitives built once per placed instance.
+    Shape,
+    /// Tree skeleton in a Prop graph: trunk and branch segments that branches, leaves, roots,
+    /// vines and fruit grow from.
+    Skeleton,
     /// A placed prop layer (shape + distribution).
     PropLayer,
     Biome,
@@ -29,6 +34,8 @@ impl PinType {
             PinType::Material => [0.95, 0.65, 0.3, 1.0],
             PinType::Decor => [0.5, 0.9, 0.4, 1.0],
             PinType::Prop => [0.3, 0.8, 0.5, 1.0],
+            PinType::Shape => [0.95, 0.85, 0.45, 1.0],
+            PinType::Skeleton => [0.75, 0.55, 0.35, 1.0],
             PinType::PropLayer => [0.2, 0.65, 0.35, 1.0],
             PinType::Biome => [0.85, 0.45, 0.9, 1.0],
             PinType::Zone => [1.0, 0.85, 0.3, 1.0],
@@ -126,13 +133,17 @@ const NOISE: &[ParamDef] = &[
     i("seed", 0, 0, 1000),
 ];
 const ALL: &[GraphKind] = &[];
-const BIOME_ZONE_FN: &[GraphKind] = &[GraphKind::Biome, GraphKind::Zone, GraphKind::Function];
+const BIOME_ZONE_FN: &[GraphKind] = &[GraphKind::Biome, GraphKind::Zone, GraphKind::Function, GraphKind::Prop];
+const PROP: &[GraphKind] = &[GraphKind::Prop];
 const BIOME: &[GraphKind] = &[GraphKind::Biome];
 const ZONE: &[GraphKind] = &[GraphKind::Zone];
 const WORLD: &[GraphKind] = &[GraphKind::World];
 const FUNC: &[GraphKind] = &[GraphKind::Function];
 
-const SPECIES: &[&str] = &["Round", "Birch", "Spruce", "Palm", "Acacia", "Dead", "Bush", "Willow"];
+/// Shape nodes: the block they place and its priority where shapes overlap (higher wins).
+const SH: &[(&str, PinType)] = &[("Shape", Shape)];
+const ONE_SHAPE: &[(&str, PinType)] = &[("Shape", Shape)];
+const LEAF_SHAPES: &[&str] = &["Sphere", "Ellipsoid", "Cone", "Disc", "Fronds"];
 
 pub static NODES: &[NodeDef] = &[
     // ---------------------------------------------------------------- editor
@@ -175,6 +186,11 @@ pub static NODES: &[NodeDef] = &[
         allowed: BIOME },
     NodeDef { kind: "function_output", title: "Function Output", category: "Output", help: "Result of this reusable density function.",
         inputs: &[("Value", Density)], outputs: &[], params: &[], allowed: FUNC },
+    NodeDef { kind: "prop_output", title: "Prop Output", category: "Output",
+        help: "A prop: its shapes, built once for every placed instance (local space: the anchor is at x = z = 0, y = 0 is the top of the ground). The box (radius around the anchor, height above it, depth below) is what the generator searches and clips to. 'Far' keeps the prop on coarse LODs; 'Everything' lets it overwrite terrain (geodes, ruins) instead of only filling air.",
+        inputs: &[("Shape", Shape)], outputs: &[],
+        params: &[f("radius", 6.0, 0.5, 64.0), f("height", 12.0, 0.5, 128.0), f("below", 2.0, 0.0, 64.0), b("far", true), en("replace", &["Air only", "Everything"], 0)],
+        allowed: PROP },
     NodeDef { kind: "function_input", title: "Function Input", category: "Function", help: "Argument passed in by a Function node (0-3).",
         inputs: &[], outputs: D, params: &[i("index", 0, 0, 3)], allowed: FUNC },
     NodeDef { kind: "function_call", title: "Function", category: "Function", help: "Evaluate a reusable density function graph.",
@@ -285,27 +301,89 @@ pub static NODES: &[NodeDef] = &[
                   blk("plant3", "flower_yellow"), f("weight3", 1.0, 0.0, 100.0), blk("plant4", "fern"), f("weight4", 2.0, 0.0, 100.0), i("seed", 0, 0, 1000)], allowed: BIOME },
     NodeDef { kind: "decor_mix", title: "Decor Stack", category: "Decoration", help: "Try A, then B.", inputs: &[("A", Decor), ("B", Decor)], outputs: &[("Out", Decor)], params: &[], allowed: BIOME },
 
-    // ---------------------------------------------------------------- props
-    NodeDef { kind: "tree", title: "Tree", category: "Props", help: "Procedural tree.", inputs: &[], outputs: &[("Out", Prop)],
-        params: &[en("species", SPECIES, 0), blk("trunk", "oak_log"), blk("leaves", "oak_leaves"), f("height_min", 5.0, 2.0, 64.0), f("height_max", 9.0, 2.0, 64.0), f("radius", 3.0, 1.0, 12.0)], allowed: BIOME },
-    NodeDef { kind: "giant_mushroom", title: "Giant Mushroom", category: "Props", help: "Huge mushroom.", inputs: &[], outputs: &[("Out", Prop)],
-        params: &[blk("stem", "mushroom_stem"), blk("cap", "mushroom_cap_red"), f("height_min", 6.0, 3.0, 48.0), f("height_max", 11.0, 3.0, 48.0), f("radius", 4.0, 2.0, 12.0)], allowed: BIOME },
-    NodeDef { kind: "boulder", title: "Boulder", category: "Props", help: "Lumpy rock.", inputs: &[], outputs: &[("Out", Prop)],
-        params: &[blk("block", "cobblestone"), blk("block2", "mossy_cobblestone"), f("radius_min", 1.5, 0.5, 12.0), f("radius_max", 3.0, 0.5, 12.0)], allowed: BIOME },
-    NodeDef { kind: "column", title: "Column", category: "Props", help: "Vertical column (cactus, basalt pillar). Optional arms.", inputs: &[], outputs: &[("Out", Prop)],
-        params: &[blk("block", "cactus"), f("height_min", 2.0, 1.0, 64.0), f("height_max", 5.0, 1.0, 64.0), f("radius", 0.5, 0.5, 6.0), b("arms", true)], allowed: BIOME },
-    NodeDef { kind: "spike", title: "Spike", category: "Props", help: "Tall cone (ice spikes, rock spires).", inputs: &[], outputs: &[("Out", Prop)],
-        params: &[blk("block", "packed_ice"), f("height_min", 8.0, 2.0, 96.0), f("height_max", 24.0, 2.0, 96.0), f("radius", 2.5, 0.5, 12.0)], allowed: BIOME },
+    // ---------------------------------------------------------------- props (biome graphs)
+    NodeDef { kind: "prop", title: "Prop", category: "Props", help: "A Prop graph (tree, rock, ruin...), for a Scatter.", inputs: &[], outputs: &[("Out", Prop)],
+        params: &[rf("prop", GraphKind::Prop)], allowed: BIOME },
     NodeDef { kind: "prefab", title: "Prefab", category: "Props", help: "Place a saved prefab (Tools > Select > Save selection as prefab).", inputs: &[], outputs: &[("Out", Prop)],
         params: &[ParamDef { name: "prefab", kind: ParamKind::Prefab }, b("random_rotation", true), f("sink", 1.0, 0.0, 16.0)], allowed: BIOME },
     NodeDef { kind: "scatter", title: "Scatter", category: "Props",
-        help: "Place a prop on the surface on a jittered grid. Mask (0..1) modulates density, e.g. noise -> forests and clearings.",
+        help: "Place a prop on a jittered grid. Surface: on open ground (of the surface block, or any). Buried: inside the ground between y_min and y_max (geodes, fossils). Mask (0..1) modulates density, e.g. noise -> forests and clearings.",
         inputs: &[("Prop", Prop), ("Mask", Density)], outputs: &[("Out", PropLayer)],
         params: &[f("spacing", 9.0, 2.0, 256.0), f("chance", 0.6, 0.0, 1.0), f("jitter", 0.9, 0.0, 1.0), blk("surface", "grass"), b("any_surface", false),
-                  f("y_min", -512.0, -4096.0, 4096.0), f("y_max", 512.0, -4096.0, 4096.0), i("seed", 0, 0, 1000)], allowed: BIOME },
-    NodeDef { kind: "geode", title: "Geodes", category: "Props", help: "Hollow crystal geodes buried underground.", inputs: &[], outputs: &[("Out", PropLayer)],
-        params: &[blk("outer", "basalt"), blk("middle", "calcite"), blk("inner", "crystal"), f("radius", 6.0, 3.0, 16.0), f("spacing", 96.0, 24.0, 1024.0), f("chance", 0.5, 0.0, 1.0),
-                  f("y_min", -200.0, -4096.0, 4096.0), f("y_max", 20.0, -4096.0, 4096.0), i("seed", 0, 0, 1000)], allowed: BIOME },
+                  f("y_min", -512.0, -4096.0, 4096.0), f("y_max", 512.0, -4096.0, 4096.0), i("seed", 0, 0, 1000), en("placement", &["Surface", "Buried"], 0)], allowed: BIOME },
+
+    // ---------------------------------------------------------------- prop graphs: shapes
+    NodeDef { kind: "sphere", title: "Sphere", category: "Shape", help: "A ball. Var: random size variation per instance (0.2 = +-20%).", inputs: &[], outputs: SH,
+        params: &[f("x", 0.0, -64.0, 64.0), f("y", 2.0, -64.0, 128.0), f("z", 0.0, -64.0, 64.0), f("radius", 2.0, 0.3, 64.0), f("var", 0.0, 0.0, 0.9), blk("block", "stone"), i("priority", 1, 0, 15)], allowed: PROP },
+    NodeDef { kind: "ellipsoid", title: "Ellipsoid", category: "Shape", help: "A stretched ball, turned by yaw (degrees).", inputs: &[], outputs: SH,
+        params: &[f("x", 0.0, -64.0, 64.0), f("y", 2.0, -64.0, 128.0), f("z", 0.0, -64.0, 64.0), f("rx", 3.0, 0.3, 64.0), f("ry", 2.0, 0.3, 64.0), f("rz", 3.0, 0.3, 64.0), f("yaw", 0.0, -180.0, 180.0), f("var", 0.0, 0.0, 0.9), blk("block", "stone"), i("priority", 1, 0, 15)], allowed: PROP },
+    NodeDef { kind: "capsule", title: "Capsule", category: "Shape", help: "A segment with rounded ends, its radius tapering from r0 to r1 (a cone when r1 is 0).", inputs: &[], outputs: SH,
+        params: &[f("x0", 0.0, -64.0, 64.0), f("y0", 0.0, -64.0, 128.0), f("z0", 0.0, -64.0, 64.0), f("x1", 0.0, -64.0, 64.0), f("y1", 6.0, -64.0, 128.0), f("z1", 0.0, -64.0, 64.0),
+                  f("r0", 0.6, 0.0, 32.0), f("r1", 0.6, 0.0, 32.0), blk("block", "oak_log"), i("priority", 2, 0, 15)], allowed: PROP },
+    NodeDef { kind: "box", title: "Box", category: "Shape", help: "A box of the given size (blocks), centred on x/y/z, turned by yaw.", inputs: &[], outputs: SH,
+        params: &[f("x", 0.0, -64.0, 64.0), f("y", 1.5, -64.0, 128.0), f("z", 0.0, -64.0, 64.0), f("sx", 3.0, 0.5, 128.0), f("sy", 3.0, 0.5, 128.0), f("sz", 3.0, 0.5, 128.0), f("yaw", 0.0, -180.0, 180.0), blk("block", "stone_bricks"), i("priority", 1, 0, 15)], allowed: PROP },
+    NodeDef { kind: "cylinder", title: "Cylinder", category: "Shape", help: "An upright cylinder (flat ends) from its base, tapering from r0 to r1 (a cone when r1 is 0).", inputs: &[], outputs: SH,
+        params: &[f("x", 0.0, -64.0, 64.0), f("y", 0.0, -64.0, 128.0), f("z", 0.0, -64.0, 64.0), f("height", 4.0, 0.5, 128.0), f("r0", 1.5, 0.0, 64.0), f("r1", 1.5, 0.0, 64.0), f("var", 0.0, 0.0, 0.9), blk("block", "stone"), i("priority", 1, 0, 15)], allowed: PROP },
+    NodeDef { kind: "blob", title: "Blob", category: "Shape", help: "A lumpy ball: a sphere with noise on its surface (rocks, bushes).", inputs: &[], outputs: SH,
+        params: &[f("x", 0.0, -64.0, 64.0), f("y", 1.0, -64.0, 128.0), f("z", 0.0, -64.0, 64.0), f("radius", 2.0, 0.3, 64.0), f("var", 0.25, 0.0, 0.9), f("squash", 1.2, 0.3, 4.0),
+                  f("bumps", 0.8, 0.0, 16.0), f("bump_size", 3.0, 0.5, 64.0), blk("block", "cobblestone"), i("priority", 1, 0, 15)], allowed: PROP },
+
+    // ---------------------------------------------------------------- prop graphs: combining
+    NodeDef { kind: "union", title: "Union", category: "Shape/Combine", help: "All the shapes together; where they overlap the higher priority wins (the later one on ties).",
+        inputs: &[("A", Shape), ("B", Shape), ("C", Shape), ("D", Shape)], outputs: SH, params: &[], allowed: PROP },
+    NodeDef { kind: "subtract", title: "Subtract", category: "Shape/Combine", help: "Remove Cut from everything built before it (hollow logs, arches).",
+        inputs: &[("Shape", Shape), ("Cut", Shape)], outputs: SH, params: &[], allowed: PROP },
+    NodeDef { kind: "intersect", title: "Intersect", category: "Shape/Combine", help: "Keep only what lies inside Mask, of everything built before it.",
+        inputs: &[("Shape", Shape), ("Mask", Shape)], outputs: SH, params: &[], allowed: PROP },
+    NodeDef { kind: "smooth_union", title: "Smooth Union", category: "Shape/Combine", help: "Melt the shapes into each other with a rounded seam.",
+        inputs: &[("A", Shape), ("B", Shape)], outputs: SH, params: &[f("smoothness", 1.5, 0.0, 16.0)], allowed: PROP },
+    NodeDef { kind: "displace", title: "Displace", category: "Shape/Combine", help: "Noise on the surface of the shapes (organic, weathered).",
+        inputs: ONE_SHAPE, outputs: SH, params: &[f("amount", 0.8, 0.0, 16.0), f("size", 3.0, 0.5, 64.0), i("seed", 0, 0, 1000)], allowed: PROP },
+    NodeDef { kind: "holes", title: "Holes", category: "Shape/Combine", help: "Leave out a random share of the cells (sparse leaves, crumbling walls).",
+        inputs: ONE_SHAPE, outputs: SH, params: &[f("amount", 0.2, 0.0, 1.0), i("seed", 0, 0, 1000)], allowed: PROP },
+    NodeDef { kind: "set_block", title: "Set Block", category: "Shape/Combine", help: "Give the shapes another block (and priority). Block 2 speckles a share of the cells (moss on rocks).",
+        inputs: ONE_SHAPE, outputs: SH, params: &[blk("block", "mossy_cobblestone"), i("priority", 1, 0, 15), blk("block2", "air"), f("mix", 0.0, 0.0, 1.0)], allowed: PROP },
+    NodeDef { kind: "carve", title: "Carve", category: "Shape/Combine", help: "The shapes cut air into whatever is there (hollow geodes, caves in ruins). Needs 'Everything' in the Prop Output to cut terrain.",
+        inputs: ONE_SHAPE, outputs: SH, params: &[], allowed: PROP },
+    NodeDef { kind: "transform", title: "Transform", category: "Shape/Combine", help: "Move, turn (degrees) and scale the shapes. Random yaw turns every instance differently; the Scale and Yaw inputs (e.g. a Random) multiply and add.",
+        inputs: &[("Shape", Shape), ("Scale", Density), ("Yaw", Density)], outputs: SH,
+        params: &[f("x", 0.0, -64.0, 64.0), f("y", 0.0, -64.0, 128.0), f("z", 0.0, -64.0, 64.0), f("yaw", 0.0, -180.0, 180.0), f("pitch", 0.0, -180.0, 180.0), f("roll", 0.0, -180.0, 180.0), f("scale", 1.0, 0.05, 16.0), b("random_yaw", false)], allowed: PROP },
+    NodeDef { kind: "mirror", title: "Mirror", category: "Shape/Combine", help: "The shapes and their mirror image.", inputs: ONE_SHAPE, outputs: SH,
+        params: &[en("axis", &["X", "Z", "X and Z"], 0)], allowed: PROP },
+    NodeDef { kind: "repeat", title: "Repeat", category: "Shape/Combine", help: "Copies of the shapes in a ring (turned to face out) or a line. Each copy gets its own random values; jitter moves copies randomly; each copy is scaled by scale_step more than the last.",
+        inputs: ONE_SHAPE, outputs: SH,
+        params: &[i("count", 4, 1, 32), en("mode", &["Ring", "Line"], 0), f("radius", 3.0, 0.0, 64.0), f("step_x", 0.0, -32.0, 32.0), f("step_y", 2.0, -32.0, 32.0), f("step_z", 0.0, -32.0, 32.0),
+                  f("jitter", 0.0, 0.0, 16.0), f("scale_step", 1.0, 0.3, 2.0), b("random_yaw", false)], allowed: PROP },
+    NodeDef { kind: "random", title: "Random", category: "Shape/Value", help: "A random number between min and max, different for every placed instance (and every Repeat copy).",
+        inputs: &[], outputs: D, params: &[f("min", 0.8, -1000.0, 1000.0), f("max", 1.2, -1000.0, 1000.0), i("seed", 0, 0, 1000)], allowed: PROP },
+
+    // ---------------------------------------------------------------- prop graphs: trees
+    NodeDef { kind: "trunk", title: "Trunk", category: "Tree",
+        help: "A trunk from the ground up: random height, radius tapering to the top (taper = top radius / base radius, curve shapes it), a flared base, a bend to one side and a wobble (twist). Sink starts it below the ground (pillars, spikes). Skeleton: for branches, leaves, roots...",
+        inputs: &[], outputs: &[("Wood", Shape), ("Skeleton", Skeleton)],
+        params: &[f("height_min", 5.0, 0.5, 128.0), f("height_max", 8.0, 0.5, 128.0), f("radius", 0.55, 0.3, 16.0), f("taper", 1.0, 0.0, 2.0), f("taper_curve", 1.0, 0.2, 4.0),
+                  f("flare", 0.0, 0.0, 8.0), f("bend", 0.0, 0.0, 32.0), f("twist", 0.0, 0.0, 8.0), f("sink", 0.0, 0.0, 16.0), i("segments", 6, 1, 16),
+                  blk("block", "oak_log"), i("priority", 2, 0, 15)], allowed: PROP },
+    NodeDef { kind: "branches", title: "Branches", category: "Tree",
+        help: "Branches growing from a skeleton between start and end (fractions of each parent's length), count per parent, at an angle from it (degrees), length relative to the parent, droop (blocks down at the tip; negative rises). Levels > 1 branch the branches again (count, length and radius shrink by falloff). Elbow: out level, then straight up or down (cactus arms).",
+        inputs: &[("Parent", Skeleton)], outputs: &[("Wood", Shape), ("Skeleton", Skeleton)],
+        params: &[i("count", 4, 1, 16), i("levels", 1, 1, 3), f("start", 0.5, 0.0, 1.0), f("end", 0.95, 0.0, 1.0), f("angle", 50.0, 0.0, 180.0), f("length", 0.45, 0.05, 2.0),
+                  f("falloff", 0.6, 0.1, 1.0), f("radius", 0.5, 0.3, 8.0), f("droop", 0.0, -32.0, 32.0), b("elbow", false), blk("block", "oak_log"), i("priority", 2, 0, 15)], allowed: PROP },
+    NodeDef { kind: "leaves", title: "Leaves", category: "Tree",
+        help: "Leaf clusters on a skeleton: at the tips, or along it from start (fraction) every spacing blocks, shrinking towards the top by top_scale. Sphere / Ellipsoid (y_scale) / Cone (conifer layers) / Disc (flat crowns, mushroom caps) / Fronds (palm leaves). Density fills that share of the cells; bumps roughen the edge.",
+        inputs: &[("Skeleton", Skeleton)], outputs: SH,
+        params: &[en("shape", LEAF_SHAPES, 0), en("at", &["Tips", "Along"], 0), f("radius", 2.5, 0.3, 32.0), f("var", 0.15, 0.0, 0.9), f("y_scale", 0.8, 0.1, 4.0),
+                  f("y_offset", 0.0, -16.0, 16.0), f("start", 0.5, 0.0, 1.0), f("spacing", 2.0, 0.5, 16.0), f("top_scale", 0.3, 0.0, 2.0), f("density", 0.85, 0.05, 1.0),
+                  f("bumps", 0.6, 0.0, 8.0), blk("block", "oak_leaves"), i("priority", 1, 0, 15)], allowed: PROP },
+    NodeDef { kind: "roots", title: "Roots", category: "Tree", help: "Roots spreading from the base of a skeleton, sloping down into the ground.",
+        inputs: &[("Skeleton", Skeleton)], outputs: SH,
+        params: &[i("count", 4, 1, 12), f("length", 3.0, 0.5, 32.0), f("depth", 1.5, 0.0, 16.0), f("radius", 0.5, 0.3, 4.0), blk("block", "oak_log"), i("priority", 2, 0, 15)], allowed: PROP },
+    NodeDef { kind: "vines", title: "Vines", category: "Tree", help: "Hanging strands around a skeleton's tips, at distance spread (willows, jungle trees).",
+        inputs: &[("Skeleton", Skeleton)], outputs: SH,
+        params: &[i("count", 8, 1, 32), f("spread", 3.0, 0.0, 32.0), f("length_min", 2.0, 0.5, 32.0), f("length_max", 5.0, 0.5, 64.0), f("y_offset", 0.0, -16.0, 16.0), blk("block", "oak_leaves"), i("priority", 1, 0, 15)], allowed: PROP },
+    NodeDef { kind: "fruit", title: "Fruit", category: "Tree", help: "Single blocks (fruit, flowers, lanterns) near a skeleton's tips: chance per tip, at distance spread below them.",
+        inputs: &[("Skeleton", Skeleton)], outputs: SH,
+        params: &[f("chance", 0.5, 0.0, 1.0), i("per_tip", 2, 1, 8), f("spread", 2.0, 0.0, 16.0), blk("block", "flower_red"), i("priority", 3, 0, 15)], allowed: PROP },
 
     // ---------------------------------------------------------------- biome & zone layout
     NodeDef { kind: "biome", title: "Biome", category: "Layout", help: "Reference a biome graph.", inputs: &[], outputs: &[("Out", Biome)], params: &[rf("biome", GraphKind::Biome)], allowed: ZONE },

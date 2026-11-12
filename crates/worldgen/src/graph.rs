@@ -14,15 +14,20 @@ pub enum GraphKind {
     Zone,
     Biome,
     Function,
+    /// A prop (tree, rock, ruin...): shapes built per placed instance.
+    Prop,
 }
 
 impl GraphKind {
+    pub const ALL: [GraphKind; 5] = [GraphKind::World, GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop];
+
     pub fn label(self) -> &'static str {
         match self {
             GraphKind::World => "World",
             GraphKind::Zone => "Zone",
             GraphKind::Biome => "Biome",
             GraphKind::Function => "Function",
+            GraphKind::Prop => "Prop",
         }
     }
     pub fn dir(self) -> &'static str {
@@ -31,6 +36,17 @@ impl GraphKind {
             GraphKind::Zone => "zones",
             GraphKind::Biome => "biomes",
             GraphKind::Function => "functions",
+            GraphKind::Prop => "props",
+        }
+    }
+    /// The node every graph of this kind ends in.
+    pub fn output_kind(self) -> &'static str {
+        match self {
+            GraphKind::World => "world_output",
+            GraphKind::Zone => "zone_output",
+            GraphKind::Biome => "biome_output",
+            GraphKind::Function => "function_output",
+            GraphKind::Prop => "prop_output",
         }
     }
 }
@@ -94,13 +110,7 @@ pub struct Graph {
 impl Graph {
     pub fn new(name: &str, kind: GraphKind) -> Self {
         let mut g = Self { name: name.to_string(), kind, nodes: Vec::new(), links: Vec::new(), next_id: 1 };
-        let out = match kind {
-            GraphKind::World => "world_output",
-            GraphKind::Zone => "zone_output",
-            GraphKind::Biome => "biome_output",
-            GraphKind::Function => "function_output",
-        };
-        g.add(out, [600.0, 200.0]);
+        g.add(kind.output_kind(), [600.0, 200.0]);
         g
     }
 
@@ -182,12 +192,7 @@ impl Graph {
     }
 
     pub fn output_node(&self) -> Option<&Node> {
-        let kind = match self.kind {
-            GraphKind::World => "world_output",
-            GraphKind::Zone => "zone_output",
-            GraphKind::Biome => "biome_output",
-            GraphKind::Function => "function_output",
-        };
+        let kind = self.kind.output_kind();
         self.nodes.iter().find(|n| n.kind == kind)
     }
 }
@@ -214,7 +219,7 @@ impl Project {
     }
 
     pub fn save_dir(&self, dir: &Path) -> Result<()> {
-        for kind in [GraphKind::World, GraphKind::Zone, GraphKind::Biome, GraphKind::Function] {
+        for kind in GraphKind::ALL {
             let d = dir.join(kind.dir());
             std::fs::create_dir_all(&d)?;
             // remove stale files
@@ -241,7 +246,7 @@ impl Project {
 
     pub fn load_dir(dir: &Path) -> Result<Self> {
         let mut p = Project::default();
-        for kind in [GraphKind::World, GraphKind::Zone, GraphKind::Biome, GraphKind::Function] {
+        for kind in GraphKind::ALL {
             let d = dir.join(kind.dir());
             let Ok(rd) = std::fs::read_dir(&d) else { continue };
             let mut files: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e == "ron").unwrap_or(false)).collect();

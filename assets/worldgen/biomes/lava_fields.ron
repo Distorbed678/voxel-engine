@@ -146,13 +146,10 @@
         ),
         (
             id: 13,
-            kind: "spike",
+            kind: "prop",
             pos: (660.0, 814.0),
             params: {
-                "block": Block("obsidian"),
-                "height_max": F(12.0),
-                "height_min": F(4.0),
-                "radius": F(1.5),
+                "prop": Ref("obsidian_spike"),
             },
             comment: "",
         ),
@@ -164,6 +161,7 @@
                 "any_surface": B(true),
                 "chance": F(0.3),
                 "jitter": F(0.9),
+                "placement": E("Surface"),
                 "seed": I(0),
                 "spacing": F(30.0),
                 "surface": Block("grass"),

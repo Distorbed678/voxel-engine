@@ -1,0 +1,71 @@
+# Prop graphs: every default prop built by the real props pass (alone, as the prop editor's
+# preview does) and placed in two rows on a platform in the sky; apron checks in a dense forest
+# (a tree crossing a chunk border must come out the same in every chunk it touches); the prop
+# preview window.
+ui off
+time 0.32
+anim 2
+weather 0
+clouds off
+settle
+select -70 199 -8 70 199 8
+block grass
+op fill
+select -70 199 22 70 199 38
+op fill
+place_prop oak -60 200 0 1
+place_prop birch -45 200 0 1
+place_prop spruce -30 200 0 1
+place_prop palm -15 200 0 1
+place_prop acacia 0 200 0 1
+place_prop dead_tree 15 200 0 1
+place_prop willow 30 200 0 1
+place_prop giant_mushroom 45 200 0 1
+place_prop bush 60 200 0 1
+place_prop boulder -60 200 30 1
+place_prop boulder_andesite -45 200 30 1
+place_prop boulder_terracotta -30 200 30 1
+place_prop boulder_ice -15 200 30 1
+place_prop cactus 0 200 30 1
+place_prop ice_spike 15 200 30 1
+place_prop obsidian_spike 30 200 30 1
+place_prop basalt_column 45 200 30 1
+place_prop geode 60 205 30 1
+expect_block 0 200 30 cactus
+expect_block -60 200 0 oak_log
+pos -30.5 213 -28
+look 180 -14
+settle
+expect_image crates/engine/tests/golden/props_left.png
+pos 30.5 213 -28
+look 180 -14
+wait 4
+expect_image crates/engine/tests/golden/props_right.png
+
+# a dense forest: chunk borders cut through trees
+clear_edits
+find_biome oak_forest 6
+settle
+check_apron ~0 ~0 ~0
+check_apron ~1 ~0 ~0
+check_apron ~0 ~0 ~1
+check_apron ~-1 ~-1 ~0
+find_biome taiga 6
+settle
+check_apron ~0 ~0 ~0
+check_apron ~0 ~-1 ~1
+
+# the prop editor: a Prop graph open in the node editor shows its preview
+ui on
+window stats off
+window render off
+window world off
+window blocks off
+window map off
+window help off
+window tools off
+open_graph prop willow
+wait 10
+settle
+wait 10
+screenshot target/script-out/prop_editor.png

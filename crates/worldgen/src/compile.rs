@@ -16,6 +16,9 @@ use anyhow::Result;
 use crate::graph::{Graph, GraphKind, Node, Project, Value};
 use crate::nodes::{self, ParamKind};
 
+#[path = "compile_props.rs"]
+mod props;
+
 #[derive(Clone, Debug)]
 pub struct BiomeInfo {
     pub name: String,
@@ -161,6 +164,8 @@ struct Em<'s, 'a> {
     /// No hoisting (function graphs, zone carvers): everything goes into `body`.
     flat: bool,
     depth: usize,
+    /// Prop graphs: skeleton variables already grown, by node.
+    skel: HashMap<u32, String>,
 }
 
 impl<'s, 'a> Em<'s, 'a> {
@@ -179,6 +184,7 @@ impl<'s, 'a> Em<'s, 'a> {
             n: 0,
             flat,
             depth: 0,
+            skel: HashMap::new(),
         }
     }
 
@@ -575,6 +581,12 @@ impl<'s, 'a> Em<'s, 'a> {
                 };
                 self.emit(format!("(gLod > {ml} ? 0.0 : {call})"), &[], true, ctx)
             }
+            "random" => {
+                let (a, b) = (self.p(&n, "min"), self.p(&n, "max"));
+                let seed = self.pu(&n, "seed");
+                let k = n.id.wrapping_mul(64).wrapping_add(63);
+                self.emit(format!("mix({a}, {b}, pr({k}u + {seed} * 7919u))"), &[], true, ctx)
+            }
             "function_input" => {
                 let idx = self.value(&n, "index").as_f32().clamp(0.0, 3.0) as usize;
                 if self.g.kind != GraphKind::Function {
@@ -814,6 +826,12 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         let _ = writeln!(fns, "float fn_{}(vec3 p, float a0, float a1, float a2, float a3) {{\n{body}\n    return {res};\n}}\n", sanitize(name));
     }
 
+    // ---- prop graphs (build functions, props pass only) ----
+    let prop_names = project.names(GraphKind::Prop);
+    let prop_ids = props::prop_ids(&prop_names);
+    let mut prop_code = String::new();
+    props::compile_props(&mut sh, &prop_names, &mut prop_code);
+
     // ---- biomes used as cave biomes (Zone Output "Cave Biomes"): they also get flat
     // material / decoration functions, evaluated per voxel on cave floors and ceilings ----
     let mut cave_biome_ids: std::collections::BTreeSet<u32> = Default::default();
@@ -919,60 +937,27 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
                     );
                     let p = &prop;
                     match p.kind.as_str() {
-                        "tree" => {
-                            let _ = write!(
-                                d,
-                                "L.kind = PROP_TREE; L.variant = {}u; L.b0 = {}; L.b1 = {}; L.a = {}; L.b = {}; L.c = {};",
-                                em.enum_idx(p, "species"),
-                                em.block(p, "trunk"),
-                                em.block(p, "leaves"),
-                                em.p(p, "height_min"),
-                                em.p(p, "height_max"),
-                                em.p(p, "radius")
+                        "prop" => {
+                            let name = match em.value(p, "prop") {
+                                Value::Ref(r) => r,
+                                _ => String::new(),
+                            };
+                            let (Some(&gi), Some(pg)) = (prop_ids.get(&name), em.sh.proj.get(GraphKind::Prop, &name)) else {
+                                em.warn(format!("prop graph '{name}' not found"));
+                                continue;
+                            };
+                            let Some(out) = pg.output_node() else {
+                                em.warn(format!("prop graph '{name}' has no output"));
+                                continue;
+                            };
+                            let (r, h, below) = (
+                                props::live_param(em.sh, pg, out, "radius"),
+                                props::live_param(em.sh, pg, out, "height"),
+                                props::live_param(em.sh, pg, out, "below"),
                             );
-                        }
-                        "giant_mushroom" => {
-                            let _ = write!(
-                                d,
-                                "L.kind = PROP_MUSHROOM; L.b0 = {}; L.b1 = {}; L.a = {}; L.b = {}; L.c = {};",
-                                em.block(p, "stem"),
-                                em.block(p, "cap"),
-                                em.p(p, "height_min"),
-                                em.p(p, "height_max"),
-                                em.p(p, "radius")
-                            );
-                        }
-                        "boulder" => {
-                            let _ = write!(
-                                d,
-                                "L.kind = PROP_BOULDER; L.b0 = {}; L.b1 = {}; L.a = {}; L.b = {}; L.c = {};",
-                                em.block(p, "block"),
-                                em.block(p, "block2"),
-                                em.p(p, "radius_min"),
-                                em.p(p, "radius_max"),
-                                em.p(p, "radius_max")
-                            );
-                        }
-                        "column" => {
-                            let _ = write!(
-                                d,
-                                "L.kind = PROP_COLUMN; L.variant = {}u; L.b0 = {}; L.a = {}; L.b = {}; L.c = {};",
-                                em.boolean(p, "arms") as u32,
-                                em.block(p, "block"),
-                                em.p(p, "height_min"),
-                                em.p(p, "height_max"),
-                                em.p(p, "radius")
-                            );
-                        }
-                        "spike" => {
-                            let _ = write!(
-                                d,
-                                "L.kind = PROP_SPIKE; L.b0 = {}; L.a = {}; L.b = {}; L.c = {};",
-                                em.block(p, "block"),
-                                em.p(p, "height_min"),
-                                em.p(p, "height_max"),
-                                em.p(p, "radius")
-                            );
+                            let far = props::bool_param(out, "far");
+                            let replace = matches!(out.params.get("replace"), Some(Value::E(e)) if e == "Everything");
+                            let _ = write!(d, "L.kind = PROP_GRAPH; L.graph = {gi}u; L.R = {r}; L.H = {h}; L.below = {below}; L.far = {far}; L.replaceAll = {replace};");
                         }
                         "prefab" => {
                             let name = match em.value(p, "prefab") {
@@ -985,7 +970,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
                             };
                             let _ = write!(
                                 d,
-                                "L.kind = PROP_PREFAB; L.variant = {idx}u; L.a = {}.0; L.b = {}.0; L.c = {}.0; L.b0 = {}u; L.b1 = uint({});",
+                                "L.kind = PROP_PREFAB; L.variant = {idx}u; L.a = {}.0; L.b = {}.0; L.c = {}.0; L.b0 = {}u; L.b1 = uint({}); L.far = true;",
                                 size[0],
                                 size[1],
                                 size[2],
@@ -994,9 +979,12 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
                             );
                         }
                         other => {
-                            em.warn(format!("'{other}' is not a prop"));
+                            em.warn(format!("'{other}' is not a prop (use a Prop node with a Prop graph)"));
                             continue;
                         }
+                    }
+                    if em.enum_idx(n, "placement") == 1 {
+                        d.push_str(" L.buried = true; L.anySurface = true;");
                     }
                     // optional mask (3D function using the biome's 2D cache)
                     if let Some(ml) = g.input_link(layer_node.id, 1).copied() {
@@ -1007,24 +995,6 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
                         d.push_str(" L.hasMask = true;");
                     }
                     d
-                }
-                "geode" => {
-                    let n = &layer_node;
-                    format!(
-                        "L.kind = PROP_GEODE; L.b0 = {}; L.b1 = {}; L.b2 = {}; L.c = {}; L.a = {}; L.b = {}; L.spacing = {}; L.chance = {}; L.yMin = {}; L.yMax = {}; L.seed = gSeed + {} * 7919u + {}u; L.jitter = 0.8; L.anySurface = true;",
-                        em.block(n, "outer"),
-                        em.block(n, "middle"),
-                        em.block(n, "inner"),
-                        em.p(n, "radius"),
-                        em.p(n, "radius"),
-                        em.p(n, "radius"),
-                        em.p(n, "spacing"),
-                        em.p(n, "chance"),
-                        em.p(n, "y_min"),
-                        em.p(n, "y_max"),
-                        em.pu(n, "seed"),
-                        n.id
-                    )
                 }
                 other => {
                     em.warn(format!("'{other}' is not a prop layer"));
@@ -1372,6 +1342,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     );
     s.push_str(&out);
     s.push_str(&fns);
+    s.push_str(&prop_code);
     s.push_str(&biome_code);
     s.push_str(&zone_code);
     s.push_str(&world_code);
