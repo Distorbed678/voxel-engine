@@ -1,0 +1,23 @@
+#version 460
+// Depth pyramid for occlusion culling. Level 0 is a power-of-two downsample of the depth buffer,
+// and every texel of every level holds the FARTHEST depth below it (reversed-Z: the minimum). The
+// sources are sampled through a MIN-reduction sampler, so one bilinear fetch takes the minimum
+// of a 2x2 footprint.
+#include "common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 1, r32f) uniform image2D gImageR32F[];
+
+layout(push_constant, scalar) uniform PC {
+    uint src;        // sampled (min-reduction sampler): depth buffer, or the previous level
+    uint dst;        // storage: this level
+    ivec2 dstSize;
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.dstSize))) return;
+    vec2 uv = (vec2(p) + 0.5) / vec2(pc.dstSize);
+    float d = textureLod(gTex2D[nonuniformEXT(pc.src)], uv, 0.0).r;
+    imageStore(gImageR32F[pc.dst], p, vec4(d));
+}

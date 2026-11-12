@@ -1,6 +1,13 @@
 #version 460
-// Chunk-level GPU culling: frustum + per-face-direction back-face culling.
-// Emits task-shader draw groups (<= MAX_DRAW_QUADS quads each) for opaque and transparent quads.
+// Chunk-level GPU culling: frustum + per-face-direction back-face culling, plus two-phase
+// occlusion culling against a depth pyramid:
+//   phase 1: chunks that were visible last frame -> opaque + models (drawn, then the pyramid is
+//            built from their depth)
+//   phase 2: every chunk is tested against the pyramid; visible ones that weren't drawn in phase
+//            1 are drawn now, transparent quads of all visible chunks are emitted, and the
+//            visibility bits are updated for the next frame
+//   phase 0: no occlusion culling (one pass)
+// Emits task-shader draw groups (<= MAX_DRAW_QUADS quads each).
 #include "common.glsl"
 #include "voxel.glsl"
 
@@ -12,12 +19,42 @@ layout(push_constant, scalar) uniform PC {
     DrawGroupBuf opaqueDraws;
     DrawGroupBuf transDraws;
     DrawGroupBuf modelDraws;
-    U32Buf args;            // [0..2] opaque task dispatch, [3..5] transparent, [6] visible chunks, [7] total quads, [8..10] models
+    U32Buf args;            // [0..2] opaque task dispatch, [3..5] transparent, [6] visible chunks, [7] total quads,
+                            // [8..10] models, [11..13] phase-2 opaque, [14..16] phase-2 models, [17] occluded chunks
     uint numRecords;
     uint maxDraws;
-    uint shadowPass;        // 1 = no back-face culling per direction, frustum only
-    uint pad;
+    uint shadowPass;        // 1.. = shadow cascade (frustum only)
+    uint phase;             // 0 = no occlusion culling, 1 / 2 = see above
+    DrawGroupBuf opaqueDraws2;
+    DrawGroupBuf modelDraws2;
+    U32Buf visible;         // per record: 1 = visible last frame
+    uint hiz;               // sampled index of the depth pyramid (min-reduction sampler)
+    uint hizLevels;
+    vec2 hizSize;           // level-0 size in texels
 } pc;
+
+// Is the box hidden behind what phase 1 drew? Picks the pyramid level where the box covers at
+// most 2x2 texels; one min-reduction fetch then gives the farthest occluder over it.
+bool occluded(FrameData f, vec3 mn, vec3 mx) {
+    vec2 lo = vec2(1e9), hi = vec2(-1e9);
+    float zNear = 0.0;   // reversed-Z: the box's closest point has the largest depth
+    for (int c = 0; c < 8; ++c) {
+        vec3 p = vec3((c & 1) != 0 ? mx.x : mn.x, (c & 2) != 0 ? mx.y : mn.y, (c & 4) != 0 ? mx.z : mn.z);
+        vec4 h = f.viewProj * vec4(p, 1.0);
+        if (h.w < 0.05) return false;   // reaches the camera plane
+        vec3 ndc = h.xyz / h.w;
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        lo = min(lo, uv);
+        hi = max(hi, uv);
+        zNear = max(zNear, ndc.z);
+    }
+    lo = clamp(lo, 0.0, 1.0);
+    hi = clamp(hi, 0.0, 1.0);
+    vec2 px = (hi - lo) * pc.hizSize;
+    float level = clamp(ceil(log2(max(max(px.x, px.y), 1.0))), 0.0, float(pc.hizLevels - 1u));
+    float occ = textureLod(gTex2D[nonuniformEXT(pc.hiz)], (lo + hi) * 0.5, level).r;
+    return zNear < occ;
+}
 
 bool faceVisible(uint dir, vec3 mn, vec3 mx) {
     // camera sits at the origin of camera-relative space
@@ -29,6 +66,12 @@ bool faceVisible(uint dir, vec3 mn, vec3 mx) {
         case 4u: return mn.z < 0.0;
         default: return mx.z > 0.0;
     }
+}
+
+uint transCount(ChunkRecord r) {
+    uint n = 0u;
+    for (uint d = 6u; d < 12u; ++d) n += r.counts[d];
+    return n;
 }
 
 void emit(DrawGroupBuf draws, uint argBase, uint chunk, uint offset, uint count, uint dir, uint maxPer) {
@@ -58,7 +101,19 @@ void main() {
         vec3 v = vec3(pl.x >= 0.0 ? mx.x : mn.x, pl.y >= 0.0 ? mx.y : mn.y, pl.z >= 0.0 ? mx.z : mn.z);
         if (dot(pl.xyz, v) + pl.w < 0.0) return;
     }
-    atomicAdd(pc.args.v[6], 1u);
+    if (!shadow && pc.phase == 1u && pc.visible.v[i] == 0u) return;
+    bool drawOpaque = true;
+    if (!shadow && pc.phase == 2u) {
+        bool vis = !occluded(f, mn, mx);
+        uint was = pc.visible.v[i];
+        pc.visible.v[i] = vis ? 1u : 0u;
+        if (!vis) {
+            atomicAdd(pc.args.v[17], 1u);
+            return;
+        }
+        drawOpaque = was == 0u;   // otherwise phase 1 drew it already
+    }
+    if (pc.phase != 1u || shadow) atomicAdd(pc.args.v[6], 1u);
     uint offset = rec.quadBase;
     uint quads = 0u;
     if (shadow) {
@@ -71,14 +126,18 @@ void main() {
         }
         return;
     }
+    bool p2 = pc.phase == 2u;
     for (uint d = 0u; d < 6u; ++d) {
         uint c = rec.counts[d];
         if (c > 0u && faceVisible(d, mn, mx)) {
-            emit(pc.opaqueDraws, 0u, i, offset, c, d, MAX_DRAW_QUADS);
+            if (drawOpaque) emit(p2 ? pc.opaqueDraws2 : pc.opaqueDraws, p2 ? 11u : 0u, i, offset, c, d, MAX_DRAW_QUADS);
             quads += c;
         }
         offset += c;
     }
+    uint nm = rec.counts[STREAM_MODELS];
+    if (nm > 0u && lod <= 1u && drawOpaque) emit(p2 ? pc.modelDraws2 : pc.modelDraws, p2 ? 14u : 8u, i, offset + transCount(rec), nm, 6u, 192u);
+    if (pc.phase == 1u) return;   // transparent quads are emitted once, in phase 2
     for (uint d = 0u; d < 6u; ++d) {
         uint c = rec.counts[6u + d];
         if (c > 0u && faceVisible(d, mn, mx)) {
@@ -87,7 +146,5 @@ void main() {
         }
         offset += c;
     }
-    uint nm = rec.counts[STREAM_MODELS];
-    if (nm > 0u && lod <= 1u) emit(pc.modelDraws, 8u, i, offset, nm, 6u, 192u);
     atomicAdd(pc.args.v[7], quads);
 }

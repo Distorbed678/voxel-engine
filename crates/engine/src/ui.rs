@@ -41,6 +41,8 @@ pub struct UiState {
     pub grading: bool,
     /// Ambient particles and precipitation.
     pub particles: bool,
+    /// Two-phase occlusion culling against a depth pyramid.
+    pub occlusion: bool,
     /// Weather intensity when not automatic.
     pub weather: f32,
     /// Let the weather change by itself over time.
@@ -83,6 +85,7 @@ impl UiState {
             bloom: true,
             grading: true,
             particles: true,
+            occlusion: true,
             weather: 0.0,
             weather_auto: true,
             bloom_strength: 0.35,
@@ -243,7 +246,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
                 ui.text(format!("edits {} (undo {})", c.world.overlay.edit_count(), c.world.overlay.undo.len()));
             }
             if ui.collapsing_header("Draw", TreeNodeFlags::DEFAULT_OPEN) {
-                ui.text(format!("visible chunks {}", c.stats.visible_chunks));
+                ui.text(format!("visible chunks {}, occluded {}", c.stats.visible_chunks, c.stats.occluded_chunks));
                 ui.text(format!("quads drawn {:.2}M ({:.2}M tris)", c.stats.drawn_quads as f32 / 1e6, c.stats.drawn_quads as f32 * 2.0 / 1e6));
                 ui.text(format!("task groups {} opaque / {} transparent / {} model", c.stats.draw_groups, c.stats.trans_groups, c.stats.model_groups));
             }
@@ -284,6 +287,8 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.same_line();
             ui.checkbox("Grading", &mut c.state.grading);
             ui.checkbox("Particles", &mut c.state.particles);
+            ui.same_line();
+            ui.checkbox("Occlusion culling", &mut c.state.occlusion);
             ui.same_line();
             ui.checkbox("Auto weather", &mut c.state.weather_auto);
             if c.state.weather_auto {

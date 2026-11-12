@@ -18,7 +18,7 @@ you edit live.**
 </div>
 
 Everything about the world happens on the GPU: generation from the node graph, trees and other
-props, greedy meshing, culling and drawing. The CPU only decides which chunks to build. The view
+props, greedy meshing, occlusion culling and drawing. The CPU only decides which chunks to build. The view
 reaches about **4 km** through nested LOD clipmaps of 32³ chunks, and the world is infinite on
 all three axes. There is no player or gameplay: you get a free-flying camera, editing tools and a
 Dear ImGui debug UI.
@@ -85,6 +85,7 @@ RTX 4080, 1080p, `--benchmark` (a scripted 24 s flight at 90 blocks/s):
 | Average frame rate | **279 fps** (1% low: 102 fps) |
 | Streaming | ~2,000 chunks/s while flying |
 | Regenerating the whole 4 km world | ~0.5 s of GPU time (~9.2k chunks) |
+| Occlusion culling (main pass) | 2.1 → 1.2 ms in a forest, 2.4 → 0.4 ms in a cave |
 | Validation layers | 0 errors |
 
 ## Getting started

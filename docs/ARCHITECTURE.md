@@ -11,9 +11,11 @@ pick dirty chunks (budgeted)          worldgen batch:  terrain -> props -> edits
                                                        -> readback
 light volume follows the camera       light: sky columns -> 4 propagation steps (while changing)
 probes (camera biome, minimap)        probe dispatch
-                                      cull (frustum + per-direction) -> draw groups
+                                      cull phase 1 (frustum + per-direction, visible last frame)
                                       shadow cascades x4 (cull + task/mesh depth)
-                                      main pass: terrain (task/mesh) + models + sky
+                                      main pass 1: terrain (task/mesh) + models
+                                      depth pyramid -> cull phase 2 (occlusion) -> sort transparent
+                                      main pass 2: newly visible terrain + models + sky
                                       translucent pass: water + volumetric clouds
                                       TAA resolve (compute) -> history
                                       bloom: 13-tap downsample chain -> tent upsample (compute)
@@ -51,6 +53,14 @@ Streams per chunk: 6 opaque directions, 6 transparent directions, and model inst
 - **Cull pass**: frustum culling, then back-face culling per face direction (a chunk's +X
   faces are only drawn if the camera is on that side). It emits task-shader groups of at most
   2048 quads.
+- **Occlusion culling** (two-phase): phase 1 draws the chunks that were visible last frame. A
+  depth pyramid is built from that depth: a power-of-two level 0, with each texel holding the
+  farthest depth below it, made with a MIN-reduction sampler. Phase 2 tests every chunk's box
+  against the pyramid, at the level where the box covers at most 2×2 texels, so one fetch gives
+  the farthest occluder. Visible chunks not drawn in phase 1 are drawn then, transparent quads
+  come only from visible chunks, and the per-record visibility bits update for the next frame.
+  No popping, since phase 2 catches anything that just became visible. Measured main pass:
+  forest at ground level 2.1 → 1.2 ms, inside a cave 2.4 → 0.4 ms.
 - **Task and mesh shaders**: 32 threads × 2 quads gives 64 quads per meshlet (256 vertices,
   128 triangles).
 - **Models** (plants, slabs, stairs, ...): 6 instances × 10 quad slots per meshlet. Boundary

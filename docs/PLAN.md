@@ -168,6 +168,8 @@ These follow from the choices above.
 - [x] **Node editor**: Auto-layout button (columns by distance to the output, barycentre
   ordering, estimated node heights; the default graphs are laid out with it), Comment boxes
   (resizable group boxes with a note, text edited in the inspector).
+- [x] **Hi-Z occlusion culling** (two-phase, per chunk): pixel-identical goldens; main pass at
+  ground level −16% (taiga) / −42% (forest) / −83% (cave). Shadows are now the largest pass.
 - [x] **Far-field block light**: a coarse 4-blocks-per-cell volume (block light only) over the
   LOD0 box, filled by LOD0 jobs as a side effect, sampled beyond the fine volume. Distant lava
   lights its banks.
@@ -241,9 +243,11 @@ suggestions; the rest is the earlier roadmap.
 7. ~~Cave biomes + river node~~.
 8. ~~Small open items: colour grading, overdraw view, node comments, node auto-layout~~.
 9. ~~Ambient particles + weather~~.
-10. GPU graph interpreter, so structural edits are instant while the compiled shader builds
-   (today: about 3 s cold, about 50 ms cached).
-11. Hi-Z occlusion culling (main pass is 2–2.5 ms in dense views).
+10. GPU graph interpreter: **deferred by the owner (2026-11-12)**. Measured: structural edits
+    rebuild in ~2.3 s cold (NVIDIA driver compile; GLSL->SPIR-V is ~70 ms; the disable-optimisation
+    flag doesn't help), ~50 ms with a warm cache. Startup now builds the three generator
+    pipelines in parallel (4.7 s -> 2.4 s cold). Revisit if rebuild waits still bother.
+11. ~~Hi-Z occlusion culling~~.
 12. Hytale-style noise/height biome selectors (alongside Voronoi).
 13. Block rotation states (stairs, logs) and partial-height water.
 

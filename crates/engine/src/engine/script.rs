@@ -14,11 +14,13 @@
 //! | `move X Y Z YAW PITCH FRAMES` | glide the camera there (smoothstep) |
 //! | `waypoint X Y Z YAW PITCH` ... `fly_path FRAMES` | fly a smooth spline from the camera through the waypoints |
 //! | `find_biome NAME [HEIGHT]` | survey the generator, go to the nearest large patch of a biome, HEIGHT blocks above its highest block |
+//! | `profile N [LABEL]` | average the GPU passes over the next N frames and log them |
+//! | `benchmark` | run the 24 s benchmark flight and wait for its report |
 //! | `weather W` | fixed weather intensity 0..1 (turns automatic weather off) |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
-//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `block_light on\|off` | render toggles |
+//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `occlusion on\|off` / `block_light on\|off` | render toggles |
 //! | `wait N` / `settle [MAX]` | wait N frames / until streaming, meshing and shader builds are idle |
 //! | `screenshot PATH` / `record DIR\|off` | save this frame / save every frame as `DIR/frame_NNNNN.png` |
 //! | `cursor X Y` | move the mouse to a pixel (picking follows it; waits for the pick) |
@@ -92,6 +94,9 @@ enum Cmd {
     Bloom(bool),
     Grading(bool),
     Particles(bool),
+    Occlusion(bool),
+    Benchmark,
+    Profile(u32, String),
     Weather(f32),
     BlockLight(bool),
     Wait(u32),
@@ -135,6 +140,10 @@ enum Busy {
     Region { id: u64, pos: IVec3, want: u16, left: u32 },
     /// Column read under the camera after `find_biome`: lands HEIGHT above the top block.
     Ground { id: u64, height: f64, left: u32 },
+    /// Waiting for the benchmark flight to finish.
+    Bench,
+    /// Averaging GPU pass times.
+    Profile { left: u32, label: String },
     /// Region read for `check_apron`.
     Apron { id: u64, chunk: IVec3, left: u32 },
     /// Column read for `find_cave`.
@@ -286,6 +295,9 @@ fn parse(line: &str) -> Result<Cmd> {
         "bloom" => Cmd::Bloom(on_off(a.first())?),
         "grading" => Cmd::Grading(on_off(a.first())?),
         "particles" => Cmd::Particles(on_off(a.first())?),
+        "occlusion" => Cmd::Occlusion(on_off(a.first())?),
+        "benchmark" => Cmd::Benchmark,
+        "profile" => Cmd::Profile(num(a.first(), "frames")?, a.get(1..).map(|r| r.join(" ")).unwrap_or_default()),
         "weather" => Cmd::Weather(num(a.first(), "intensity")?),
         "block_light" => Cmd::BlockLight(on_off(a.first())?),
         "wait" => Cmd::Wait(num(a.first(), "frames")?),
@@ -781,6 +793,16 @@ impl Engine {
                 }
                 (i < n + 5).then_some(Busy::Drag { from, to, button, i, n })
             }
+            Busy::Profile { left, label } => {
+                if left > 0 {
+                    return Ok(Some(Busy::Profile { left: left - 1, label }));
+                }
+                let mut parts: Vec<String> = self.gpu_sums.iter().map(|(n, (sum, c))| format!("{n} {:.3}", sum / (*c).max(1) as f64)).collect();
+                parts.sort();
+                log::info!("script: profile {label}: {} | occluded chunks {}", parts.join(", "), self.stats.occluded_chunks);
+                None
+            }
+            Busy::Bench => (self.bench.as_ref().is_some_and(|b| b.report.is_none())).then_some(Busy::Bench),
             Busy::Apron { id, chunk, left } => {
                 if left == 0 {
                     s.fail(line, "apron read timed out");
@@ -891,6 +913,15 @@ impl Engine {
             Cmd::Bloom(on) => self.ui.bloom = on,
             Cmd::Grading(on) => self.ui.grading = on,
             Cmd::Particles(on) => self.ui.particles = on,
+            Cmd::Occlusion(on) => self.ui.occlusion = on,
+            Cmd::Profile(n, label) => {
+                self.gpu_sums.clear();
+                return Ok(Some(Busy::Profile { left: n, label }));
+            }
+            Cmd::Benchmark => {
+                self.start_benchmark();
+                return Ok(Some(Busy::Bench));
+            }
             Cmd::Weather(w) => {
                 self.ui.weather_auto = false;
                 self.ui.weather = w.clamp(0.0, 1.0);

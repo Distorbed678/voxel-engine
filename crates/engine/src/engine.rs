@@ -87,6 +87,8 @@ pub struct FrameStats {
     pub draw_groups: u32,
     pub trans_groups: u32,
     pub model_groups: u32,
+    /// Chunks hidden by occlusion culling this frame.
+    pub occluded_chunks: u32,
 }
 
 pub struct Engine {
@@ -709,9 +711,10 @@ impl Engine {
         let words: Vec<u32> = self.renderer.per_slot[slot].pick_readback.read(0, 2);
         let payload = words[0];
         let depth = f32::from_bits(words[1]);
-        let stats: Vec<u32> = self.renderer.per_slot[slot].stats_readback.read(0, 11);
-        self.stats.model_groups = stats[8];
-        self.stats.draw_groups = stats[0];
+        let stats: Vec<u32> = self.renderer.per_slot[slot].stats_readback.read(0, 18);
+        self.stats.model_groups = stats[8] + stats[14];
+        self.stats.draw_groups = stats[0] + stats[11];
+        self.stats.occluded_chunks = stats[17];
         self.stats.trans_groups = stats[3];
         self.stats.visible_chunks = stats[6];
         self.stats.drawn_quads = stats[7];
@@ -1119,6 +1122,7 @@ impl Engine {
             },
             self.ui.debug_view == crate::ui::DEBUG_OVERDRAW,
             particle_draw,
+            self.ui.occlusion,
         );
         if self.ui.taa {
             let frame_addr = self.renderer.per_slot[slot].frame_buf.address;

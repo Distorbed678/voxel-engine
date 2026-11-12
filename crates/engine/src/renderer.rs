@@ -96,8 +96,28 @@ struct CullPush {
     num_records: u32,
     max_draws: u32,
     shadow: u32,
-    pad: u32,
+    /// 0 = no occlusion culling, 1 / 2 = two-phase occlusion culling (see cull.comp)
+    phase: u32,
+    opaque2: u64,
+    models2: u64,
+    visible: u64,
+    hiz: u32,
+    hiz_levels: u32,
+    hiz_size: [f32; 2],
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct HizPush {
+    src: u32,
+    dst: u32,
+    dst_size: [i32; 2],
+}
+
+/// Chunk records the visibility buffer can track (the world allocates at most this many).
+pub const MAX_RECORDS: u32 = 1 << 16;
+/// Words in the draw argument buffer (see cull.comp).
+const ARG_WORDS: usize = 18;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -161,6 +181,7 @@ pub struct Pipelines {
     pub clouds: PipelineHandle,
     pub tonemap: PipelineHandle,
     pub sort_trans: PipelineHandle,
+    pub hiz: PipelineHandle,
     pub apply_edits: PipelineHandle,
     pub mesh_count: PipelineHandle,
     pub mesh_write: PipelineHandle,
@@ -190,12 +211,78 @@ pub struct Renderer {
     /// Transparent draw groups sorted back to front (what the translucent pass draws).
     pub trans_sorted: Buffer,
     pub model_draws: Buffer,
+    /// Phase-2 draw lists (chunks that became visible this frame).
+    pub opaque_draws2: Buffer,
+    pub model_draws2: Buffer,
+    /// Per chunk record: visible last frame (two-phase occlusion culling).
+    pub visible: Buffer,
+    visible_ready: bool,
+    hiz: Hiz,
     pub shadow_map: Image,
     pub shadow_views: Vec<vk::ImageView>,
     pub shadow_tex: u32,
     pub shadow_draws: Buffer,
     pub shadow_args: Buffer,
     pub pipes: Pipelines,
+}
+
+/// Depth pyramid for occlusion culling (`shaders/render/hiz.comp`): power-of-two level 0, every
+/// texel the farthest depth below it.
+struct Hiz {
+    image: Image,
+    levels: u32,
+    size: vk::Extent2D,
+    storage: Vec<u32>,
+    /// Per-level sampled views (min-reduction sampler): sources for the next level.
+    sampled_mips: Vec<u32>,
+    /// The whole chain (min-reduction sampler) for the cull test.
+    sampled: u32,
+    /// The depth buffer through the min-reduction sampler (source of level 0).
+    depth_src: u32,
+    ready: bool,
+}
+
+impl Hiz {
+    fn new(ctx: &VkContext, bindless: &mut Bindless, depth: &Image, extent: vk::Extent2D) -> Result<Self> {
+        let prev_pow2 = |x: u32| 1u32 << (31 - x.max(1).leading_zeros());
+        let size = vk::Extent2D { width: prev_pow2(extent.width), height: prev_pow2(extent.height) };
+        let levels = 32 - size.width.max(size.height).leading_zeros();
+        let image = Image::new(
+            ctx,
+            &ImageDesc {
+                name: "hiz",
+                format: vk::Format::R32_SFLOAT,
+                extent: vk::Extent3D { width: size.width, height: size.height, depth: 1 },
+                mips: levels,
+                layers: 1,
+                usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+                view_type: vk::ImageViewType::TYPE_2D,
+                per_mip_views: true,
+            },
+        )?;
+        let min = bindless.samplers.min_reduce;
+        let storage = image.mip_views.iter().map(|&v| bindless.add_storage(ctx, v)).collect();
+        let sampled_mips = image.mip_views.iter().map(|&v| bindless.add_sampled(ctx, v, min, vk::ImageLayout::GENERAL)).collect();
+        let sampled = bindless.add_sampled(ctx, image.view, min, vk::ImageLayout::GENERAL);
+        let depth_src = bindless.add_sampled(ctx, depth.view, min, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
+        Ok(Self { image, levels, size, storage, sampled_mips, sampled, depth_src, ready: false })
+    }
+
+    fn free(&mut self, ctx: &VkContext, bindless: &mut Bindless) {
+        for &i in &self.storage {
+            bindless.free_storage(i);
+        }
+        for &i in &self.sampled_mips {
+            bindless.free_sampled(i);
+        }
+        bindless.free_sampled(self.sampled);
+        bindless.free_sampled(self.depth_src);
+        self.image.destroy(ctx);
+    }
+
+    fn destroy(&mut self, ctx: &VkContext) {
+        self.image.destroy(ctx);
+    }
 }
 
 fn create_overdraw(ctx: &VkContext, extent: vk::Extent2D) -> Result<Image> {
@@ -323,6 +410,7 @@ impl Renderer {
         frames_in_flight: usize,
     ) -> Result<Self> {
         let (hdr, depth) = create_targets(ctx, extent)?;
+        let hiz = Hiz::new(ctx, bindless, &depth, extent)?;
         let overdraw = create_overdraw(ctx, extent)?;
         let overdraw_img = bindless.add_storage(ctx, overdraw.view);
         let hdr_tex = bindless.add_sampled(ctx, hdr.view, bindless.samplers.linear_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -352,7 +440,7 @@ impl Renderer {
                 Ok(FramePerSlot {
                     frame_buf: Buffer::upload(ctx, &format!("frame_data_{i}"), std::mem::size_of::<FrameData>() as u64)?,
                     pick_readback: Buffer::readback(ctx, &format!("pick_readback_{i}"), 16)?,
-                    stats_readback: Buffer::readback(ctx, &format!("stats_readback_{i}"), 64)?,
+                    stats_readback: Buffer::readback(ctx, &format!("stats_readback_{i}"), (ARG_WORDS * 4) as u64)?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -406,11 +494,16 @@ impl Renderer {
             block_table,
             per_slot,
             pick: Buffer::gpu(ctx, "pick", 16)?,
-            args: Buffer::gpu(ctx, "draw_args", 64)?,
+            args: Buffer::gpu(ctx, "draw_args", (ARG_WORDS * 4) as u64)?,
             opaque_draws: Buffer::gpu(ctx, "opaque_draws", MAX_DRAWS as u64 * 16)?,
             trans_draws: Buffer::gpu(ctx, "trans_draws", MAX_DRAWS as u64 * 16)?,
             trans_sorted: Buffer::gpu(ctx, "trans_sorted", MAX_DRAWS as u64 * 16)?,
             model_draws: Buffer::gpu(ctx, "model_draws", MAX_DRAWS as u64 * 16)?,
+            opaque_draws2: Buffer::gpu(ctx, "opaque_draws2", MAX_DRAWS as u64 * 16)?,
+            model_draws2: Buffer::gpu(ctx, "model_draws2", MAX_DRAWS as u64 * 16)?,
+            visible: Buffer::gpu(ctx, "chunk_visible", MAX_RECORDS as u64 * 4)?,
+            visible_ready: false,
+            hiz,
             shadow_map,
             shadow_views,
             shadow_tex,
@@ -534,6 +627,7 @@ impl Renderer {
                 ),
             )?,
             sort_trans: pm.create(ctx, "sort_trans", compute("render/sort_trans.comp", &[]))?,
+            hiz: pm.create(ctx, "hiz", compute("render/hiz.comp", &[]))?,
             tonemap: pm.create(
                 ctx,
                 "tonemap",
@@ -558,12 +652,139 @@ impl Renderer {
         self.depth = depth;
         self.overdraw.destroy(ctx);
         self.overdraw = create_overdraw(ctx, extent)?;
+        self.hiz.free(ctx, bindless);
+        self.hiz = Hiz::new(ctx, bindless, &self.depth, extent)?;
         bindless.update_storage(ctx, self.overdraw_img, self.overdraw.view);
         self.overdraw_ready = false;
         bindless.update_sampled(ctx, self.hdr_tex, self.hdr.view, bindless.samplers.linear_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         bindless.update_sampled(ctx, self.depth_tex, self.depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
         self.extent = extent;
         Ok(())
+    }
+
+    fn cull_push(&self, frame_addr: u64, records: &Buffer, num_records: u32, phase: u32) -> CullPush {
+        CullPush {
+            frame: frame_addr,
+            records: records.address,
+            opaque: self.opaque_draws.address,
+            trans: self.trans_draws.address,
+            models: self.model_draws.address,
+            args: self.args.address,
+            num_records: num_records.min(MAX_RECORDS),
+            max_draws: MAX_DRAWS,
+            shadow: 0,
+            phase,
+            opaque2: self.opaque_draws2.address,
+            models2: self.model_draws2.address,
+            visible: self.visible.address,
+            hiz: self.hiz.sampled,
+            hiz_levels: self.hiz.levels,
+            hiz_size: [self.hiz.size.width as f32, self.hiz.size.height as f32],
+        }
+    }
+
+    /// Transparent groups back to front (after the cull pass that emits them).
+    fn record_sort_trans(&self, ctx: &VkContext, cb: vk::CommandBuffer, pm: &PipelineManager, frame_addr: u64, records: &Buffer) {
+        let d = &ctx.device;
+        unsafe {
+            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.pipes.sort_trans));
+            d.cmd_push_constants(
+                cb,
+                pm.layout,
+                vk::ShaderStageFlags::ALL,
+                0,
+                bytemuck::bytes_of(&SortPush {
+                    frame: frame_addr,
+                    records: records.address,
+                    src: self.trans_draws.address,
+                    dst: self.trans_sorted.address,
+                    args: self.args.address,
+                    max_draws: MAX_DRAWS,
+                    pad: 0,
+                }),
+            );
+            d.cmd_dispatch(cb, 1, 1, 1);
+        }
+    }
+
+    /// Between the two opaque passes: depth pyramid from phase 1, phase-2 cull, transparent sort.
+    /// Leaves the depth buffer ready to render into again.
+    fn record_occlusion(&mut self, ctx: &VkContext, cb: vk::CommandBuffer, pm: &PipelineManager, frame_addr: u64, records: &Buffer, num_records: u32) {
+        let d = &ctx.device;
+        image_barrier(
+            ctx,
+            cb,
+            self.depth.raw,
+            self.depth.full_range(),
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::AccessFlags2::SHADER_READ,
+        );
+        if !self.hiz.ready {
+            image_barrier(
+                ctx,
+                cb,
+                self.hiz.image.raw,
+                self.hiz.image.full_range(),
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::GENERAL,
+                vk::PipelineStageFlags2::TOP_OF_PIPE,
+                vk::AccessFlags2::NONE,
+                vk::PipelineStageFlags2::COMPUTE_SHADER,
+                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+            );
+            self.hiz.ready = true;
+        } else {
+            // the previous frame's cull pass may still read the pyramid
+            vkcore::sync::compute_barrier(ctx, cb);
+        }
+        unsafe { d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.pipes.hiz)) };
+        for level in 0..self.hiz.levels {
+            let src = if level == 0 { self.hiz.depth_src } else { self.hiz.sampled_mips[level as usize - 1] };
+            let w = (self.hiz.size.width >> level).max(1);
+            let h = (self.hiz.size.height >> level).max(1);
+            unsafe {
+                d.cmd_push_constants(
+                    cb,
+                    pm.layout,
+                    vk::ShaderStageFlags::ALL,
+                    0,
+                    bytemuck::bytes_of(&HizPush { src, dst: self.hiz.storage[level as usize], dst_size: [w as i32, h as i32] }),
+                );
+                d.cmd_dispatch(cb, w.div_ceil(8), h.div_ceil(8), 1);
+            }
+            vkcore::sync::compute_barrier(ctx, cb);
+        }
+        unsafe {
+            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.pipes.cull));
+            d.cmd_push_constants(cb, pm.layout, vk::ShaderStageFlags::ALL, 0, bytemuck::bytes_of(&self.cull_push(frame_addr, records, num_records, 2)));
+            d.cmd_dispatch(cb, num_records.min(MAX_RECORDS).div_ceil(64).max(1), 1, 1);
+        }
+        vkcore::sync::compute_barrier(ctx, cb);
+        self.record_sort_trans(ctx, cb, pm, frame_addr, records);
+        memory_barrier(
+            ctx,
+            cb,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::AccessFlags2::SHADER_WRITE,
+            vk::PipelineStageFlags2::DRAW_INDIRECT | vk::PipelineStageFlags2::TASK_SHADER_EXT | vk::PipelineStageFlags2::MESH_SHADER_EXT,
+            vk::AccessFlags2::INDIRECT_COMMAND_READ | vk::AccessFlags2::SHADER_READ,
+        );
+        image_barrier(
+            ctx,
+            cb,
+            self.depth.raw,
+            self.depth.full_range(),
+            vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL,
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::AccessFlags2::SHADER_READ,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        );
     }
 
     /// GPU culling + main scene (terrain, sky, transparent) into the HDR target.
@@ -585,6 +806,7 @@ impl Renderer {
         clouds: CloudSettings,
         overdraw: bool,
         particles: Option<(vk::Pipeline, crate::particles::ParticlePush)>,
+        occlusion: bool,
     ) {
         let d = &ctx.device;
         let frame_addr = self.per_slot[slot].frame_buf.address;
@@ -595,8 +817,13 @@ impl Renderer {
         unsafe {
             d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, layout, 0, &[bindless.set], &[]);
             d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::GRAPHICS, layout, 0, &[bindless.set], &[]);
-            let args: [u32; 11] = [0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1];
+            let args: [u32; ARG_WORDS] = [0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0];
             d.cmd_update_buffer(cb, self.args.raw, 0, bytemuck::cast_slice(&args));
+            if !self.visible_ready {
+                // everything counts as visible on the first frame
+                d.cmd_fill_buffer(cb, self.visible.raw, 0, vk::WHOLE_SIZE, 1);
+                self.visible_ready = true;
+            }
             d.cmd_fill_buffer(cb, self.pick.raw, 0, 16, 0);
         }
         memory_barrier(
@@ -609,34 +836,12 @@ impl Renderer {
         );
         unsafe {
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.pipes.cull));
-            push(bytemuck::bytes_of(&CullPush {
-                frame: frame_addr,
-                records: records.address,
-                opaque: self.opaque_draws.address,
-                trans: self.trans_draws.address,
-                models: self.model_draws.address,
-                args: self.args.address,
-                num_records,
-                max_draws: MAX_DRAWS,
-                shadow: 0,
-                pad: 0,
-            }));
+            push(bytemuck::bytes_of(&self.cull_push(frame_addr, records, num_records, if occlusion { 1 } else { 0 })));
             d.cmd_dispatch(cb, num_records.div_ceil(64).max(1), 1, 1);
         }
-        // transparent groups back to front
-        vkcore::sync::compute_barrier(ctx, cb);
-        unsafe {
-            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.pipes.sort_trans));
-            push(bytemuck::bytes_of(&SortPush {
-                frame: frame_addr,
-                records: records.address,
-                src: self.trans_draws.address,
-                dst: self.trans_sorted.address,
-                args: self.args.address,
-                max_draws: MAX_DRAWS,
-                pad: 0,
-            }));
-            d.cmd_dispatch(cb, 1, 1, 1);
+        if !occlusion {
+            vkcore::sync::compute_barrier(ctx, cb);
+            self.record_sort_trans(ctx, cb, pm, frame_addr, records);
         }
         memory_barrier(
             ctx,
@@ -726,13 +931,14 @@ impl Renderer {
             .layer_count(1)
             .color_attachments(&color_att)
             .depth_attachment(&depth_att);
+        let (block_table, pick) = (self.block_table.address, self.pick.address);
         let terrain_push = |draws: u64| TerrainPush {
             frame: frame_addr,
             records: records.address,
             draws,
             quads: quads.address,
-            blocks: self.block_table.address,
-            pick: self.pick.address,
+            blocks: block_table,
+            pick,
             biomes,
             flags: 0,
             pad: 0,
@@ -755,11 +961,48 @@ impl Renderer {
             push(bytemuck::bytes_of(&terrain_push(self.model_draws.address)));
             ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.args.raw, 32, 1, 12);
 
-            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.sky));
-            push(bytemuck::bytes_of(&FramePush { frame: frame_addr }));
-            d.cmd_draw(cb, 3, 1, 0, 0);
-
+            if !occlusion {
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.sky));
+                push(bytemuck::bytes_of(&FramePush { frame: frame_addr }));
+                d.cmd_draw(cb, 3, 1, 0, 0);
+            }
             d.cmd_end_rendering(cb);
+        }
+        if occlusion {
+            // phase 2: chunks that became visible this frame, then the sky
+            self.record_occlusion(ctx, cb, pm, frame_addr, records, num_records);
+            let color_load = [vk::RenderingAttachmentInfo::default()
+                .image_view(self.hdr.view)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE)];
+            let depth_load = vk::RenderingAttachmentInfo::default()
+                .image_view(self.depth.view)
+                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE);
+            let info = vk::RenderingInfo::default().render_area(area).layer_count(1).color_attachments(&color_load).depth_attachment(&depth_load);
+            unsafe {
+                d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::GRAPHICS, layout, 0, &[bindless.set], &[]);
+                d.cmd_begin_rendering(cb, &info);
+                d.cmd_set_viewport(
+                    cb,
+                    0,
+                    &[vk::Viewport { x: 0.0, y: 0.0, width: self.extent.width as f32, height: self.extent.height as f32, min_depth: 0.0, max_depth: 1.0 }],
+                );
+                d.cmd_set_scissor(cb, 0, &[area]);
+                let terrain = if wireframe { self.pipes.terrain_wire } else { self.pipes.terrain };
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(terrain));
+                push(bytemuck::bytes_of(&terrain_push(self.opaque_draws2.address)));
+                ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.args.raw, 44, 1, 12);
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.models));
+                push(bytemuck::bytes_of(&terrain_push(self.model_draws2.address)));
+                ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.args.raw, 56, 1, 12);
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.sky));
+                push(bytemuck::bytes_of(&FramePush { frame: frame_addr }));
+                d.cmd_draw(cb, 3, 1, 0, 0);
+                d.cmd_end_rendering(cb);
+            }
         }
         // translucent pass: depth becomes read-only so water and clouds can sample it
         image_barrier(
@@ -833,7 +1076,7 @@ impl Renderer {
         );
         unsafe {
             d.cmd_copy_buffer(cb, self.pick.raw, self.per_slot[slot].pick_readback.raw, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: 16 }]);
-            d.cmd_copy_buffer(cb, self.args.raw, self.per_slot[slot].stats_readback.raw, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: 44 }]);
+            d.cmd_copy_buffer(cb, self.args.raw, self.per_slot[slot].stats_readback.raw, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: (ARG_WORDS * 4) as u64 }]);
         }
         profiler.end(ctx, cb, slot);
     }
@@ -884,7 +1127,13 @@ impl Renderer {
                     num_records,
                     max_draws: SHADOW_DRAWS,
                     shadow: c as u32 + 1,
-                    pad: 0,
+                    phase: 0,
+                    opaque2: draws,
+                    models2: draws,
+                    visible: draws,
+                    hiz: 0,
+                    hiz_levels: 1,
+                    hiz_size: [1.0, 1.0],
                 }));
                 d.cmd_dispatch(cb, num_records.div_ceil(64).max(1), 1, 1);
             }
@@ -1015,6 +1264,10 @@ impl Renderer {
         self.trans_draws.destroy(ctx);
         self.trans_sorted.destroy(ctx);
         self.model_draws.destroy(ctx);
+        self.opaque_draws2.destroy(ctx);
+        self.model_draws2.destroy(ctx);
+        self.visible.destroy(ctx);
+        self.hiz.destroy(ctx);
         for v in self.shadow_views.drain(..) {
             unsafe { ctx.device.destroy_image_view(v, None) };
         }
