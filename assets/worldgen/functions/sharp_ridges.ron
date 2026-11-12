@@ -1,0 +1,64 @@
+(
+    name: "sharp_ridges",
+    kind: Function,
+    nodes: [
+        (
+            id: 1,
+            kind: "function_output",
+            pos: (600.0, 200.0),
+            params: {},
+            comment: "",
+        ),
+        (
+            id: 2,
+            kind: "ridged2d",
+            pos: (0.0, 0.0),
+            params: {
+                "amplitude": F(1.0),
+                "gain": F(0.5),
+                "lacunarity": F(2.0),
+                "octaves": I(5),
+                "seed": I(40),
+                "size": F(300.0),
+            },
+            comment: "",
+        ),
+        (
+            id: 3,
+            kind: "function_input",
+            pos: (0.0, 150.0),
+            params: {
+                "index": I(0),
+            },
+            comment: "",
+        ),
+        (
+            id: 4,
+            kind: "multiply",
+            pos: (240.0, 60.0),
+            params: {},
+            comment: "",
+        ),
+    ],
+    links: [
+        (
+            from_node: 2,
+            from_pin: 0,
+            to_node: 4,
+            to_pin: 0,
+        ),
+        (
+            from_node: 3,
+            from_pin: 0,
+            to_node: 4,
+            to_pin: 1,
+        ),
+        (
+            from_node: 4,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 0,
+        ),
+    ],
+    next_id: 5,
+)

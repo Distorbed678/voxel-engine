@@ -70,6 +70,22 @@ pub struct PipelineManager {
     pub reload_count: u32,
 }
 
+/// Functions of the generated world generator that should stay out-of-line (compile time).
+pub fn worldgen_noinline(name: &str) -> bool {
+    // Tier-1 ("quick") builds keep every sizeable function out of line: ~3x faster driver
+    // compile, ~5x slower generation. The tier-2 build inlines everything and replaces it.
+    const PREFIXES: &[&str] = &[
+        "simplex", "fbm", "ridged", "billow", "worley", "value3", "cave_", "voronoi2", "strata_pick", "ground_cover",
+        "wg_", "biome_density", "zone_", "shape_", "prop_shape", "fn_",
+    ];
+    if PREFIXES.iter().any(|p| name.starts_with(p)) {
+        return true;
+    }
+    // per-biome / per-zone generated functions: b3_den(...), z1_carve(...)
+    let mut ch = name.chars();
+    matches!(ch.next(), Some('b') | Some('z')) && ch.next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+}
+
 fn defines_ref(d: &[(String, String)]) -> Vec<(&str, &str)> {
     d.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect()
 }
@@ -112,8 +128,15 @@ impl PipelineManager {
                 Ok((pipeline::compute(ctx, self.layout, &out.spirv, name)?, out.deps))
             }
             PipelineSource::ComputeSource { name: n, source, defines } => {
-                let out = self.compiler.compile_source(n, source, ShaderKind::Compute, &defines_ref(defines))?;
-                Ok((pipeline::compute(ctx, self.layout, &out.spirv, name)?, out.deps))
+                let t0 = std::time::Instant::now();
+                let mut out = self.compiler.compile_source(n, source, ShaderKind::Compute, &defines_ref(defines))?;
+                if n.starts_with("worldgen_") && std::env::var("VE_INLINE_ALL").is_err() {
+                    vkcore::shader::spirv_dont_inline(&mut out.spirv, worldgen_noinline);
+                }
+                let t1 = t0.elapsed().as_secs_f32() * 1000.0;
+                let p = pipeline::compute(ctx, self.layout, &out.spirv, name)?;
+                log::info!("{name}: glsl->spirv {t1:.0} ms ({} words), pipeline {:.0} ms", out.spirv.len(), t0.elapsed().as_secs_f32() * 1000.0 - t1);
+                Ok((p, out.deps))
             }
             PipelineSource::Graphics { stages, state } => {
                 let mut compiled = Vec::new();

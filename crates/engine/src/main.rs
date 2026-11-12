@@ -7,8 +7,9 @@ mod renderer;
 mod shaders;
 mod textures;
 mod ui;
+mod node_editor;
+mod wg;
 mod world;
-mod worldgen_default;
 
 use std::sync::Arc;
 
@@ -180,6 +181,14 @@ fn main() -> Result<()> {
         }
         let errors = vkcore::context::VALIDATION_ERRORS.load(std::sync::atomic::Ordering::Relaxed);
         log::info!("headless run finished: {} frames, {} validation errors", engine.frame_counter, errors);
+        let s = &engine.world.stats;
+        log::info!(
+            "world: {} chunks ({} meshed, {} empty, {} pending), {} jobs, {:.1}M quads resident",
+            s.chunks, s.meshed, s.empty, s.pending, s.jobs_total, s.quads_resident as f64 / 1e6
+        );
+        for (name, (sum, n)) in &engine.gpu_sums {
+            log::info!("gpu {name:<12} avg {:.3} ms over {n} frames (total {:.1} ms)", sum / *n as f64, sum);
+        }
         return Ok(());
     }
     let el = EventLoop::new()?;

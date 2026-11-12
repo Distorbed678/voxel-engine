@@ -84,6 +84,7 @@ pub struct GenPush {
     pub results: u64,
     pub edits: u64,
     pub params: u64,
+    pub columns: u64,
     pub num_jobs: u32,
     pub seed: u32,
     pub edit_count: u32,
@@ -105,6 +106,7 @@ struct EditPush {
 struct MeshPush {
     voxels: u64,
     blocks: u64,
+    columns: u64,
     table: u64,
     results: u64,
     scratch: u64,
@@ -124,6 +126,7 @@ struct PrefixPush {
 
 pub struct WorldPipelines {
     pub generate: vk::Pipeline,
+    pub props: vk::Pipeline,
     pub apply_edits: vk::Pipeline,
     pub mesh_count: vk::Pipeline,
     pub mesh_write: vk::Pipeline,
@@ -133,6 +136,7 @@ pub struct WorldPipelines {
 
 pub struct WorldGpu {
     pub voxels: Buffer,
+    pub columns: Buffer,
     pub quads: Buffer,
     pub records: Buffer,
     table: Buffer,
@@ -168,6 +172,7 @@ impl WorldGpu {
         }
         Ok(Self {
             voxels: Buffer::gpu(ctx, "voxel_slots", MAX_JOBS as u64 * SLOT_U16 * 2)?,
+            columns: Buffer::gpu(ctx, "column_info", (MAX_JOBS * 34 * 34 * 2) as u64)?,
             quads: Buffer::gpu(ctx, "quad_pool", quad_capacity as u64 * 8)?,
             records: Buffer::gpu(ctx, "chunk_records", max_records as u64 * std::mem::size_of::<GpuChunkRecord>() as u64)?,
             table: Buffer::gpu(ctx, "mesh_table", (MAX_JOBS * NUM_STREAMS * 32 * 4) as u64)?,
@@ -343,6 +348,7 @@ impl WorldGpu {
         let edit_count = total_edits as u32;
 
         profiler.begin(ctx, cb, frame_slot, "worldgen");
+        compute_barrier(ctx, cb);
         unsafe {
             d.cmd_fill_buffer(cb, self.results.raw, 0, RESULTS_BYTES, 0);
         }
@@ -355,20 +361,30 @@ impl WorldGpu {
             vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
         );
         let push = |p: &[u8]| unsafe { d.cmd_push_constants(cb, pipes.layout, vk::ShaderStageFlags::ALL, 0, p) };
-        unsafe {
-            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.generate);
-            push(bytemuck::bytes_of(&GenPush {
+        let gen_push = GenPush {
                 jobs: slot.jobs_buf.address,
                 voxels: self.voxels.address,
                 results: self.results.address,
                 edits: slot.edits_buf.address,
                 params: self.params.address,
+                columns: self.columns.address,
                 num_jobs: n as u32,
                 seed,
                 edit_count,
                 pad: 0,
-            }));
+        };
+        unsafe {
+            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.generate);
+            push(bytemuck::bytes_of(&gen_push));
             d.cmd_dispatch(cb, 5, 5, n as u32);
+        }
+        compute_barrier(ctx, cb);
+        profiler.end(ctx, cb, frame_slot);
+        profiler.begin(ctx, cb, frame_slot, "props");
+        unsafe {
+            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.props);
+            push(bytemuck::bytes_of(&gen_push));
+            d.cmd_dispatch(cb, n as u32, 1, 1);
         }
         compute_barrier(ctx, cb);
         if edit_count > 0 {
@@ -390,6 +406,7 @@ impl WorldGpu {
         let mesh_push = MeshPush {
             voxels: self.voxels.address,
             blocks: block_table,
+            columns: self.columns.address,
             table: self.table.address,
             results: self.results.address,
             scratch: slot.scratch.address,
@@ -463,6 +480,7 @@ impl WorldGpu {
             b.destroy(ctx);
         }
         self.voxels.destroy(ctx);
+        self.columns.destroy(ctx);
         self.quads.destroy(ctx);
         self.records.destroy(ctx);
         self.table.destroy(ctx);

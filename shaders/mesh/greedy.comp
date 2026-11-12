@@ -14,6 +14,7 @@ layout(local_size_x = 32) in;
 layout(push_constant, scalar) uniform PC {
     VoxelBuf voxels;
     BlockTable blocks;
+    ColumnBuf columns;
     U32Buf table;          // [job][stream][slice]
     JobResultBuf results;
     UVec2Buf scratch;
@@ -22,6 +23,7 @@ layout(push_constant, scalar) uniform PC {
 } pc;
 
 uint gBase;
+uint gJob;
 
 uint vox(ivec3 p) { return uint(pc.voxels.v[gBase + vidx(p)]); }
 uint kindOf(uint b) { return pc.blocks.b[b].flags & 15u; }
@@ -52,12 +54,18 @@ uint gAxis;
 ivec3 gN, gU, gV;
 int gS;
 
+uint biomeAt(ivec3 p) {
+    return uint(pc.columns.c[gJob * uint(CA * CA) + uint((p.z + 1) * CA + (p.x + 1))]) & 127u;
+}
+
+// key: block(16) | ao(8) | biome(7) | transparent(1)
 uint faceKey(int u, int v) {
     ivec3 p = slice_pos(gAxis, gS, u, v);
     uint b = vox(p);
     uint kb = kindOf(b);
+    uint biome = biomeAt(p);
     if (kb == KIND_TRANSPARENT) {
-        return b | (0xFFu << 16) | (1u << 24);
+        return b | (0xFFu << 16) | (biome << 24) | (1u << 31);
     }
     ivec3 q = p + gN;
     bool xm = aoOcc(q - gU), xp = aoOcc(q + gU), ym = aoOcc(q - gV), yp = aoOcc(q + gV);
@@ -65,7 +73,7 @@ uint faceKey(int u, int v) {
     bool pp = aoOcc(q + gU + gV), mp = aoOcc(q - gU + gV);
     uint ao = aoCorner(xm, ym, mm) | (aoCorner(xp, ym, pm) << 2) |
               (aoCorner(xp, yp, pp) << 4) | (aoCorner(xm, yp, mp) << 6);
-    return b | (ao << 16);
+    return b | (ao << 16) | (biome << 24);
 }
 
 void main() {
@@ -73,6 +81,7 @@ void main() {
     uint job = gl_WorkGroupID.y;
     gS = int(gl_LocalInvocationID.x);
     gBase = job * SLOT_U16;
+    gJob = job;
     gAxis = dir >> 1;
     gN = dir_normal(dir);
     gU = axis_u(gAxis);
@@ -112,7 +121,7 @@ void main() {
                             uint nb = vox(p + dir_normal(d));
                             if (nb != 0u && kindOf(nb) == KIND_OPAQUE) nmask |= 1u << d;
                         }
-                        pc.scratch.v[offM + nM] = uvec2(uint(p.x) | (uint(p.y) << 5) | (uint(p.z) << 10) | (nmask << 15), b);
+                        pc.scratch.v[offM + nM] = uvec2(uint(p.x) | (uint(p.y) << 5) | (uint(p.z) << 10) | (nmask << 15), b | (biomeAt(p) << 24));
 #endif
                         nM++;
                     }
@@ -146,10 +155,10 @@ void main() {
                     vis[v + h] &= ~rowMask;
                     h++;
                 }
-                bool transparent = (key >> 24) != 0u;
+                bool transparent = (key >> 31) != 0u;
 #ifdef MESH_WRITE
                 uvec2 q = pack_quad(uint(u), uint(v), uint(gS), uint(w), uint(h), dir,
-                                    key & 0xFFFFu, (key >> 16) & 0xFFu);
+                                    key & 0xFFFFu, (key >> 16) & 0xFFu, (key >> 24) & 127u);
                 if (transparent) pc.scratch.v[offT + nT] = q;
                 else pc.scratch.v[offO + nO] = q;
 #endif

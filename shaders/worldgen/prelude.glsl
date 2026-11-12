@@ -13,6 +13,7 @@ layout(push_constant, scalar) uniform GenPC {
     JobResultBuf results;
     EditBuf edits;
     ParamBuf params;     // live-tweakable node parameters (no recompile needed)
+    ColumnBuf columns;   // per job, per column: biome id (written by the terrain pass)
     uint numJobs;
     uint seed;
     uint editCount;
@@ -27,11 +28,11 @@ float gScale;   // cell size in blocks (1 << gLod)
 // Node parameters are read through this so dragging a slider never recompiles the shader.
 float P(uint i) { return pc.params.p[i]; }
 
-// Helpers available to generated code -------------------------------------------------
-float remap01(float x) { return x * 0.5 + 0.5; }
+uint block_kind(uint b) { return b < NUM_BLOCKS ? BLOCK_KIND[b] : 0u; }
 
+// ---- helpers available to generated code -------------------------------------------------
 float curve_eval(uint base, uint count, float x) {
-    // Piecewise-linear curve stored in params: count points of (x, y), sorted by x.
+    // Piecewise curve stored in params: count points of (x, y), sorted by x, smooth segments.
     if (count == 0u) return x;
     float x0 = P(base), y0 = P(base + 1u);
     if (x <= x0) return y0;
@@ -39,11 +40,119 @@ float curve_eval(uint base, uint count, float x) {
         float x1 = P(base + i * 2u), y1 = P(base + i * 2u + 1u);
         if (x <= x1) {
             float t = (x - x0) / max(x1 - x0, 1e-6);
-            // smooth (monotone-ish) interpolation for nicer terrain
             t = t * t * (3.0 - 2.0 * t);
             return mix(y0, y1, t);
         }
         x0 = x1; y0 = y1;
     }
     return y0;
+}
+
+float terrace(float x, float stepv, float smoothness) {
+    float s = max(stepv, 1e-3);
+    float t = x / s;
+    float fl = floor(t);
+    float fr = t - fl;
+    float k = clamp(smoothness, 0.0, 1.0) * 0.5;
+    fr = smoothstep(0.5 - k, 0.5 + k + 1e-4, fr);
+    return (fl + fr) * s;
+}
+
+// Nearest two jittered cells (F1/F2) for zone & biome layout.
+void voronoi2(vec2 q, float jitter, uint seed, out ivec2 c1, out ivec2 c2, out float d1, out float d2) {
+    ivec2 base = ivec2(floor(q));
+    d1 = 1e9; d2 = 1e9; c1 = base; c2 = base;
+    for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x) {
+        ivec2 c = base + ivec2(x, y);
+        vec2 fp = vec2(c) + 0.5 + (rand2v(c, seed) - 0.5) * jitter;
+        float d = distance(q, fp);
+        if (d < d1) { d2 = d1; c2 = c1; d1 = d; c1 = c; }
+        else if (d < d2) { d2 = d; c2 = c; }
+    }
+}
+
+float yband(float y, float y0, float y1) {
+    return smoothstep(y0, y0 + 10.0, y) * (1.0 - smoothstep(y1 - 10.0, y1, y));
+}
+
+// Positive inside a tunnel (carve), 0..1
+float cave_spaghetti(vec3 p, float size, float thick, float y0, float y1, uint seed) {
+    float band = yband(p.y, y0, y1);
+    if (band <= 0.0) return 0.0;
+    vec3 q = p / vec3(size, size * 0.55, size);
+    float a = simplex3(q, seed);
+    float b = simplex3(q + vec3(31.7, 11.3, 57.1), seed + 1u);
+    float t = thick * band;
+    return (t * t - (a * a + b * b)) / max(t * t, 1e-6);
+}
+
+float cave_cheese(vec3 p, float size, float thr, float y0, float y1, uint seed) {
+    float band = yband(p.y, y0, y1);
+    if (band <= 0.0) return 0.0;
+    float n = fbm3(p / vec3(size, size * 0.5, size), seed, 2, 2.0, 0.5);
+    return (n - thr) * band * 8.0;
+}
+
+float cave_ravine(vec3 p, float size, float width, float yTop, float depth, uint seed) {
+    float y0 = yTop - depth;
+    if (p.y < y0 || p.y > yTop + 40.0) return 0.0;
+    float n = abs(simplex2(p.xz / size, seed) + 0.2 * simplex2(p.xz / (size * 0.2), seed + 1u));
+    float t = clamp((p.y - y0) / depth, 0.0, 1.0);
+    float w = width * mix(0.15, 1.0, t) * (0.65 + 0.35 * simplex2(p.xz / 90.0, seed + 2u));
+    return (w - n) / max(w, 1e-4);
+}
+
+uint strata_pick(vec3 p, float bh, float wob, uint seed, uint b1, uint b2, uint b3, uint b4, uint b5, uint b6) {
+    float y = p.y + simplex2(p.xz / 160.0, seed) * wob;
+    int band = int(floor(y / max(bh, 0.5)));
+    uint h = hash_u32(uint(band) * 2654435761u ^ seed) % 9u;
+    uint arr[9] = uint[9](b1, b2, b3, b1, b4, b5, b1, b6, b2);
+    return arr[h];
+}
+
+uint ground_cover(vec3 p, uint ground, uint on, float chance, vec4 w, uvec4 b, uint seed) {
+    if (ground != on) return 0u;
+    ivec3 c = ivec3(floor(p));
+    if (rand3(c, seed) >= chance) return 0u;
+    float tot = max(w.x + w.y + w.z + w.w, 1e-4);
+    float s = rand3(c, seed ^ 0x68bc21ebu) * tot;
+    if (s < w.x) return b.x;
+    s -= w.x;
+    if (s < w.y) return b.y;
+    s -= w.y;
+    if (s < w.z) return b.z;
+    return b.w;
+}
+
+// ---- props ------------------------------------------------------------------------------
+#define PROP_TREE 1u
+#define PROP_MUSHROOM 2u
+#define PROP_BOULDER 3u
+#define PROP_COLUMN 4u
+#define PROP_SPIKE 5u
+#define PROP_GEODE 6u
+
+struct PropLayer {
+    uint biome;
+    uint kind;
+    uint variant;
+    uint b0; uint b1; uint b2;
+    float a; float b; float c;
+    float spacing;
+    float chance;
+    float jitter;
+    uint surface;
+    bool anySurface;
+    float yMin; float yMax;
+    uint seed;
+    bool hasMask;
+};
+
+PropLayer prop_default() {
+    PropLayer L;
+    L.biome = 0xFFFFu; L.kind = 0u; L.variant = 0u; L.b0 = 0u; L.b1 = 0u; L.b2 = 0u;
+    L.a = 1.0; L.b = 1.0; L.c = 1.0; L.spacing = 16.0; L.chance = 0.0; L.jitter = 0.8;
+    L.surface = 0u; L.anySurface = false; L.yMin = -1e9; L.yMax = 1e9; L.seed = 0u; L.hasMask = false;
+    return L;
 }

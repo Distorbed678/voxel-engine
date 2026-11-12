@@ -22,7 +22,8 @@ use crate::shaders::{PipelineHandle, PipelineManager, PipelineSource};
 use crate::ui::{self, UiActions, UiState};
 use crate::world::World;
 use crate::world::gpu::{MAX_JOBS, WorldGpu, WorldPipelines};
-use crate::worldgen_default::FALLBACK_TERRAIN;
+use crate::node_editor::NodeEditorUi;
+use crate::wg::WorldgenSystem;
 
 pub const FIF: usize = 2;
 pub const OUTPUT_FORMAT_HEADLESS: vk::Format = vk::Format::B8G8R8A8_UNORM;
@@ -98,6 +99,9 @@ pub struct Engine {
     pub world: World,
     pub blocks: BlockRegistry,
     gen_pipeline: PipelineHandle,
+    props_pipeline: PipelineHandle,
+    pub wg: WorldgenSystem,
+    pub node_ui: NodeEditorUi,
     pub camera: Camera,
     pub atmosphere: Atmosphere,
     pub input: Input,
@@ -115,13 +119,17 @@ pub struct Engine {
     pub quit: bool,
     screenshot_request: Option<PathBuf>,
     prev_view_proj: Mat4,
+    /// accumulated GPU scope timings for headless benchmark summaries
+    pub gpu_sums: std::collections::BTreeMap<&'static str, (f64, u32)>,
     ctx: VkContext,
 }
 
-pub fn compose_worldgen_source(generated: &str) -> String {
-    format!(
-        "#version 460\n#include \"worldgen/prelude.glsl\"\n// ---- generated ----\n{generated}\n// ---- main ----\n#include \"worldgen/terrain_main.glsl\"\n"
-    )
+/// Full GLSL sources (terrain pass, props pass) around the generated world-generation code.
+pub fn compose_source(generated: &str) -> (String, String) {
+    let wrap = |main: &str| {
+        format!("#version 460\n#include \"worldgen/prelude.glsl\"\n// ---- generated ----\n{generated}\n// ---- main ----\n#include \"{main}\"\n")
+    };
+    (wrap("worldgen/terrain_main.glsl"), wrap("worldgen/props_main.glsl"))
 }
 
 impl Engine {
@@ -182,18 +190,42 @@ impl Engine {
         };
 
         let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, &blocks, extent, out_format, FIF)?;
-        let gen_pipeline = pm.create(
-            &ctx,
-            "worldgen",
-            PipelineSource::ComputeSource {
-                name: "worldgen.comp".into(),
-                source: compose_worldgen_source(FALLBACK_TERRAIN),
-                defines: vec![],
-            },
-        )?;
+        let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
+        let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, PathBuf::from("assets/worldgen"))?;
+        // Build the generator synchronously at startup (fall back to the built-in one on error).
+        let (terrain_src, props_src) = wg.sources();
+        let t0 = Instant::now();
+        let (gen_pipeline, props_pipeline) = match (
+            pm.create(&ctx, "worldgen_terrain", PipelineSource::ComputeSource { name: "worldgen_terrain.comp".into(), source: terrain_src.clone(), defines: vec![] }),
+            pm.create(&ctx, "worldgen_props", PipelineSource::ComputeSource { name: "worldgen_props.comp".into(), source: props_src, defines: vec![] }),
+        ) {
+            (Ok(a), Ok(b)) => (a, b),
+            (a, b) => {
+                log::error!("world generator failed to build, using defaults: {:?} {:?}", a.err(), b.err());
+                wg.reset_to_defaults();
+                wg.update();
+                let (t, p) = wg.sources();
+                (
+                    pm.create(&ctx, "worldgen_terrain", PipelineSource::ComputeSource { name: "worldgen_terrain.comp".into(), source: t, defines: vec![] })?,
+                    pm.create(&ctx, "worldgen_props", PipelineSource::ComputeSource { name: "worldgen_props.comp".into(), source: p, defines: vec![] })?,
+                )
+            }
+        };
+        wg.active_source = wg.compiled.source.clone();
+        wg.dirty = false;
+        wg.request_optimized();
+        log::info!(
+            "world generator: {} biomes, {} zones, {} prop layers, {} params, shaders built in {:.0} ms",
+            wg.compiled.biomes.len(),
+            wg.compiled.zones.len(),
+            wg.compiled.prop_layers,
+            wg.compiled.params.len(),
+            t0.elapsed().as_secs_f32() * 1000.0
+        );
         let quad_capacity = 64 << 20; // 512 MiB of packed quads
         let max_records = 1 << 16;
-        let wgpu = WorldGpu::new(&ctx, FIF, quad_capacity, max_records)?;
+        let mut wgpu = WorldGpu::new(&ctx, FIF, quad_capacity, max_records)?;
+        wgpu.set_params(&wg.compiled.params);
         let world = World::new(quad_capacity, max_records);
         let profiler = GpuProfiler::new(&ctx, FIF)?;
         let timeline = Timeline::new(&ctx)?;
@@ -297,6 +329,9 @@ impl Engine {
             world,
             blocks,
             gen_pipeline,
+            props_pipeline,
+            wg,
+            node_ui: NodeEditorUi::new(),
             camera,
             atmosphere,
             input: Input::default(),
@@ -314,6 +349,7 @@ impl Engine {
             quit: false,
             screenshot_request: None,
             prev_view_proj: Mat4::IDENTITY,
+            gpu_sums: Default::default(),
             ctx,
         })
     }
@@ -605,17 +641,62 @@ impl Engine {
         }
         let completed = self.timeline.value(&self.ctx);
         self.profiler.begin_frame(&self.ctx, slot);
+        for (name, ms) in &self.profiler.last {
+            let e = self.gpu_sums.entry(name).or_insert((0.0, 0));
+            e.0 += *ms as f64;
+            e.1 += 1;
+        }
         self.pm.collect_garbage(&self.ctx, completed);
         self.world.free_deferred(completed);
 
         // shader hot reload
         let force = std::mem::take(&mut self.ui.force_reload);
-        let gen_before = self.pm.get(self.gen_pipeline);
+        let gen_before = (self.pm.get(self.gen_pipeline), self.pm.get(self.props_pipeline));
         let n = self.pm.hot_reload(&self.ctx, self.frame_counter, force);
         if n > 0 {
             self.ui.toast(format!("Reloaded {n} pipeline(s)"));
-            if self.pm.get(self.gen_pipeline) != gen_before {
+            if (self.pm.get(self.gen_pipeline), self.pm.get(self.props_pipeline)) != gen_before {
                 self.world.invalidate_all();
+            }
+        }
+
+        // ---- world generator edits ----
+        let (params_changed, built) = self.wg.update();
+        if params_changed {
+            self.wgpu.set_params(&self.wg.compiled.params);
+            if self.wg.compiled.source == self.wg.active_source {
+                self.world.invalidate_all();
+            }
+        }
+        for (current, b) in built {
+            if current {
+                let (t, p) = (b.terrain_source.clone(), b.props_source.clone());
+                self.pm.replace(
+                    self.gen_pipeline,
+                    PipelineSource::ComputeSource { name: "worldgen_terrain.comp".into(), source: t, defines: vec![] },
+                    b.terrain,
+                    b.deps.clone(),
+                    self.frame_counter,
+                );
+                self.pm.replace(
+                    self.props_pipeline,
+                    PipelineSource::ComputeSource { name: "worldgen_props.comp".into(), source: p, defines: vec![] },
+                    b.props,
+                    b.deps,
+                    self.frame_counter,
+                );
+                self.wgpu.set_params(&self.wg.compiled.params);
+                self.world.invalidate_all();
+                self.ui.toast(format!(
+                    "{} generator ready in {:.0} ms",
+                    if b.optimized { "Optimised" } else { "Quick" },
+                    b.ms
+                ));
+            } else {
+                unsafe {
+                    self.ctx.device.destroy_pipeline(b.terrain, None);
+                    self.ctx.device.destroy_pipeline(b.props, None);
+                }
             }
         }
 
@@ -680,6 +761,7 @@ impl Engine {
             if !jobs.is_empty() {
                 let pipes = WorldPipelines {
                     generate: self.pm.get(self.gen_pipeline),
+                    props: self.pm.get(self.props_pipeline),
                     apply_edits: self.pm.get(self.renderer.pipes.apply_edits),
                     mesh_count: self.pm.get(self.renderer.pipes.mesh_count),
                     mesh_write: self.pm.get(self.renderer.pipes.mesh_write),
@@ -741,6 +823,7 @@ impl Engine {
             &self.wgpu.quads,
             self.world.record_count,
             self.ui.wireframe,
+            self.wg.biome_table.address,
         );
 
         // ---- output (tonemap + UI) ----
@@ -1021,7 +1104,11 @@ impl Engine {
             io.set_delta_time(self.dt);
             io.set_display_size([self.renderer.extent.width as f32, self.renderer.extent.height as f32]);
         }
+        self.node_ui.prepare(&self.imgui.ctx, &self.wg);
         let ui = self.imgui.ctx.frame();
+        if self.ui.show_ui {
+            self.node_ui.draw(ui, &mut self.wg, &self.blocks);
+        }
         let actions = ui::draw(
             ui,
             &mut ui::UiCtx {
@@ -1041,6 +1128,7 @@ impl Engine {
                 batch: self.wgpu.last_batch,
                 busy_slots: self.wgpu.busy_slots(),
                 vsync: self.swapchain.as_ref().map(|s| s.vsync),
+                node_editor_open: &mut self.node_ui.open,
             },
         );
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
@@ -1083,6 +1171,9 @@ impl Engine {
         if a.quit {
             self.quit = true;
         }
+        if a.save_generator {
+            self.wg.save();
+        }
         Ok(())
     }
 
@@ -1124,6 +1215,7 @@ impl Drop for Engine {
         self.timeline.destroy(&self.ctx);
         self.profiler.destroy(&self.ctx);
         self.wgpu.destroy(&self.ctx);
+        self.wg.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);
         if let Some(mut o) = self.offscreen.take() {
             o.destroy(&self.ctx);

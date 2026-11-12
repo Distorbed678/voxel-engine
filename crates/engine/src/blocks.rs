@@ -113,7 +113,7 @@ impl BlockRegistry {
             tbs("snowy_grass", "Snowy Grass", "snow", "snowy_grass_side", "dirt", "Terrain"),
             with_kind(cube("ice", "Ice", "ice", "Terrain"), Transparent),
             cube("packed_ice", "Packed Ice", "packed_ice", "Terrain"),
-            with_kind(cube("water", "Water", "water", "Fluids"), Transparent),
+            BlockDef { tint: Tint::Water, ..with_kind(cube("water", "Water", "water", "Fluids"), Transparent) },
             glow(cube("lava", "Lava", "lava", "Fluids"), 220),
             cube("red_sand", "Red Sand", "red_sand", "Terrain"),
             cube("terracotta", "Terracotta", "terracotta", "Terrain"),
@@ -144,9 +144,9 @@ impl BlockRegistry {
             cube("crystal_shell", "Crystal Shell", "crystal_shell", "Ores"),
             // --- trees ---
             column("oak_log", "Oak Log", "oak_log_top", "oak_log", "Trees"),
-            with_kind(cube("oak_leaves", "Oak Leaves", "oak_leaves", "Trees"), Cutout),
+            BlockDef { tint: Tint::Foliage, ..with_kind(cube("oak_leaves", "Oak Leaves", "oak_leaves", "Trees"), Cutout) },
             column("birch_log", "Birch Log", "birch_log_top", "birch_log", "Trees"),
-            with_kind(cube("birch_leaves", "Birch Leaves", "birch_leaves", "Trees"), Cutout),
+            BlockDef { tint: Tint::Foliage, ..with_kind(cube("birch_leaves", "Birch Leaves", "birch_leaves", "Trees"), Cutout) },
             column("spruce_log", "Spruce Log", "spruce_log_top", "spruce_log", "Trees"),
             with_kind(cube("spruce_leaves", "Spruce Leaves", "spruce_leaves", "Trees"), Cutout),
             column("acacia_log", "Acacia Log", "acacia_log_top", "acacia_log", "Trees"),
@@ -232,7 +232,9 @@ impl BlockRegistry {
         for (i, d) in self.blocks.iter().enumerate() {
             s.push_str(&format!("#define B_{} {}u\n", d.name.to_uppercase(), i));
         }
-        s.push_str(&format!("#define NUM_BLOCKS {}u\n#endif\n", self.blocks.len()));
+        s.push_str(&format!("#define NUM_BLOCKS {}u\n", self.blocks.len()));
+        let kinds: Vec<String> = self.blocks.iter().map(|d| format!("{}u", d.kind as u32)).collect();
+        s.push_str(&format!("const uint BLOCK_KIND[{}] = uint[]({});\n#endif\n", self.blocks.len(), kinds.join(", ")));
         s
     }
 }

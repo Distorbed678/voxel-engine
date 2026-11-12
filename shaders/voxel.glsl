@@ -21,6 +21,16 @@
 #define JOB_EMPTY 2u
 
 layout(buffer_reference, scalar, buffer_reference_align = 2) buffer VoxelBuf { uint16_t v[]; };
+layout(buffer_reference, scalar, buffer_reference_align = 2) buffer ColumnBuf { uint16_t c[]; };
+
+struct BiomeGpu {
+    vec4 grass;     // rgb tint, a = fog density multiplier
+    vec4 foliage;   // rgb tint, a = zone index
+    vec4 water;
+    vec4 mapColor;
+    vec4 zoneColor;
+};
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer BiomeTable { BiomeGpu b[]; };
 
 struct BlockInfo {
     uint faces[3];   // 6 x u16 texture layers: +X,-X,+Y,-Y,+Z,-Z
@@ -100,10 +110,10 @@ ivec3 slice_pos(uint axis, int s, int u, int v) {
 
 // Quad packing (8 bytes):
 //  w0: u(5) v(5) s(5) w-1(5) h-1(5) dir(3) lod(4, filled in by the renderer)
-//  w1: block(16) ao(8) flags(8)
-uvec2 pack_quad(uint u, uint v, uint s, uint w, uint h, uint dir, uint block, uint ao) {
+//  w1: block(16) ao(8) biome(8)
+uvec2 pack_quad(uint u, uint v, uint s, uint w, uint h, uint dir, uint block, uint ao, uint biome) {
     uint w0 = u | (v << 5) | (s << 10) | ((w - 1u) << 15) | ((h - 1u) << 20) | (dir << 25);
-    uint w1 = block | (ao << 16);
+    uint w1 = block | (ao << 16) | (biome << 24);
     return uvec2(w0, w1);
 }
 

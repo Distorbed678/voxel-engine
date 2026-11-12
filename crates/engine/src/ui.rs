@@ -76,6 +76,7 @@ pub struct UiActions {
     pub undo: bool,
     pub redo: bool,
     pub quit: bool,
+    pub save_generator: bool,
 }
 
 pub struct UiCtx<'a> {
@@ -95,6 +96,7 @@ pub struct UiCtx<'a> {
     pub batch: (u32, u32),
     pub busy_slots: usize,
     pub vsync: Option<bool>,
+    pub node_editor_open: &'a mut bool,
 }
 
 pub fn apply_style(ctx: &mut dear_imgui_rs::Context) {
@@ -114,6 +116,9 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
 
     ui.main_menu_bar(|| {
         ui.menu("File", || {
+            if ui.menu_item("Save world generator") {
+                a.save_generator = true;
+            }
             if ui.menu_item("Screenshot (F2)") {
                 a.screenshot = true;
             }
@@ -133,6 +138,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             }
         });
         ui.menu("View", || {
+            ui.checkbox("World Generator (node editor)", c.node_editor_open);
             ui.checkbox("Stats", &mut c.state.show_stats);
             ui.checkbox("World", &mut c.state.show_world);
             ui.checkbox("Render", &mut c.state.show_render);
@@ -147,9 +153,10 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
         }
     });
 
+    let ds = ui.io().display_size();
     if c.state.show_stats {
         let mut open = true;
-        ui.window("Stats").size([340.0, 420.0], Condition::FirstUseEver).position([10.0, 30.0], Condition::FirstUseEver).opened(&mut open).build(|| {
+        ui.window("Stats").size([330.0, 400.0], Condition::FirstUseEver).position([10.0, 30.0], Condition::FirstUseEver).opened(&mut open).build(|| {
             ui.text(c.device_name);
             ui.text(format!("{:.0} fps | frame {:.2} ms | cpu {:.2} ms", c.stats.fps, 1000.0 / c.stats.fps.max(1.0), c.stats.cpu_ms));
             ui.plot_lines("##frametimes", &c.stats.frame_ms_history);
@@ -196,7 +203,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
 
     if c.state.show_render {
         let mut open = true;
-        ui.window("Render").size([320.0, 330.0], Condition::FirstUseEver).position([10.0, 460.0], Condition::FirstUseEver).opened(&mut open).build(|| {
+        ui.window("Render").size([330.0, 300.0], Condition::FirstUseEver).position([10.0, 440.0], Condition::FirstUseEver).opened(&mut open).build(|| {
             let mut dv = c.state.debug_view as usize;
             if ui.combo_simple_string("Debug view", &mut dv, &DEBUG_VIEWS) {
                 c.state.debug_view = dv as u32;
@@ -228,7 +235,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
 
     if c.state.show_world {
         let mut open = true;
-        ui.window("World").size([320.0, 300.0], Condition::FirstUseEver).position([360.0, 30.0], Condition::FirstUseEver).opened(&mut open).build(|| {
+        ui.window("World").size([300.0, 290.0], Condition::FirstUseEver).position([ds[0] - 310.0, 30.0], Condition::FirstUseEver).opened(&mut open).build(|| {
             let mut seed = *c.seed as i32;
             if ui.input_int("Seed", &mut seed) {
                 *c.seed = seed as u32;
@@ -290,7 +297,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
 
     if c.state.show_blocks {
         let mut open = true;
-        ui.window("Blocks").size([260.0, 420.0], Condition::FirstUseEver).position([360.0, 340.0], Condition::FirstUseEver).opened(&mut open).build(|| {
+        ui.window("Blocks").size([300.0, 300.0], Condition::FirstUseEver).position([ds[0] - 310.0, 330.0], Condition::FirstUseEver).opened(&mut open).build(|| {
             let sel = &c.blocks.blocks[c.state.selected_block as usize];
             ui.text(format!("Selected: {}", sel.display));
             ui.input_text("Filter", &mut c.state.block_filter).build();
@@ -319,7 +326,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
 
     if c.state.show_help {
         let mut open = true;
-        ui.window("Controls").size([300.0, 240.0], Condition::FirstUseEver).position([700.0, 30.0], Condition::FirstUseEver).opened(&mut open).build(|| {
+        ui.window("Controls").size([330.0, 230.0], Condition::FirstUseEver).position([350.0, 30.0], Condition::FirstUseEver).collapsed(true, Condition::FirstUseEver).opened(&mut open).build(|| {
             ui.text("Tab      toggle fly mode (mouse look)");
             ui.text("Esc      release mouse");
             ui.text("WASD     move,  Space/E up,  Q/Ctrl down");

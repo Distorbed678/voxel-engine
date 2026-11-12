@@ -11,6 +11,7 @@ layout(push_constant, scalar) uniform TerrainPC {
     UVec2Buf quads;
     BlockTable blocks;
     U64Buf pick;
+    BiomeTable biomes;
     uint flags;
     uint pad0;
 } pc;

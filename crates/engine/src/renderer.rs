@@ -75,6 +75,7 @@ struct TerrainPush {
     quads: u64,
     blocks: u64,
     pick: u64,
+    biomes: u64,
     flags: u32,
     pad: u32,
 }
@@ -397,6 +398,7 @@ impl Renderer {
         quads: &Buffer,
         num_records: u32,
         wireframe: bool,
+        biomes: u64,
     ) {
         let d = &ctx.device;
         let frame_addr = self.per_slot[slot].frame_buf.address;
@@ -498,6 +500,7 @@ impl Renderer {
             quads: quads.address,
             blocks: self.block_table.address,
             pick: self.pick.address,
+            biomes,
             flags: 0,
             pad: 0,
         };

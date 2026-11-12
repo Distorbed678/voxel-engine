@@ -27,6 +27,8 @@ void main() {
     uint block = pQuad.y & 0xFFFFu;
     uint ao = (pQuad.y >> 16) & 0xFFu;
     uint lod = pQuad.x >> 28;
+    uint biome = (pQuad.y >> 24) & 127u;
+    BiomeGpu bio = pc.biomes.b[biome];
     uint axis = dir >> 1;
     vec3 N = vec3(dir_normal(dir));
     vec3 T, B;
@@ -42,6 +44,18 @@ void main() {
     if (albedo.a < 0.5) discard;
 #endif
     vec4 nmap = texture(gTex2DArray[nonuniformEXT(f.blockTexNormal)], vec3(uv, float(layer)));
+
+    // Hytale-style biome tinting: recolour the green/blue parts of tintable blocks
+    uint tint = (pc.blocks.b[block].flags >> 4) & 15u;
+    if (tint != 0u) {
+        vec3 tc = tint == 1u ? bio.grass.rgb : (tint == 2u ? bio.foliage.rgb : bio.water.rgb);
+        tc = pow(tc, vec3(2.2));
+        float lum = dot(albedo.rgb, vec3(0.2126, 0.7152, 0.0722));
+        float tl = max(dot(tc, vec3(0.2126, 0.7152, 0.0722)), 1e-3);
+        vec3 tinted = lum / tl * tc;
+        float mask = tint == 3u ? 1.0 : smoothstep(0.0, 0.04, albedo.g - max(albedo.r, albedo.b));
+        albedo.rgb = mix(albedo.rgb, tinted, mask * 0.85);
+    }
 
     // per-cell AO, bilinear from the 4 packed corners (u-,v-), (u+,v-), (u+,v+), (u-,v+)
     float scale = float(1u << lod);
@@ -81,6 +95,8 @@ void main() {
         case DBG_MESHLETS: color = hash_color(pMeta) * (0.5 + 0.5 * aoV); break;
         case DBG_AO: color = vec3(aoV); break;
         case DBG_ALBEDO: color = albedo.rgb; break;
+        case DBG_ZONE: color = pow(bio.zoneColor.rgb, vec3(2.2)) * (0.35 + 0.65 * (ndl * 0.7 + 0.3)) * aoV; break;
+        case DBG_BIOME: color = pow(bio.mapColor.rgb, vec3(2.2)) * (0.35 + 0.65 * (ndl * 0.7 + 0.3)) * aoV; break;
         case DBG_LIGHTING: color = vec3(0.7) * (sun * ndl * shadow + skyAmb * aoV * 0.55); break;
         default: break;
     }
