@@ -49,7 +49,7 @@
 //! | `texture_frame add\|dup\|delete [COUNT]` / `texture_frame N` / `texture_fps F` | frames of the open texture / select frame N / animation speed |
 //! | `mirror x\|y on\|off` / `paint_tool TOOL` / `paint_color RRGGBB[AA]` | texture editor settings (for painting with the mouse) |
 //! | `texel X Y` / `drag_texel X1 Y1 X2 Y2 FRAMES` | move the mouse over a texel of the texture editor's canvas / drag across it |
-//! | `window block_editor\|texture_editor on\|off` / `edit_block NAME` | show the editors / open a block in the block editor |
+//! | `window NAME on\|off` / `edit_block NAME` | show or hide a window (`block_editor`, `texture_editor`, `node_editor`, `tools`, `stats`, `render`, `world`, `camera`, `blocks`, `help`, `map`) / open a block in the block editor |
 //! | `expect_texel NAME FRAME X Y RRGGBB[AA]` | a texel of a texture as the world has it |
 //! | `log TEXT` | print a line |
 
@@ -1446,6 +1446,15 @@ impl Engine {
             Cmd::Window(w, on) => match w.as_str() {
                 "block_editor" => self.block_ui.open = on,
                 "texture_editor" => self.tex_ui.open = on,
+                "node_editor" => self.node_ui.open = on,
+                "tools" => self.tools.show_tools = on,
+                "stats" => self.ui.show_stats = on,
+                "render" => self.ui.show_render = on,
+                "world" => self.ui.show_world = on,
+                "camera" => self.ui.show_camera = on,
+                "blocks" => self.ui.show_blocks = on,
+                "help" => self.ui.show_help = on,
+                "map" => self.ui.show_map = on,
                 other => s.fail(line, format!("unknown window `{other}`")),
             },
             Cmd::EditBlock(name) => match self.blocks.try_id(&name) {

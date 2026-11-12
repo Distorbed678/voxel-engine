@@ -140,7 +140,7 @@ pub struct TextureEditorUi {
     recent: Vec<Px>,
     pub mirror_x: bool,
     pub mirror_y: bool,
-    zoom: f32,
+    zoom: i32,
     grid: bool,
     onion: bool,
     playing: bool,
@@ -184,7 +184,7 @@ impl TextureEditorUi {
             recent: Vec::new(),
             mirror_x: false,
             mirror_y: false,
-            zoom: 12.0,
+            zoom: 12,
             grid: true,
             onion: false,
             playing: false,
@@ -415,7 +415,13 @@ impl TextureEditorUi {
         }
         if !self.name.is_empty() {
             ui.same_line();
-            let src = if reg.store.is_file(&self.name) { "PNG file" } else if self.modified { "painted (not saved yet)" } else { "built-in (procedural)" };
+            let src = if self.modified || reg.store.is_dirty(&self.name) {
+                "edited, not saved yet"
+            } else if reg.store.is_file(&self.name) {
+                "PNG file"
+            } else {
+                "built-in (procedural)"
+            };
             ui.text_disabled(format!("  {src}, {} frame(s)", self.frames.len()));
         }
         ui.popup("open_tex", || {
@@ -471,7 +477,7 @@ impl TextureEditorUi {
         ui.checkbox("Grid", &mut self.grid);
         ui.same_line();
         ui.set_next_item_width(90.0);
-        ui.slider("Zoom", 6.0f32, 20.0f32, &mut self.zoom);
+        ui.slider("Zoom", 6, 20, &mut self.zoom);
         ui.same_line();
         if ui.small_button("Undo") {
             self.undo();
@@ -482,7 +488,7 @@ impl TextureEditorUi {
         }
 
         // ---- canvas ----
-        let cell = self.zoom.round();
+        let cell = self.zoom as f32;
         let size = cell * N as f32;
         let p0 = ui.cursor_screen_pos();
         ui.invisible_button("##canvas", [size, size]);

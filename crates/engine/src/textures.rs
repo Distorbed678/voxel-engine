@@ -796,6 +796,11 @@ impl TextureStore {
         !self.dirty.is_empty()
     }
 
+    /// Changed since it was loaded or saved.
+    pub fn is_dirty(&self, name: &str) -> bool {
+        self.dirty.contains(name)
+    }
+
     /// Whether the texture comes from (or was saved to) a PNG rather than the generator.
     pub fn is_file(&self, name: &str) -> bool {
         self.files.contains(name)
