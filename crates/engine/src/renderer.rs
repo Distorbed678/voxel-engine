@@ -55,7 +55,7 @@ pub struct FrameData {
     pub shadow_tex: u32,
     pub shadow_res: u32,
     pub light_tex: u32,
-    pub pad: u32,
+    pub bloom_tex: u32,
     /// light volume min corner relative to cam_block, w = enabled
     pub light_origin: [i32; 4],
 }

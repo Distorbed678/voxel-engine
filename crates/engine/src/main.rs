@@ -1,6 +1,7 @@
 mod atmosphere;
 mod bench;
 mod blocks;
+mod bloom;
 mod camera;
 mod engine;
 mod input;

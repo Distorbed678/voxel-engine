@@ -49,7 +49,7 @@ struct FrameData {
     uint blockTexNormal;
     uint hdrTex;
     uint depthTex;
-    vec4 exposure;        // x = exposure, y = time of day [0,1)
+    vec4 exposure;        // x = exposure, y = time of day [0,1), z = bloom strength (0 = off)
     mat4 shadowVP[4];     // camera-relative -> cascade clip
     vec4 shadowPlanes[24];
     vec4 shadowSplits;    // far distance (view depth) of each cascade
@@ -57,7 +57,7 @@ struct FrameData {
     uint shadowTex;
     uint shadowRes;
     uint lightTex;        // bindless sampled index of the light volume
-    uint pad0;
+    uint bloomTex;        // bindless sampled index of the bloom result (strength in exposure.z)
     ivec4 lightOrigin;    // light volume min corner relative to camBlock, w = LIGHT_ENABLED
 };
 

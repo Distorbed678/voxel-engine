@@ -33,6 +33,9 @@ void main() {
         vec3 mx = max(hdr, max(max(n, s), max(e, w)));
         hdr = clamp(hdr + (4.0 * hdr - (n + s + e + w)) * 0.3, mn, mx);
     }
+    if (f.exposure.z > 0.0) {
+        hdr += texture(gTex2D[nonuniformEXT(f.bloomTex)], vUV).rgb * f.exposure.z;
+    }
     vec3 c = aces(hdr * f.exposure.x);
     // subtle vignette
     vec2 q = vUV - 0.5;

@@ -1,0 +1,27 @@
+#version 460
+// Bloom upsample: 3x3 tent filter of the smaller mip, added onto the next larger one.
+#include "common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 1, rgba16f) uniform image2D gImageRGBA16F[];
+
+layout(push_constant, scalar) uniform PC {
+    uint src;         // sampled, linear clamp (smaller mip)
+    uint dst;         // storage (larger mip), accumulated in place
+    ivec2 dstSize;
+    vec2 srcTexel;
+} pc;
+
+vec3 s(vec2 uv) { return texture(gTex2D[nonuniformEXT(pc.src)], uv).rgb; }
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.dstSize))) return;
+    vec2 uv = (vec2(p) + 0.5) / vec2(pc.dstSize);
+    vec2 t = pc.srcTexel;
+    vec3 sum = s(uv) * 4.0
+             + (s(uv + vec2(t.x, 0)) + s(uv - vec2(t.x, 0)) + s(uv + vec2(0, t.y)) + s(uv - vec2(0, t.y))) * 2.0
+             + s(uv + t) + s(uv - t) + s(uv + vec2(t.x, -t.y)) + s(uv + vec2(-t.x, t.y));
+    vec3 cur = imageLoad(gImageRGBA16F[pc.dst], p).rgb;
+    imageStore(gImageRGBA16F[pc.dst], p, vec4(cur + sum / 16.0, 1.0));
+}

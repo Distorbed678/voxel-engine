@@ -110,6 +110,7 @@ pub struct Engine {
     pub probes: crate::probe::Probes,
     pub light: crate::light::LightGpu,
     taa: crate::taa::Taa,
+    bloom: crate::bloom::Bloom,
     /// Camera position of the previous frame (TAA reprojection).
     prev_cam_pos: DVec3,
     /// Whether the previous frame used TAA (turning it on resets the history).
@@ -218,6 +219,7 @@ impl Engine {
         let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, &blocks, extent, out_format, FIF)?;
         let light = crate::light::LightGpu::new(&ctx, &mut pm, &mut bindless)?;
         let taa = crate::taa::Taa::new(&ctx, &mut pm, &mut bindless, extent)?;
+        let bloom = crate::bloom::Bloom::new(&ctx, &mut pm, &mut bindless, extent)?;
         let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
         let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
         prefabs.upload(&ctx)?;
@@ -375,6 +377,7 @@ impl Engine {
             probes: crate::probe::Probes::new(&ctx, FIF)?,
             light,
             taa,
+            bloom,
             prev_cam_pos: DVec3::ZERO,
             prev_taa: false,
             wg,
@@ -1057,6 +1060,10 @@ impl Engine {
             let frame_addr = self.renderer.per_slot[slot].frame_buf.address;
             self.taa.record(&self.ctx, cb, &self.pm, self.bindless.set, frame_addr, self.renderer.hdr_tex, extent, self.frame_counter, &mut self.profiler, profiler_slot);
         }
+        if self.ui.bloom {
+            let src = self.scene_output();
+            self.bloom.record(&self.ctx, cb, &self.pm, self.bindless.set, src, extent, self.ui.bloom_threshold, self.atmosphere.exposure, &mut self.profiler, profiler_slot);
+        }
 
         // ---- output (tonemap + UI) ----
         let (target_image, target_view, target_extent) = if let Some(sc) = &self.swapchain {
@@ -1282,6 +1289,11 @@ impl Engine {
         Ok(())
     }
 
+    /// The image post-processing reads this frame: the TAA resolve when enabled.
+    fn scene_output(&self) -> u32 {
+        if self.ui.taa { self.taa.sampled[self.taa.output_index(self.frame_counter)] } else { self.renderer.hdr_tex }
+    }
+
     fn write_frame_data(&mut self, slot: usize, m: &crate::camera::CameraMatrices, pick_px: (u32, u32), extent: vk::Extent2D) {
         let sky = self.atmosphere.colors();
         let mut flags = 0;
@@ -1319,9 +1331,9 @@ impl Engine {
             block_tex_albedo: self.renderer.albedo_tex,
             block_tex_normal: self.renderer.normal_tex,
             // what the tonemap pass reads: the TAA resolve when enabled
-            hdr_tex: if self.ui.taa { self.taa.sampled[self.taa.output_index(self.frame_counter)] } else { self.renderer.hdr_tex },
+            hdr_tex: self.scene_output(),
             depth_tex: self.renderer.depth_tex,
-            exposure: [self.atmosphere.exposure, self.atmosphere.time_of_day, 0.0, 0.0],
+            exposure: [self.atmosphere.exposure, self.atmosphere.time_of_day, if self.ui.bloom { self.ui.bloom_strength } else { 0.0 }, 0.0],
             shadow_vp: [[[0.0; 4]; 4]; 4],
             shadow_planes: [[0.0; 4]; 24],
             shadow_splits: [0.0; 4],
@@ -1329,7 +1341,7 @@ impl Engine {
             shadow_tex: self.renderer.shadow_tex,
             shadow_res: crate::renderer::SHADOW_RES,
             light_tex: self.light.sampled,
-            pad: 0,
+            bloom_tex: self.bloom.output(),
             light_origin: match self.world.light.origin_block() {
                 Some(o) if self.ui.block_light && self.light.ready() => {
                     let r = o - m.cam_block;
@@ -1480,6 +1492,7 @@ impl Engine {
         let extent = sc.extent;
         self.renderer.resize(&self.ctx, &mut self.bindless, extent)?;
         self.taa.resize(&self.ctx, &mut self.bindless, extent)?;
+        self.bloom.resize(&self.ctx, &mut self.bindless, extent)?;
         Ok(())
     }
 }
@@ -1510,6 +1523,7 @@ impl Drop for Engine {
         self.probes.destroy(&self.ctx);
         self.light.destroy(&self.ctx, &mut self.bindless);
         self.taa.destroy(&self.ctx, &mut self.bindless);
+        self.bloom.destroy(&self.ctx, &mut self.bindless);
         self.wg.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);
         if let Some(mut o) = self.offscreen.take() {

@@ -16,7 +16,7 @@
 //! | `find_biome NAME [HEIGHT]` | survey the generator, go to the nearest large patch of a biome, HEIGHT blocks above its highest block |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
-//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `block_light on\|off` | render toggles |
+//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `bloom on\|off` / `block_light on\|off` | render toggles |
 //! | `wait N` / `settle [MAX]` | wait N frames / until streaming, meshing and shader builds are idle |
 //! | `screenshot PATH` / `record DIR\|off` | save this frame / save every frame as `DIR/frame_NNNNN.png` |
 //! | `cursor X Y` | move the mouse to a pixel (picking follows it; waits for the pick) |
@@ -85,6 +85,7 @@ enum Cmd {
     Fog(bool),
     Shadows(bool),
     Taa(bool),
+    Bloom(bool),
     BlockLight(bool),
     Wait(u32),
     Settle(u32),
@@ -269,6 +270,7 @@ fn parse(line: &str) -> Result<Cmd> {
         "fog" => Cmd::Fog(on_off(a.first())?),
         "shadows" => Cmd::Shadows(on_off(a.first())?),
         "taa" => Cmd::Taa(on_off(a.first())?),
+        "bloom" => Cmd::Bloom(on_off(a.first())?),
         "block_light" => Cmd::BlockLight(on_off(a.first())?),
         "wait" => Cmd::Wait(num(a.first(), "frames")?),
         "settle" => Cmd::Settle(a.first().map(|f| f.parse()).transpose()?.unwrap_or(3000)),
@@ -754,6 +756,7 @@ impl Engine {
             Cmd::Fog(on) => self.ui.fog = on,
             Cmd::Shadows(on) => self.ui.shadows = on,
             Cmd::Taa(on) => self.ui.taa = on,
+            Cmd::Bloom(on) => self.ui.bloom = on,
             Cmd::BlockLight(on) => self.ui.block_light = on,
             Cmd::Wait(n) => return Ok((n > 0).then_some(Busy::Frames(n))),
             Cmd::Settle(max) => return Ok(Some(Busy::Settle { left: max, quiet: 0 })),

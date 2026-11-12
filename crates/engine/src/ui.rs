@@ -34,6 +34,10 @@ pub struct UiState {
     pub block_light: bool,
     /// Temporal anti-aliasing.
     pub taa: bool,
+    pub bloom: bool,
+    pub bloom_strength: f32,
+    /// Exposure-scaled brightness where bloom starts.
+    pub bloom_threshold: f32,
     pub clouds: crate::renderer::CloudSettings,
     pub shadow_distance: f32,
     pub shadow_strength: f32,
@@ -66,6 +70,9 @@ impl UiState {
             shadows: true,
             block_light: true,
             taa: true,
+            bloom: true,
+            bloom_strength: 0.35,
+            bloom_threshold: 0.9,
             clouds: Default::default(),
             shadow_distance: 320.0,
             shadow_strength: 0.85,
@@ -258,6 +265,12 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.checkbox("Block light", &mut c.state.block_light);
             ui.same_line();
             ui.checkbox("TAA", &mut c.state.taa);
+            ui.same_line();
+            ui.checkbox("Bloom", &mut c.state.bloom);
+            if c.state.bloom {
+                ui.slider("Bloom strength", 0.0f32, 1.5f32, &mut c.state.bloom_strength);
+                ui.slider("Bloom threshold", 0.0f32, 3.0f32, &mut c.state.bloom_threshold);
+            }
             ui.slider("Shadow distance", 64.0f32, 1024.0f32, &mut c.state.shadow_distance);
             ui.slider("Shadow strength", 0.0f32, 1.0f32, &mut c.state.shadow_strength);
             ui.checkbox("Clouds", &mut c.state.clouds.enabled);

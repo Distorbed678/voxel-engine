@@ -16,7 +16,8 @@ probes (camera biome, minimap)        probe dispatch
                                       main pass: terrain (task/mesh) + models + sky
                                       translucent pass: water + volumetric clouds
                                       TAA resolve (compute) -> history
-                                      tonemap (+ TAA sharpen) + ImGui -> swapchain
+                                      bloom: 13-tap downsample chain -> tent upsample (compute)
+                                      tonemap (+ TAA sharpen, + bloom) + ImGui -> swapchain
 ```
 
 All buffers are reached through buffer device addresses in push constants. There is one
@@ -75,6 +76,15 @@ a ping-ponged RGBA16F history:
   motion).
 - The tonemap pass reads the resolved image and applies a light 4-neighbour sharpen, clamped to
   the neighbourhood so it doesn't ring.
+
+## Bloom
+
+A half-resolution RGBA16F mip chain with up to six levels (`crates/engine/src/bloom.rs`). The
+first downsample reads the TAA output with the 13-tap filter from Call of Duty: Advanced Warfare,
+a soft brightness threshold (quadratic knee, measured after exposure) and a Karis average per 2×2
+group against fireflies. Further downsamples use the plain 13-tap filter. Upsampling adds a 3×3
+tent of each smaller mip onto the next larger one, and the tonemap pass adds mip 0 times the
+bloom strength.
 
 ## Block light and sky light
 
