@@ -1,0 +1,23 @@
+#version 460
+// Sky sources: walk every column of the volume top-down. Cells keep full sky light until the
+// first light-blocking block; water, ice and leaves on the way dim it.
+#include "light/light_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant, scalar) uniform PC {
+    BlockTable blocks;
+    ivec4 origin;     // world block coordinate of the volume's min corner
+    uint blocksImg;
+} pc;
+
+void main() {
+    ivec2 c = ivec2(gl_GlobalInvocationID.xy);
+    int level = 15;
+    for (int y = LIGHT_N - 1; y >= 0; --y) {
+        ivec3 t = (pc.origin.xyz + ivec3(c.x, y, c.y)) & LIGHT_MASK;
+        uint id = imageLoad(gLightBlocks[pc.blocksImg], t).r & ID_MASK;
+        level = light_blocked(pc.blocks, id) ? 0 : max(level - int(light_att(pc.blocks, id)), 0);
+        imageStore(gLightBlocks[pc.blocksImg], t, uvec4(id | (uint(level) << SKY_SHIFT)));
+    }
+}

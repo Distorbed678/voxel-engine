@@ -1,0 +1,40 @@
+#version 460
+// One Jacobi step of light propagation (ping-pong): every cell takes the brightest of its own
+// emission / sky source and its 6 neighbours' light minus one step (1/15) per block, plus the
+// block's attenuation. Light-blocking neighbours only contribute their own emission. Blocking
+// cells still get a value (for smooth sampling) but never pass light on.
+// Light travels one block per step, so 15 steps settle any change; stale light decays just as fast.
+#include "light/light_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(push_constant, scalar) uniform PC {
+    BlockTable blocks;
+    ivec4 origin;
+    uint blocksImg;
+    uint src;
+    uint dst;
+} pc;
+
+const float STEP = 1.0 / 15.0;
+
+void main() {
+    ivec3 l = ivec3(gl_GlobalInvocationID);
+    ivec3 w = pc.origin.xyz + l;
+    ivec3 t = w & LIGHT_MASK;
+    uint raw = imageLoad(gLightBlocks[pc.blocksImg], t).r;
+    uint id = raw & ID_MASK;
+    vec4 best = vec4(light_emit(pc.blocks, id), float(raw >> SKY_SHIFT) / 15.0);
+    float fall = STEP * float(1u + light_att(pc.blocks, id));
+    for (int i = 0; i < 6; ++i) {
+        ivec3 d = ivec3(0);
+        d[i >> 1] = (i & 1) == 0 ? 1 : -1;
+        ivec3 nl = l + d;
+        if (any(lessThan(nl, ivec3(0))) || any(greaterThanEqual(nl, ivec3(LIGHT_N)))) continue;
+        ivec3 nt = (w + d) & LIGHT_MASK;
+        uint nid = imageLoad(gLightBlocks[pc.blocksImg], nt).r & ID_MASK;
+        vec4 c = light_blocked(pc.blocks, nid) ? vec4(light_emit(pc.blocks, nid), 0.0) : imageLoad(gLightImg[pc.src], nt);
+        best = max(best, c - fall);
+    }
+    imageStore(gLightImg[pc.dst], t, best);
+}

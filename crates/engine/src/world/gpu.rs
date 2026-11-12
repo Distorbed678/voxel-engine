@@ -35,8 +35,15 @@ pub struct GpuGenJob {
     pub lod: u32,
     pub edit_offset: u32,
     pub edit_count: u32,
-    pub pad: [u32; 2],
+    /// GENJOB_* flags
+    pub flags: u32,
+    pub pad: u32,
 }
+
+/// Copy the job's final blocks into the light volume.
+pub const GENJOB_LIGHT: u32 = 1;
+/// Result flag: don't mesh (region reads, light-only jobs).
+const JOB_NO_MESH: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug, Default)]
@@ -56,6 +63,8 @@ pub struct JobDesc {
     pub counter: u32,
     /// copy the generated voxels back to the CPU (region reads for editing tools)
     pub readback: bool,
+    /// copy the final blocks into the light volume
+    pub light: bool,
     /// (cell index in the 34^3 slot, block)
     pub edits: Vec<(u32, u16)>,
 }
@@ -121,6 +130,15 @@ struct MeshPush {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct LightFillPush {
+    jobs: u64,
+    voxels: u64,
+    num_jobs: u32,
+    blocks_img: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct PrefixPush {
     table: u64,
     results: u64,
@@ -136,7 +154,10 @@ pub struct WorldPipelines {
     pub mesh_count: vk::Pipeline,
     pub mesh_write: vk::Pipeline,
     pub prefix: vk::Pipeline,
+    pub light_fill: vk::Pipeline,
     pub layout: vk::PipelineLayout,
+    /// Bindless storage index of the light volume's block image.
+    pub light_blocks_img: u32,
 }
 
 pub struct WorldGpu {
@@ -345,7 +366,8 @@ impl WorldGpu {
                     lod: j.key.lod as u32,
                     edit_offset: edits.len() as u32,
                     edit_count: j.edits.len() as u32,
-                    pad: [0; 2],
+                    flags: if j.light { GENJOB_LIGHT } else { 0 },
+                    pad: 0,
                 });
                 for &(idx, b) in &j.edits {
                     edits.push([i as u32 | ((b as u32) << 8), idx]);
@@ -365,8 +387,26 @@ impl WorldGpu {
 
         profiler.begin(ctx, cb, frame_slot, "worldgen");
         compute_barrier(ctx, cb);
+        // zeroed results; jobs that are only read (region reads, light-only) skip meshing
+        let mut init = vec![JobResult::default(); n];
+        for (r, j) in init.iter_mut().zip(&jobs) {
+            if j.counter == u32::MAX {
+                r.flags = JOB_NO_MESH;
+            }
+        }
         unsafe {
             d.cmd_fill_buffer(cb, self.results.raw, 0, RESULTS_BYTES, 0);
+        }
+        memory_barrier(
+            ctx,
+            cb,
+            vk::PipelineStageFlags2::TRANSFER,
+            vk::AccessFlags2::TRANSFER_WRITE,
+            vk::PipelineStageFlags2::TRANSFER,
+            vk::AccessFlags2::TRANSFER_WRITE,
+        );
+        unsafe {
+            d.cmd_update_buffer(cb, self.results.raw, 0, bytemuck::cast_slice(&init));
         }
         memory_barrier(
             ctx,
@@ -416,6 +456,20 @@ impl WorldGpu {
                     pad: 0,
                 }));
                 d.cmd_dispatch(cb, edit_count.div_ceil(64), 1, 1);
+            }
+            compute_barrier(ctx, cb);
+        }
+        // light volume: copy the final blocks of flagged LOD0 jobs
+        if jobs.iter().take(n).any(|j| j.light) {
+            unsafe {
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.light_fill);
+                push(bytemuck::bytes_of(&LightFillPush {
+                    jobs: slot.jobs_buf.address,
+                    voxels: self.voxels.address,
+                    num_jobs: n as u32,
+                    blocks_img: pipes.light_blocks_img,
+                }));
+                d.cmd_dispatch(cb, 64, n as u32, 1);
             }
             compute_barrier(ctx, cb);
         }

@@ -89,7 +89,7 @@ void main() {
 
     uint nonAir = pc.results.r[job].nonAir;
     uint opaque = pc.results.r[job].opaque;
-    bool skip = nonAir == 0u || opaque >= uint(CA * CA * CA);
+    bool skip = nonAir == 0u || opaque >= uint(CA * CA * CA) || (pc.results.r[job].flags & JOB_NO_MESH) != 0u;
 
     uint tbase = job * NUM_STREAMS * 32u;
     uint nO = 0u, nT = 0u, nM = 0u;

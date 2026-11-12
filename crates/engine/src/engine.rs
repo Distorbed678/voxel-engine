@@ -108,6 +108,7 @@ pub struct Engine {
     props_pipeline: PipelineHandle,
     probe_pipeline: PipelineHandle,
     pub probes: crate::probe::Probes,
+    pub light: crate::light::LightGpu,
     pub wg: WorldgenSystem,
     pub node_ui: NodeEditorUi,
     pub tools: crate::tools::Tools,
@@ -210,6 +211,7 @@ impl Engine {
         };
 
         let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, &blocks, extent, out_format, FIF)?;
+        let light = crate::light::LightGpu::new(&ctx, &mut pm, &mut bindless)?;
         let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
         let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
         prefabs.upload(&ctx)?;
@@ -365,6 +367,7 @@ impl Engine {
             props_pipeline,
             probe_pipeline,
             probes: crate::probe::Probes::new(&ctx, FIF)?,
+            light,
             wg,
             node_ui: NodeEditorUi::new(),
             tools: crate::tools::Tools::new(prefabs),
@@ -891,6 +894,12 @@ impl Engine {
         let updates = std::mem::take(&mut self.world.record_updates);
         self.wgpu.record_uploads(&self.ctx, cb, slot, value, &copies, &updates);
 
+        // light volume: images ready before the batch fills them
+        self.light.record_init(&self.ctx, cb);
+        if self.world.light.take_moved() {
+            self.light.mark_dirty();
+        }
+
         // generation batch
         if self.wgpu.has_free_slot() && !self.world.frozen {
             let budget_jobs = (self.ui.gen_budget_ms / self.ms_per_job.max(0.002)) as usize;
@@ -901,6 +910,9 @@ impl Engine {
             }
             let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), max_jobs);
             self.batch_sizes[slot] = jobs.len();
+            if jobs.iter().any(|j| j.light) {
+                self.light.mark_dirty();
+            }
             if !jobs.is_empty() {
                 let pipes = WorldPipelines {
                     generate: self.pm.get(self.gen_pipeline),
@@ -909,7 +921,9 @@ impl Engine {
                     mesh_count: self.pm.get(self.renderer.pipes.mesh_count),
                     mesh_write: self.pm.get(self.renderer.pipes.mesh_write),
                     prefix: self.pm.get(self.renderer.pipes.prefix),
+                    light_fill: self.pm.get(self.light.fill),
                     layout: self.pm.layout,
+                    light_blocks_img: self.light.blocks_img,
                 };
                 unsafe {
                     self.ctx.device.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, self.pm.layout, 0, &[self.bindless.set], &[]);
@@ -936,6 +950,13 @@ impl Engine {
                     }
                 }
             }
+        }
+
+        // light propagation (after this frame's fills)
+        if let Some(origin) = self.world.light.origin_block()
+            && self.ui.block_light
+        {
+            self.light.record(&self.ctx, cb, &self.pm, self.bindless.set, origin, self.renderer.block_table.address, &mut self.profiler, profiler_slot);
         }
 
         // biome probes (camera environment + minimap)
@@ -1279,7 +1300,15 @@ impl Engine {
             cam_forward: [0.0; 4],
             shadow_tex: self.renderer.shadow_tex,
             shadow_res: crate::renderer::SHADOW_RES,
-            pad: [0; 2],
+            light_tex: self.light.sampled,
+            pad: 0,
+            light_origin: match self.world.light.origin_block() {
+                Some(o) if self.ui.block_light && self.light.ready() => {
+                    let r = o - m.cam_block;
+                    [r.x, r.y, r.z, 1]
+                }
+                _ => [0; 4],
+            },
         };
         let mut fd = fd;
         let light = if sky.sun_dir.y > -0.05 { sky.sun_dir } else { -sky.sun_dir };
@@ -1447,6 +1476,7 @@ impl Drop for Engine {
         self.wgpu.destroy(&self.ctx);
         self.tools.prefabs.destroy(&self.ctx);
         self.probes.destroy(&self.ctx);
+        self.light.destroy(&self.ctx, &mut self.bindless);
         self.wg.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);
         if let Some(mut o) = self.offscreen.take() {

@@ -30,6 +30,8 @@ pub struct UiState {
     pub wireframe: bool,
     pub fog: bool,
     pub shadows: bool,
+    /// Block light + sky light from the light volume.
+    pub block_light: bool,
     pub clouds: crate::renderer::CloudSettings,
     pub shadow_distance: f32,
     pub shadow_strength: f32,
@@ -60,6 +62,7 @@ impl UiState {
             wireframe: false,
             fog: true,
             shadows: true,
+            block_light: true,
             clouds: Default::default(),
             shadow_distance: 320.0,
             shadow_strength: 0.85,
@@ -248,6 +251,8 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.checkbox("Fog", &mut c.state.fog);
             ui.same_line();
             ui.checkbox("Shadows", &mut c.state.shadows);
+            ui.same_line();
+            ui.checkbox("Block light", &mut c.state.block_light);
             ui.slider("Shadow distance", 64.0f32, 1024.0f32, &mut c.state.shadow_distance);
             ui.slider("Shadow strength", 0.0f32, 1.0f32, &mut c.state.shadow_strength);
             ui.checkbox("Clouds", &mut c.state.clouds.enabled);

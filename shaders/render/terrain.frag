@@ -1,6 +1,7 @@
 #version 460
 #include "render/terrain_common.glsl"
 #include "sky.glsl"
+#include "light/light_sample.glsl"
 
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in vec3 vLocal;
@@ -105,10 +106,16 @@ void main() {
     vec3 skyAmb = mix(f.groundColor.rgb, f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3, Nw.y * 0.5 + 0.5);
     float shadow = ndl > 0.0 ? shadow_lookup(f, vRel, N, sunDir) : 1.0;
     shadow = mix(1.0, shadow, f.camForward.w);
-    vec3 lit = albedo.rgb * (sun * ndl * shadow + skyAmb * aoV * 0.55);
+    // light volume: sky light dims sun + ambient in enclosed spaces, block light adds colour
+    vec4 Lv = sample_light(f, vRel, N * 0.5);
+    float skyVis = Lv.a * Lv.a;
+    float sunVis = smoothstep(0.3, 0.8, Lv.a);
+    vec3 blockL = Lv.rgb * Lv.rgb * BLOCK_LIGHT_GAIN;
+    vec3 lit = albedo.rgb * (sun * ndl * shadow * sunVis + skyAmb * aoV * 0.55 * skyVis + (blockL + CAVE_AMBIENT) * aoV);
     // emissive blocks
     uint emission = (pc.blocks.b[block].flags >> 8) & 0xFFu;
-    lit += albedo.rgb * float(emission) / 255.0 * 4.0;
+    // self-glow: squared albedo keeps saturated colours (lava stays orange instead of white)
+    lit += albedo.rgb * albedo.rgb * float(emission) / 255.0 * EMISSIVE_GAIN;
 
     vec3 viewDir = normalize(vRel);
 #ifdef TRANSPARENT
@@ -131,11 +138,11 @@ void main() {
         vec3 deep = pow(bio.water.rgb, vec3(2.2)) * 0.35;
         vec3 shallow = albedo.rgb;
         float absorb = 1.0 - exp(-thick * 0.18);
-        vec3 body = mix(shallow, deep, absorb) * (sun * max(dot(Nn, sunDir), 0.0) * 0.6 + skyAmb * 0.8);
+        vec3 body = mix(shallow, deep, absorb) * (sun * max(dot(Nn, sunDir), 0.0) * 0.6 * sunVis + skyAmb * 0.8 * skyVis + blockL * 0.6);
         float cosT = max(dot(Nn, -viewDir), 0.0);
         float fresnel = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
         vec3 refl = sky_color(f, reflect(viewDir, Nn));
-        float spec = pow(max(dot(reflect(-sunDir, Nn), -viewDir), 0.0), 220.0) * shadow;
+        float spec = pow(max(dot(reflect(-sunDir, Nn), -viewDir), 0.0), 220.0) * shadow * sunVis;
         vec3 wc = mix(body, refl, fresnel) + sun * spec * 4.0;
         float a = clamp(mix(0.45, 0.95, absorb) + fresnel * 0.5, 0.0, 1.0);
         vec3 fogged = apply_fog(f, wc, vRel, viewDir);
@@ -158,7 +165,7 @@ void main() {
         case DBG_ALBEDO: color = albedo.rgb; break;
         case DBG_ZONE: color = pow(bio.zoneColor.rgb, vec3(2.2)) * (0.35 + 0.65 * (ndl * 0.7 + 0.3)) * aoV; break;
         case DBG_BIOME: color = pow(bio.mapColor.rgb, vec3(2.2)) * (0.35 + 0.65 * (ndl * 0.7 + 0.3)) * aoV; break;
-        case DBG_LIGHTING: color = vec3(0.7) * (sun * ndl * shadow + skyAmb * aoV * 0.55); break;
+        case DBG_LIGHTING: color = vec3(0.7) * (sun * ndl * shadow * sunVis + skyAmb * aoV * 0.55 * skyVis + (blockL + CAVE_AMBIENT) * aoV); break;
         default: break;
     }
 #ifdef TRANSPARENT

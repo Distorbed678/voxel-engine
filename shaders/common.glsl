@@ -56,8 +56,9 @@ struct FrameData {
     vec4 camForward;      // xyz camera forward, w = shadow strength
     uint shadowTex;
     uint shadowRes;
+    uint lightTex;        // bindless sampled index of the light volume
     uint pad0;
-    uint pad1;
+    ivec4 lightOrigin;    // light volume min corner relative to camBlock, w = LIGHT_ENABLED
 };
 
 layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer FrameRef {

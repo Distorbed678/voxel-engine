@@ -4,6 +4,7 @@ mod blocks;
 mod camera;
 mod engine;
 mod input;
+mod light;
 mod renderer;
 mod shaders;
 mod textures;

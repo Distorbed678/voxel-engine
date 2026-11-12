@@ -54,7 +54,10 @@ pub struct FrameData {
     pub cam_forward: [f32; 4],
     pub shadow_tex: u32,
     pub shadow_res: u32,
-    pub pad: [u32; 2],
+    pub light_tex: u32,
+    pub pad: u32,
+    /// light volume min corner relative to cam_block, w = enabled
+    pub light_origin: [i32; 4],
 }
 
 pub const FLAG_SHADOWS: u32 = 2;
@@ -299,7 +302,7 @@ impl Renderer {
         let normal_tex = bindless.add_sampled(ctx, normal.view, bindless.samplers.pixel_repeat, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
         let table = blocks.gpu_table();
-        let mut block_table = Buffer::upload(ctx, "block_table", (table.len() * 16) as u64)?;
+        let mut block_table = Buffer::upload(ctx, "block_table", std::mem::size_of_val(table.as_slice()) as u64)?;
         block_table.write(0, &table);
 
         let per_slot = (0..frames_in_flight)

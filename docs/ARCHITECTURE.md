@@ -6,8 +6,10 @@
 CPU                                   GPU (one command buffer per frame, 2 frames in flight)
 ---                                   --------------------------------------------------------
 poll finished batches  ─────────────► copies scratch -> quad pool, chunk record updates
-pick dirty chunks (budgeted)          worldgen batch:  terrain -> props -> edits -> mesh count
-                                                       -> prefix -> mesh write -> readback
+pick dirty chunks (budgeted)          worldgen batch:  terrain -> props -> edits -> light fill
+                                                       -> mesh count -> prefix -> mesh write
+                                                       -> readback
+light volume follows the camera       light: sky columns -> 4 propagation steps (while changing)
 probes (camera biome, minimap)        probe dispatch
                                       cull (frustum + per-direction) -> draw groups
                                       shadow cascades x4 (cull + task/mesh depth)
@@ -55,6 +57,29 @@ Streams per chunk: 6 opaque directions, 6 transparent directions, and model inst
   (f64). Only faces turned away from the sun are drawn, plus a slope bias.
 - **Precision**: rendering is camera-relative, with an integer camera block plus a fractional
   offset, so it stays precise anywhere in the i32 world.
+
+## Block light and sky light
+
+Light lives in a toroidal 128³ volume at block resolution around the camera, wrapped with
+`world & 127` (`crates/engine/src/light.rs`, `world/light.rs`, `shaders/light/`). Voxels are not
+resident, so the volume keeps its own copy of the blocks:
+
+1. **Fill**: LOD0 generation jobs inside the volume copy their final blocks (after props and
+   edits) into an R16 block image. Chunks that scroll into the volume while already meshed get a
+   light-only job, which generates them but skips meshing.
+2. **Sky sources**: one thread per column walks down from the top of the volume. Cells keep full
+   sky light until the first light-blocking block. Water, ice and leaves on the way dim it.
+3. **Propagation**: Jacobi steps between two RGBA8 images (RGB block light, A sky light). Each
+   cell takes the brightest of its own emission or sky source and its six neighbours minus 1/15
+   per block, plus the block's attenuation. Light moves one block per step, so 15 steps settle
+   any change, and light from a removed source fades just as fast. Four steps run per frame,
+   only for a few frames after a fill or after the volume moves.
+4. **Shading**: faces sample the light image trilinearly half a block in front of the surface,
+   which gives smooth lighting. Sky light scales sun and ambient (caves go dark), block light
+   adds its colour. The outer 12 blocks of the volume fade to "open sky, no block light".
+
+Each block has an emission colour, an attenuation and a light-blocking bit in the GPU block
+table (`BlockInfo.light`).
 
 ## World generator (crates/worldgen)
 

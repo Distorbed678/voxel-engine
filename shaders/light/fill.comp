@@ -1,0 +1,24 @@
+#version 460
+// Copy the final blocks (generation + props + edits) of flagged LOD0 jobs into the light
+// volume. One workgroup per 8^3 tile, 64 tiles per chunk.
+#include "light/light_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(push_constant, scalar) uniform PC {
+    GenJobBuf jobs;
+    VoxelBuf voxels;
+    uint numJobs;
+    uint blocksImg;
+} pc;
+
+void main() {
+    uint job = gl_WorkGroupID.y;
+    if (job >= pc.numJobs) return;
+    GenJob j = pc.jobs.j[job];
+    if ((j.flags & GENJOB_LIGHT) == 0u) return;
+    uint tile = gl_WorkGroupID.x;
+    ivec3 local = ivec3(tile & 3u, (tile >> 2) & 3u, tile >> 4) * 8 + ivec3(gl_LocalInvocationID);
+    uint b = uint(pc.voxels.v[job * SLOT_U16 + vidx(local)]);
+    imageStore(gLightBlocks[pc.blocksImg], (j.origin + local) & LIGHT_MASK, uvec4(b & ID_MASK));
+}

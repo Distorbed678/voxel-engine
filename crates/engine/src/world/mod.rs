@@ -8,6 +8,7 @@
 pub mod alloc;
 pub mod edits;
 pub mod gpu;
+pub mod light;
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -22,6 +23,8 @@ pub const CHUNK: i32 = 32;
 pub const CA: i32 = 34;
 pub const RECORD_ACTIVE: u32 = 256;
 pub const JOB_OVERFLOW: u32 = 1;
+/// Light-only jobs per batch (chunks scrolling into the light volume).
+const MAX_LIGHT_ONLY: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChunkKey {
@@ -143,6 +146,8 @@ pub struct World {
     pub stats: WorldStats,
     jobs_window: (Instant, u32),
     pub frozen: bool,
+    /// Which chunks the light volume covers and still needs.
+    pub light: light::LightTracker,
 }
 
 impl World {
@@ -164,6 +169,7 @@ impl World {
             stats: WorldStats::default(),
             jobs_window: (Instant::now(), 0),
             frozen: false,
+            light: light::LightTracker::default(),
         }
     }
 
@@ -180,6 +186,7 @@ impl World {
         if self.frozen {
             return;
         }
+        self.light.update(cam);
         let center = (cam / CHUNK as f64).floor().as_ivec3();
         if self.last_center == Some((center, self.settings)) {
             return;
@@ -465,7 +472,30 @@ impl World {
                 edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
             });
             // counter u32::MAX marks a pure read (results are not applied to the streamed chunk)
-            jobs.push(JobDesc { key, counter: u32::MAX, readback: true, edits });
+            jobs.push(JobDesc { key, counter: u32::MAX, readback: true, light: false, edits });
+        }
+        // light-only jobs: chunks that scrolled into the light volume while already up to date
+        // (chunks still waiting for generation fill the volume when they are meshed)
+        let light_only: Vec<IVec3> = self
+            .light
+            .pending()
+            .filter(|p| {
+                self.chunks
+                    .get(&ChunkKey { lod: 0, pos: *p })
+                    .is_none_or(|c| c.has_result && c.applied == c.dirty && !c.in_flight)
+            })
+            .take(MAX_LIGHT_ONLY.min(max / 4))
+            .collect();
+        for p in light_only {
+            self.light.filled(p);
+            let key = ChunkKey { lod: 0, pos: p };
+            let min = key.origin() - IVec3::ONE;
+            let mut edits = Vec::new();
+            self.overlay.entries_in(min, key.origin() + IVec3::splat(CHUNK + 1), |q, b| {
+                let cell = q - min;
+                edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
+            });
+            jobs.push(JobDesc { key, counter: u32::MAX, readback: false, light: true, edits });
         }
         let cands: Vec<(f32, ChunkKey)> = cands.into_iter().take(max.saturating_sub(jobs.len())).collect();
         for (_, key) in cands {
@@ -489,7 +519,11 @@ impl World {
                     edits.push((idx as u32, b));
                 }
             });
-            jobs.push(JobDesc { key, counter, readback: false, edits });
+            let light = key.lod == 0 && self.light.contains(key.pos);
+            if light {
+                self.light.filled(key.pos);
+            }
+            jobs.push(JobDesc { key, counter, readback: false, light, edits });
         }
         self.stats.jobs_total += jobs.len() as u64;
         self.jobs_window.1 += jobs.len() as u32;

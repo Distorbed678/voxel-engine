@@ -1,6 +1,7 @@
 #version 460
 #include "render/terrain_common.glsl"
 #include "sky.glsl"
+#include "light/light_sample.glsl"
 
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in vec2 vUV;
@@ -41,9 +42,14 @@ void main() {
     float ndl = twoSided ? (0.35 + 0.65 * max(dot(Ns, sunDir), 0.0)) : max(dot(Ns, sunDir), 0.0);
     float ao = twoSided ? mix(0.45, 1.0, clamp(1.0 - vUV.y, 0.0, 1.0)) : 0.9;
     vec3 skyAmb = mix(f.groundColor.rgb, f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3, Ns.y * 0.5 + 0.5);
-    vec3 lit = albedo.rgb * (sun * ndl + skyAmb * ao * 0.55);
+    vec4 Lv = sample_light(f, vRel, twoSided ? vec3(0.0, 0.25, 0.0) : N * 0.5);
+    float skyVis = Lv.a * Lv.a;
+    float sunVis = smoothstep(0.3, 0.8, Lv.a);
+    vec3 blockL = Lv.rgb * Lv.rgb * BLOCK_LIGHT_GAIN;
+    vec3 lit = albedo.rgb * (sun * ndl * sunVis + skyAmb * ao * 0.55 * skyVis + (blockL + CAVE_AMBIENT) * ao);
     uint emission = (pc.blocks.b[block].flags >> 8) & 0xFFu;
-    lit += albedo.rgb * float(emission) / 255.0 * 4.0;
+    // self-glow: squared albedo keeps saturated colours (lava stays orange instead of white)
+    lit += albedo.rgb * albedo.rgb * float(emission) / 255.0 * EMISSIVE_GAIN;
     vec3 color = apply_fog(f, lit, vRel, normalize(vRel));
     if (f.debugMode == DBG_ALBEDO) color = albedo.rgb;
     if (f.debugMode == DBG_NORMALS) color = N * 0.5 + 0.5;

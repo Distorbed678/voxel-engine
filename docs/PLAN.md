@@ -139,6 +139,11 @@ These follow from the choices above.
   clicks on panels fell through and edited the blocks behind them). Button and key releases now
   always reach ImGui; held mouse buttons are cleared on focus loss. Covered by a unit test that
   replays the event sequence through a real ImGui context. Still needs a hand check.
+- [x] **Colored block light + sky light**: a 128³ toroidal light volume around the camera
+  (filled by LOD0 generation jobs and light-only jobs), sky columns + Jacobi propagation on the
+  GPU, smooth trilinear sampling. Lava, magma, lamps, lanterns, crystals and glow mushrooms light
+  their surroundings in colour; caves without sky access go dark. About 0.25 ms on frames where
+  it runs (only after changes). Golden images cover a lit room and a removed light source.
 
 **Measured** (RTX 4080, 1080p, `--benchmark`):
 - 279 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
@@ -173,9 +178,6 @@ Still needs a hand test (real input devices or complex UI flows):
 
 ### Not done yet (owner's choices that are still open)
 
-- [ ] **Colored block light.** Emissive blocks glow but don't light their surroundings. Plan:
-  GPU light propagation into a clipmap 3D texture around the camera, sampled trilinearly for
-  smooth lighting (sky light + RGB block light).
 - [ ] **Cave biomes.** Caves exist, but there are no distinct underground biomes yet (lush,
   crystal, magma). Plan: a 3D biome selector in the Zone graph, plus cave floor/ceiling
   materials and cave props (glow mushrooms, crystals, stalactites).
@@ -210,7 +212,8 @@ suggestions; the rest is the earlier roadmap.
 2. ~~Public repo, license, showcase README, GitHub Actions CI.~~
 3. ~~Automated test harness (scripted input + screenshot regression)~~, covering most of the
    hand-test checklist.
-4. Colored block light + sky light (the biggest missing piece of the Hytale look).
+4. ~~Colored block light + sky light~~. Follow-ups worth considering: a larger volume or a
+   cheap far-field glow for distant lava (the volume reaches ±64 blocks), bloom.
 5. TAA.
 6. Cave biomes + river node (completes the requested terrain features).
 7. Small open items: per-biome colour grading, overdraw debug view, node comments / group boxes.

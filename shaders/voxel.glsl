@@ -19,6 +19,7 @@
 // Job result flags
 #define JOB_OVERFLOW 1u
 #define JOB_EMPTY 2u
+#define JOB_NO_MESH 4u   // region read / light-only job: skip meshing
 
 layout(buffer_reference, scalar, buffer_reference_align = 2) buffer VoxelBuf { uint16_t v[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 2) buffer ColumnBuf { uint16_t c[]; };
@@ -35,6 +36,7 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer Bio
 struct BlockInfo {
     uint faces[3];   // 6 x u16 texture layers: +X,-X,+Y,-Y,+Z,-Z
     uint flags;      // kind | tint << 4 | emission << 8 | model << 16
+    uint light;      // emitted light r | g << 8 | b << 16 | attenuation << 24 | blocks-light << 28
 };
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer BlockTable { BlockInfo b[]; };
 
@@ -43,10 +45,11 @@ struct GenJob {
     uint lod;
     uint editOffset;
     uint editCount;
-    uint pad0;
+    uint flags;      // GENJOB_*
     uint pad1;
 };
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer GenJobBuf { GenJob j[]; };
+#define GENJOB_LIGHT 1u   // copy the final blocks into the light volume
 
 struct JobResult {
     uint total;

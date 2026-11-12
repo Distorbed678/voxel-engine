@@ -29,7 +29,12 @@ pub struct BlockDef {
     pub kind: BlockKind,
     /// Texture name for each face: +X, -X, +Y, -Y, +Z, -Z
     pub faces: [&'static str; 6],
+    /// Self-illumination of the block's own faces (0..255).
     pub emission: u8,
+    /// Light the block casts on its surroundings (RGB, 255 = 15-block reach). See `lit`.
+    pub light: [u8; 3],
+    /// Extra light falloff for light passing through this block (water, leaves, ice).
+    pub light_att: u8,
     pub tint: Tint,
     pub model: u16,
     pub category: &'static str,
@@ -40,6 +45,8 @@ pub struct BlockDef {
 pub struct GpuBlockInfo {
     pub faces: [u32; 3],
     pub flags: u32,
+    /// emitted light r | g << 8 | b << 16 | attenuation << 24 | blocks-light << 28
+    pub light: u32,
 }
 
 pub struct BlockRegistry {
@@ -57,6 +64,8 @@ fn cube(name: &'static str, display: &'static str, tex: &'static str, cat: &'sta
         kind: BlockKind::Opaque,
         faces: [tex; 6],
         emission: 0,
+        light: [0; 3],
+        light_att: 0,
         tint: Tint::None,
         model: 0,
         category: cat,
@@ -78,6 +87,17 @@ fn with_kind(mut b: BlockDef, kind: BlockKind) -> BlockDef {
 
 fn glow(mut b: BlockDef, e: u8) -> BlockDef {
     b.emission = e;
+    b
+}
+
+/// Light source: `rgb` colour at strength `level` (blocks of reach, 0..15).
+fn lit(mut b: BlockDef, rgb: [u8; 3], level: u32) -> BlockDef {
+    b.light = rgb.map(|c| (c as u32 * level.min(15) / 15) as u8);
+    b
+}
+
+fn attenuate(mut b: BlockDef, att: u8) -> BlockDef {
+    b.light_att = att;
     b
 }
 
@@ -111,10 +131,10 @@ impl BlockRegistry {
             cube("clay", "Clay", "clay", "Terrain"),
             cube("snow", "Snow", "snow", "Terrain"),
             tbs("snowy_grass", "Snowy Grass", "snow", "snowy_grass_side", "dirt", "Terrain"),
-            with_kind(cube("ice", "Ice", "ice", "Terrain"), Transparent),
+            attenuate(with_kind(cube("ice", "Ice", "ice", "Terrain"), Transparent), 1),
             cube("packed_ice", "Packed Ice", "packed_ice", "Terrain"),
-            BlockDef { tint: Tint::Water, ..with_kind(cube("water", "Water", "water", "Fluids"), Transparent) },
-            glow(cube("lava", "Lava", "lava", "Fluids"), 220),
+            BlockDef { tint: Tint::Water, ..attenuate(with_kind(cube("water", "Water", "water", "Fluids"), Transparent), 2) },
+            lit(glow(cube("lava", "Lava", "lava", "Fluids"), 220), [255, 140, 50], 15),
             cube("red_sand", "Red Sand", "red_sand", "Terrain"),
             cube("terracotta", "Terracotta", "terracotta", "Terrain"),
             cube("terracotta_orange", "Orange Terracotta", "terracotta_orange", "Terrain"),
@@ -124,7 +144,7 @@ impl BlockRegistry {
             cube("terracotta_white", "White Terracotta", "terracotta_white", "Terrain"),
             column("basalt", "Basalt", "basalt_top", "basalt_side", "Terrain"),
             cube("ash", "Ash", "ash", "Terrain"),
-            glow(cube("magma", "Magma", "magma", "Terrain"), 120),
+            lit(glow(cube("magma", "Magma", "magma", "Terrain"), 120), [255, 100, 40], 11),
             cube("obsidian", "Obsidian", "obsidian", "Terrain"),
             cube("deepslate", "Deepslate", "deepslate", "Terrain"),
             cube("granite", "Granite", "granite", "Terrain"),
@@ -140,7 +160,7 @@ impl BlockRegistry {
             cube("iron_ore", "Iron Ore", "iron_ore", "Ores"),
             cube("gold_ore", "Gold Ore", "gold_ore", "Ores"),
             cube("copper_ore", "Copper Ore", "copper_ore", "Ores"),
-            glow(cube("crystal", "Crystal", "crystal", "Ores"), 90),
+            lit(glow(cube("crystal", "Crystal", "crystal", "Ores"), 90), [170, 120, 255], 9),
             cube("crystal_shell", "Crystal Shell", "crystal_shell", "Ores"),
             // --- trees ---
             column("oak_log", "Oak Log", "oak_log_top", "oak_log", "Trees"),
@@ -157,7 +177,7 @@ impl BlockRegistry {
             with_kind(cube("palm_leaves", "Palm Leaves", "palm_leaves", "Trees"), Cutout),
             column("mushroom_stem", "Mushroom Stem", "mushroom_stem_top", "mushroom_stem", "Trees"),
             cube("mushroom_cap_red", "Red Mushroom Cap", "mushroom_cap_red", "Trees"),
-            glow(cube("mushroom_cap_glow", "Glow Mushroom Cap", "mushroom_cap_glow", "Trees"), 150),
+            lit(glow(cube("mushroom_cap_glow", "Glow Mushroom Cap", "mushroom_cap_glow", "Trees"), 150), [90, 200, 255], 12),
             // --- building ---
             cube("cobblestone", "Cobblestone", "cobblestone", "Building"),
             cube("mossy_cobblestone", "Mossy Cobblestone", "mossy_cobblestone", "Building"),
@@ -165,7 +185,7 @@ impl BlockRegistry {
             cube("bricks", "Bricks", "bricks", "Building"),
             cube("stone_bricks", "Stone Bricks", "stone_bricks", "Building"),
             with_kind(cube("glass", "Glass", "glass", "Building"), Transparent),
-            glow(cube("lamp", "Lamp", "lamp", "Building"), 240),
+            lit(glow(cube("lamp", "Lamp", "lamp", "Building"), 240), [255, 225, 170], 15),
             // --- models ---
             BlockDef { tint: Tint::Grass, ..model("tall_grass", "Tall Grass", "tall_grass", models::CROSS, "Plants") },
             BlockDef { tint: Tint::Grass, ..model("fern", "Fern", "fern", models::CROSS, "Plants") },
@@ -176,8 +196,8 @@ impl BlockRegistry {
             model("dead_bush", "Dead Bush", "dead_bush", models::CROSS, "Plants"),
             model("dry_shrub", "Dry Shrub", "dry_shrub", models::TALL_CROSS, "Plants"),
             model("mushroom_red", "Red Mushroom", "mushroom_cap_red", models::MUSHROOM, "Plants"),
-            glow(model("mushroom_glow", "Glow Mushroom", "mushroom_cap_glow", models::MUSHROOM, "Plants"), 120),
-            glow(model("crystal_cluster", "Crystal Cluster", "crystal", models::TALL_CROSS, "Plants"), 110),
+            lit(glow(model("mushroom_glow", "Glow Mushroom", "mushroom_cap_glow", models::MUSHROOM, "Plants"), 120), [90, 200, 255], 10),
+            lit(glow(model("crystal_cluster", "Crystal Cluster", "crystal", models::TALL_CROSS, "Plants"), 110), [170, 120, 255], 10),
             model("pebbles", "Pebbles", "cobblestone", models::PEBBLES, "Plants"),
             model("snow_shrub", "Frosted Shrub", "snow_shrub", models::CROSS, "Plants"),
             model("ember_weed", "Ember Weed", "ember_weed", models::CROSS, "Plants"),
@@ -186,8 +206,11 @@ impl BlockRegistry {
             model("planks_slab", "Plank Slab", "planks", models::SLAB, "Building"),
             model("stone_stairs", "Stone Stairs", "stone_bricks", models::STAIRS, "Building"),
             model("planks_stairs", "Plank Stairs", "planks", models::STAIRS, "Building"),
-            glow(model("lantern", "Lantern", "lantern", models::LANTERN, "Building"), 230),
+            lit(glow(model("lantern", "Lantern", "lantern", models::LANTERN, "Building"), 230), [255, 180, 90], 15),
         ];
+        // leaves scatter light a little
+        let defs: Vec<BlockDef> =
+            defs.into_iter().map(|d| if d.kind == Cutout && d.light_att == 0 { attenuate(d, 1) } else { d }).collect();
         let mut textures = Vec::new();
         let mut texture_index = HashMap::new();
         for d in &defs {
@@ -221,6 +244,11 @@ impl BlockRegistry {
                         | ((d.tint as u32) << 4)
                         | ((d.emission as u32) << 8)
                         | ((d.model as u32) << 16),
+                    light: d.light[0] as u32
+                        | ((d.light[1] as u32) << 8)
+                        | ((d.light[2] as u32) << 16)
+                        | ((d.light_att.min(15) as u32) << 24)
+                        | (((d.kind == BlockKind::Opaque) as u32) << 28),
                 }
             })
             .collect()

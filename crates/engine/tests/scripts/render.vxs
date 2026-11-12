@@ -50,3 +50,38 @@ settle
 view 1
 wait 4
 expect_image crates/engine/tests/golden/view_normals.png
+
+# block light: a sealed room with coloured light sources (lantern, lamp, crystal, glow
+# mushrooms), then the lamp removed: its light has to fade again
+view 0
+clouds on
+time 0.02
+select -12 380 -12 12 390 12
+block stone
+op fill
+select -11 381 -11 11 389 11
+op clear
+select -6 381 0 -6 381 0
+block lantern
+op fill
+select 6 381 -4 6 381 -4
+block lamp
+op fill
+select 0 381 8 0 381 8
+block crystal
+op fill
+select 4 381 6 4 381 6
+block mushroom_glow
+op fill
+select -8 381 -8 -8 381 -8
+op fill
+pos 0.5 387 -10
+look 180 -30
+settle
+wait 30
+expect_image crates/engine/tests/golden/room_light.png
+select 6 381 -4 6 381 -4
+op clear
+settle
+wait 30
+expect_image crates/engine/tests/golden/room_lamp_removed.png
