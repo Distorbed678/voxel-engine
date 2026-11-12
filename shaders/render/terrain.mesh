@@ -45,9 +45,17 @@ void main() {
         vec3 c0 = A + U * float(u) + V * float(v);
         vec3 corners[4] = vec3[4](c0, c0 + U * float(w), c0 + U * float(w) + V * float(h), c0 + V * float(h));
         uint vb = qi * 4u;
+        uint blk = q.y & 0xFFFFu;
+        bool sway = lod == 0u && (pc.blocks.b[blk].flags & 15u) == KIND_CUTOUT;
         for (uint c = 0u; c < 4u; ++c) {
             vec3 local = corners[c] * scale;
             vec3 rel = relOrigin + local;
+            if (sway) {
+                // position-based sway keeps neighbouring leaf quads welded together
+                vec3 wp = vec3(rec.origin & 1023) + local;
+                float w = sin(f.time * 1.4 + wp.x * 0.31 + wp.z * 0.23 + wp.y * 0.17) + 0.4 * sin(f.time * 2.7 + wp.z * 0.8);
+                rel += vec3(w * 0.045, 0.0, w * 0.035);
+            }
             vLocal[vb + c] = local;
             vRel[vb + c] = rel;
 #ifdef SHADOW

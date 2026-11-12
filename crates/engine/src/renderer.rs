@@ -97,6 +97,31 @@ struct FramePush {
     frame: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CloudPush {
+    frame: u64,
+    coverage: f32,
+    base: f32,
+    thickness: f32,
+    density: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CloudSettings {
+    pub enabled: bool,
+    pub coverage: f32,
+    pub base: f32,
+    pub thickness: f32,
+    pub density: f32,
+}
+
+impl Default for CloudSettings {
+    fn default() -> Self {
+        Self { enabled: true, coverage: 0.45, base: 230.0, thickness: 90.0, density: 0.06 }
+    }
+}
+
 pub struct FramePerSlot {
     pub frame_buf: Buffer,
     pub pick_readback: Buffer,
@@ -111,6 +136,7 @@ pub struct Pipelines {
     pub models: PipelineHandle,
     pub shadow: PipelineHandle,
     pub sky: PipelineHandle,
+    pub clouds: PipelineHandle,
     pub tonemap: PipelineHandle,
     pub apply_edits: PipelineHandle,
     pub mesh_count: PipelineHandle,
@@ -257,7 +283,7 @@ impl Renderer {
     ) -> Result<Self> {
         let (hdr, depth) = create_targets(ctx, extent)?;
         let hdr_tex = bindless.add_sampled(ctx, hdr.view, bindless.samplers.linear_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        let depth_tex = bindless.add_sampled(ctx, depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let depth_tex = bindless.add_sampled(ctx, depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
 
         // ---- block textures ----
         let t0 = std::time::Instant::now();
@@ -446,6 +472,21 @@ impl Renderer {
                     },
                 ),
             )?,
+            clouds: pm.create(
+                ctx,
+                "clouds",
+                fullscreen(
+                    "render/clouds.frag",
+                    GraphicsState {
+                        color_formats: vec![HDR_FORMAT],
+                        blend: vec![BlendMode::Premultiplied],
+                        depth_format: Some(DEPTH_FORMAT),
+                        depth_test: false,
+                        depth_write: false,
+                        ..Default::default()
+                    },
+                ),
+            )?,
             tonemap: pm.create(
                 ctx,
                 "tonemap",
@@ -469,7 +510,7 @@ impl Renderer {
         self.hdr = hdr;
         self.depth = depth;
         bindless.update_sampled(ctx, self.hdr_tex, self.hdr.view, bindless.samplers.linear_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        bindless.update_sampled(ctx, self.depth_tex, self.depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        bindless.update_sampled(ctx, self.depth_tex, self.depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
         self.extent = extent;
         Ok(())
     }
@@ -490,6 +531,7 @@ impl Renderer {
         wireframe: bool,
         biomes: u64,
         shadows: bool,
+        clouds: CloudSettings,
     ) {
         let d = &ctx.device;
         let frame_addr = self.per_slot[slot].frame_buf.address;
@@ -622,9 +664,48 @@ impl Renderer {
             push(bytemuck::bytes_of(&FramePush { frame: frame_addr }));
             d.cmd_draw(cb, 3, 1, 0, 0);
 
+            d.cmd_end_rendering(cb);
+        }
+        // translucent pass: depth becomes read-only so water and clouds can sample it
+        image_barrier(
+            ctx,
+            cb,
+            self.depth.raw,
+            self.depth.full_range(),
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::FRAGMENT_SHADER | vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
+            vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
+        );
+        let color_load = [vk::RenderingAttachmentInfo::default()
+            .image_view(self.hdr.view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::STORE)];
+        let depth_ro = vk::RenderingAttachmentInfo::default()
+            .image_view(self.depth.view)
+            .image_layout(vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::NONE);
+        let info2 = vk::RenderingInfo::default().render_area(area).layer_count(1).color_attachments(&color_load).depth_attachment(&depth_ro);
+        unsafe {
+            d.cmd_begin_rendering(cb, &info2);
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.terrain_trans));
             push(bytemuck::bytes_of(&terrain_push(self.trans_draws.address)));
             ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.args.raw, 12, 1, 12);
+            if clouds.enabled {
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.clouds));
+                push(bytemuck::bytes_of(&CloudPush {
+                    frame: frame_addr,
+                    coverage: clouds.coverage,
+                    base: clouds.base,
+                    thickness: clouds.thickness,
+                    density: clouds.density,
+                }));
+                d.cmd_draw(cb, 3, 1, 0, 0);
+            }
             d.cmd_end_rendering(cb);
         }
         image_barrier(
@@ -639,18 +720,7 @@ impl Renderer {
             vk::PipelineStageFlags2::FRAGMENT_SHADER | vk::PipelineStageFlags2::COMPUTE_SHADER,
             vk::AccessFlags2::SHADER_READ,
         );
-        image_barrier(
-            ctx,
-            cb,
-            self.depth.raw,
-            self.depth.full_range(),
-            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            vk::PipelineStageFlags2::FRAGMENT_SHADER | vk::PipelineStageFlags2::COMPUTE_SHADER,
-            vk::AccessFlags2::SHADER_READ,
-        );
+
         // pick + stats readback
         memory_barrier(
             ctx,

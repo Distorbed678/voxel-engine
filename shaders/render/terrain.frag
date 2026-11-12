@@ -111,6 +111,38 @@ void main() {
     lit += albedo.rgb * float(emission) / 255.0 * 4.0;
 
     vec3 viewDir = normalize(vRel);
+#ifdef TRANSPARENT
+    if (tint == 3u) {
+        // ---- water: waves, depth absorption, fresnel sky reflection, sun glint ----
+        vec3 wp = vRel + f.camFrac.xyz + vec3(f.camBlock.xyz & 4095);
+        vec3 Nn = N;
+        if (dir == 2u) {
+            float t = f.time;
+            vec2 g = vec2(0.0);
+            g += vec2(cos(wp.x * 0.9 + t * 1.3), cos(wp.z * 0.7 + t * 1.1)) * 0.06;
+            g += vec2(cos(wp.x * 2.3 - wp.z * 1.7 + t * 2.1), cos(wp.z * 2.9 + wp.x * 0.6 - t * 1.7)) * 0.03;
+            g += vec2(cos((wp.x + wp.z) * 5.1 + t * 3.3), cos((wp.x - wp.z) * 4.7 - t * 2.9)) * 0.012;
+            Nn = normalize(vec3(-g.x, 1.0, -g.y));
+        }
+        float depthTex = texelFetch(gTex2D[nonuniformEXT(f.depthTex)], ivec2(gl_FragCoord.xy), 0).r;
+        float sceneZ = depthTex > 0.0 ? f.proj[3][2] / depthTex : 1e6;
+        float waterZ = f.proj[3][2] / gl_FragCoord.z;
+        float thick = max(sceneZ - waterZ, 0.0);
+        vec3 deep = pow(bio.water.rgb, vec3(2.2)) * 0.35;
+        vec3 shallow = albedo.rgb;
+        float absorb = 1.0 - exp(-thick * 0.18);
+        vec3 body = mix(shallow, deep, absorb) * (sun * max(dot(Nn, sunDir), 0.0) * 0.6 + skyAmb * 0.8);
+        float cosT = max(dot(Nn, -viewDir), 0.0);
+        float fresnel = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
+        vec3 refl = sky_color(f, reflect(viewDir, Nn));
+        float spec = pow(max(dot(reflect(-sunDir, Nn), -viewDir), 0.0), 220.0) * shadow;
+        vec3 wc = mix(body, refl, fresnel) + sun * spec * 4.0;
+        float a = clamp(mix(0.45, 0.95, absorb) + fresnel * 0.5, 0.0, 1.0);
+        vec3 fogged = apply_fog(f, wc, vRel, viewDir);
+        outColor = vec4(fogged, a);
+        return;
+    }
+#endif
     vec3 color = apply_fog(f, lit, vRel, viewDir);
 
     switch (f.debugMode) {

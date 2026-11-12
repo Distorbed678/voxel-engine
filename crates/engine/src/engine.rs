@@ -828,6 +828,7 @@ impl Engine {
             self.ui.wireframe,
             self.wg.biome_table.address,
             self.ui.shadows,
+            self.ui.clouds,
         );
 
         // ---- output (tonemap + UI) ----

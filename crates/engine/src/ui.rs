@@ -27,6 +27,7 @@ pub struct UiState {
     pub wireframe: bool,
     pub fog: bool,
     pub shadows: bool,
+    pub clouds: crate::renderer::CloudSettings,
     pub shadow_distance: f32,
     pub shadow_strength: f32,
     pub selected_block: u16,
@@ -52,6 +53,7 @@ impl UiState {
             wireframe: false,
             fog: true,
             shadows: true,
+            clouds: Default::default(),
             shadow_distance: 320.0,
             shadow_strength: 0.85,
             selected_block: blocks.id("stone"),
@@ -220,6 +222,13 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.checkbox("Shadows", &mut c.state.shadows);
             ui.slider("Shadow distance", 64.0f32, 1024.0f32, &mut c.state.shadow_distance);
             ui.slider("Shadow strength", 0.0f32, 1.0f32, &mut c.state.shadow_strength);
+            ui.checkbox("Clouds", &mut c.state.clouds.enabled);
+            if c.state.clouds.enabled {
+                ui.slider("Cloud coverage", 0.0f32, 1.0f32, &mut c.state.clouds.coverage);
+                ui.slider("Cloud height", 100.0f32, 600.0f32, &mut c.state.clouds.base);
+                ui.slider("Cloud thickness", 20.0f32, 300.0f32, &mut c.state.clouds.thickness);
+                ui.slider("Cloud density", 0.005f32, 0.3f32, &mut c.state.clouds.density);
+            }
             if let Some(vs) = c.vsync {
                 let mut v = vs;
                 if ui.checkbox("VSync", &mut v) {
