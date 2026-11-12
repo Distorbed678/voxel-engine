@@ -36,6 +36,7 @@ pub struct UiState {
     pub selected_block: u16,
     pub mouse_sensitivity: f32,
     pub jobs_per_frame: usize,
+    pub gen_budget_ms: f32,
     pub force_reload: bool,
     toasts: Vec<(String, Instant)>,
     block_filter: String,
@@ -65,6 +66,7 @@ impl UiState {
             selected_block: blocks.id("stone"),
             mouse_sensitivity: 1.0,
             jobs_per_frame: 256,
+            gen_budget_ms: 6.0,
             force_reload: false,
             toasts: Vec::new(),
             block_filter: String::new(),
@@ -92,6 +94,9 @@ pub struct UiActions {
     pub quit: bool,
     pub save_generator: bool,
     pub teleport: Option<(f64, f64)>,
+    pub benchmark: bool,
+    pub save_world: bool,
+    pub load_world: bool,
 }
 
 pub struct UiCtx<'a> {
@@ -113,6 +118,7 @@ pub struct UiCtx<'a> {
     pub vsync: Option<bool>,
     pub node_editor_open: &'a mut bool,
     pub tools_open: &'a mut bool,
+    pub bench_report: Option<String>,
     pub probes: &'a crate::probe::Probes,
     pub biome_names: &'a [worldgen::BiomeInfo],
     pub zone_names: &'a [worldgen::ZoneInfo],
@@ -137,6 +143,15 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
         ui.menu("File", || {
             if ui.menu_item("Save world generator") {
                 a.save_generator = true;
+            }
+            if ui.menu_item("Save world edits") {
+                a.save_world = true;
+            }
+            if ui.menu_item("Load world edits") {
+                a.load_world = true;
+            }
+            if ui.menu_item("Run benchmark") {
+                a.benchmark = true;
             }
             if ui.menu_item("Screenshot (F2)") {
                 a.screenshot = true;
@@ -307,6 +322,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             if ui.slider("Chunk jobs / frame", 16, 256, &mut jobs) {
                 c.state.jobs_per_frame = jobs as usize;
             }
+            ui.slider("Generation budget (ms/frame)", 1.0f32, 30.0f32, &mut c.state.gen_budget_ms);
             ui.checkbox("Freeze streaming", &mut c.world.frozen);
         });
         c.state.show_world = open;
@@ -375,6 +391,11 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
 
     if c.state.show_map {
         minimap(ui, c, &mut a);
+    }
+    if let Some(r) = &c.bench_report {
+        ui.window("Benchmark result").size([460.0, 260.0], Condition::FirstUseEver).build(|| {
+            ui.text(r);
+        });
     }
 
     if c.state.show_demo {

@@ -135,7 +135,7 @@ impl PipelineManager {
                 }
                 let t1 = t0.elapsed().as_secs_f32() * 1000.0;
                 let p = pipeline::compute(ctx, self.layout, &out.spirv, name)?;
-                log::info!("{name}: glsl->spirv {t1:.0} ms ({} words), pipeline {:.0} ms", out.spirv.len(), t0.elapsed().as_secs_f32() * 1000.0 - t1);
+                log::debug!("{name}: glsl->spirv {t1:.0} ms ({} words), pipeline {:.0} ms", out.spirv.len(), t0.elapsed().as_secs_f32() * 1000.0 - t1);
                 Ok((p, out.deps))
             }
             PipelineSource::Graphics { stages, state } => {

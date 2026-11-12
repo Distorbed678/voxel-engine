@@ -43,6 +43,7 @@ pub struct Options {
     pub debug_view: Option<u32>,
     pub seed: Option<u32>,
     pub worldgen_dir: Option<PathBuf>,
+    pub benchmark: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -127,6 +128,11 @@ pub struct Engine {
     prev_view_proj: Mat4,
     /// accumulated GPU scope timings for headless benchmark summaries
     pub gpu_sums: std::collections::BTreeMap<&'static str, (f64, u32)>,
+    pub bench: Option<crate::bench::Benchmark>,
+    /// jobs recorded in each frame slot (to relate GPU timings to batch size)
+    batch_sizes: [usize; FIF],
+    /// EMA of GPU milliseconds per generated chunk (gen + props + meshing)
+    pub ms_per_job: f32,
     ctx: VkContext,
 }
 
@@ -367,6 +373,9 @@ impl Engine {
             screenshot_request: None,
             prev_view_proj: Mat4::IDENTITY,
             gpu_sums: Default::default(),
+            bench: None,
+            batch_sizes: [0; FIF],
+            ms_per_job: 0.05,
             ctx,
         })
     }
@@ -596,6 +605,43 @@ impl Engine {
     // frame
     // ---------------------------------------------------------------------------------------
 
+    pub fn start_benchmark(&mut self) {
+        self.set_fly_mode(false);
+        self.world.reset(self.frame_counter + 1);
+        self.bench = Some(crate::bench::Benchmark::new(self.camera.pos, self.world.stats.jobs_total));
+        self.ui.toast("Benchmark started (24 s)".into());
+    }
+
+    pub fn save_world(&mut self, path: &std::path::Path) -> Result<()> {
+        #[derive(serde::Serialize)]
+        struct Save<'a> {
+            seed: u32,
+            camera: [f64; 3],
+            overlay: &'a crate::world::edits::EditOverlay,
+        }
+        if let Some(d) = path.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        let s = ron::ser::to_string(&Save { seed: self.seed, camera: self.camera.pos.to_array(), overlay: &self.world.overlay })?;
+        std::fs::write(path, s)?;
+        Ok(())
+    }
+
+    pub fn load_world(&mut self, path: &std::path::Path) -> Result<()> {
+        #[derive(serde::Deserialize)]
+        struct Save {
+            seed: u32,
+            camera: [f64; 3],
+            overlay: crate::world::edits::EditOverlay,
+        }
+        let s: Save = ron::from_str(&std::fs::read_to_string(path)?)?;
+        self.seed = s.seed;
+        self.camera.pos = DVec3::from(s.camera);
+        self.world.overlay = s.overlay;
+        self.world.invalidate_all();
+        Ok(())
+    }
+
     /// Blend fog colour/density toward the biome the camera is in.
     fn apply_environment(&mut self) {
         let Some(cam) = self.probes.camera else { return };
@@ -677,6 +723,13 @@ impl Engine {
             e.0 += *ms as f64;
             e.1 += 1;
         }
+        // adaptive generation budget: learn the GPU cost per chunk from the last batch
+        let gen_ms: f32 = self.profiler.last.iter().filter(|(n, _)| matches!(*n, "worldgen" | "props" | "meshing")).map(|(_, m)| *m).sum();
+        if self.batch_sizes[slot] >= 16 && gen_ms > 0.0 {
+            let per = gen_ms / self.batch_sizes[slot] as f32;
+            self.ms_per_job = self.ms_per_job * 0.8 + per * 0.2;
+        }
+        self.batch_sizes[slot] = 0;
         self.pm.collect_garbage(&self.ctx, completed);
         self.world.free_deferred(completed);
 
@@ -757,7 +810,28 @@ impl Engine {
 
         // ---- input, camera, editing ----
         self.handle_shortcuts();
-        self.update_camera(self.dt);
+        if self.opts.benchmark && self.bench.is_none() && self.frame_counter == 2 {
+            self.opts.benchmark = false;
+            self.start_benchmark();
+        }
+        let mut bench_done = false;
+        if let Some(b) = &mut self.bench {
+            if b.report.is_none() && !b.update(&mut self.camera, self.dt, &self.profiler.last) {
+                bench_done = true;
+            }
+        } else {
+            self.update_camera(self.dt);
+        }
+        if bench_done {
+            let rep = self.bench.as_mut().unwrap().finish(self.world.stats.jobs_total, self.world.stats.quads_resident, &self.ctx.device_name);
+            log::info!("\n{rep}");
+            let _ = std::fs::create_dir_all("benchmarks");
+            let _ = std::fs::write(format!("benchmarks/bench_{}.txt", chrono_stamp()), &rep);
+            self.ui.toast("Benchmark finished (see benchmarks/)".into());
+            if self.opts.frames.is_none() && self.opts.headless {
+                self.quit = true;
+            }
+        }
         self.handle_editing();
         self.atmosphere.update(self.dt);
         self.world.update_desired(self.camera.pos);
@@ -807,7 +881,10 @@ impl Engine {
 
         // generation batch
         if self.wgpu.has_free_slot() && !self.world.frozen {
-            let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), self.ui.jobs_per_frame.min(MAX_JOBS));
+            let budget_jobs = (self.ui.gen_budget_ms / self.ms_per_job.max(0.002)) as usize;
+            let max_jobs = budget_jobs.clamp(16, self.ui.jobs_per_frame.min(MAX_JOBS));
+            let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), max_jobs);
+            self.batch_sizes[slot] = jobs.len();
             if !jobs.is_empty() {
                 let pipes = WorldPipelines {
                     generate: self.pm.get(self.gen_pipeline),
@@ -962,7 +1039,7 @@ impl Engine {
 
         // screenshot copy
         let want_shot = self.screenshot_request.take().or_else(|| {
-            if self.opts.headless && Some(self.frame_counter + 1) == self.opts.frames {
+            if Some(self.frame_counter + 1) == self.opts.frames {
                 self.opts.screenshot.clone()
             } else {
                 None
@@ -1100,7 +1177,7 @@ impl Engine {
         let avg: f32 = self.stats.frame_ms_history.iter().rev().take(60).sum::<f32>() / n;
         self.stats.fps = 1000.0 / avg.max(0.001);
 
-        if self.opts.headless {
+        {
             if let Some(f) = self.opts.frames {
                 if self.frame_counter >= f {
                     // flush outstanding screenshot
@@ -1250,6 +1327,7 @@ impl Engine {
                 vsync: self.swapchain.as_ref().map(|s| s.vsync),
                 node_editor_open: &mut self.node_ui.open,
                 tools_open: &mut self.tools.show_tools,
+                bench_report: self.bench.as_ref().and_then(|b| b.report.clone()),
             },
         );
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
@@ -1301,6 +1379,21 @@ impl Engine {
         }
         if a.save_generator {
             self.wg.save();
+        }
+        if a.benchmark {
+            self.start_benchmark();
+        }
+        if a.save_world {
+            match self.save_world(std::path::Path::new("saves/world.ron")) {
+                Ok(()) => self.ui.toast("World edits saved to saves/world.ron".into()),
+                Err(e) => self.ui.toast(format!("Save failed: {e}")),
+            }
+        }
+        if a.load_world {
+            match self.load_world(std::path::Path::new("saves/world.ron")) {
+                Ok(()) => self.ui.toast("World edits loaded".into()),
+                Err(e) => self.ui.toast(format!("Load failed: {e}")),
+            }
         }
         Ok(())
     }

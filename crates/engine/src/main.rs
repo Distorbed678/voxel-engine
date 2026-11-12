@@ -1,4 +1,5 @@
 mod atmosphere;
+mod bench;
 mod blocks;
 mod camera;
 mod engine;
@@ -132,6 +133,7 @@ fn parse_args() -> Options {
             "--debug-view" => o.debug_view = next(&mut i).parse().ok(),
             "--seed" => o.seed = next(&mut i).parse().ok(),
             "--worldgen" => o.worldgen_dir = Some(next(&mut i).into()),
+            "--benchmark" => o.benchmark = true,
             other => eprintln!("unknown argument {other}"),
         }
         i += 1;
@@ -176,7 +178,7 @@ fn main() -> Result<()> {
     let opts = parse_args();
     if opts.headless {
         let mut opts = opts;
-        if opts.frames.is_none() {
+        if opts.frames.is_none() && !opts.benchmark {
             opts.frames = Some(120);
         }
         let mut engine = Engine::new(opts, None)?;
