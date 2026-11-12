@@ -1,0 +1,98 @@
+# Blocks and textures as data: paint a texture, make a glowing block with it, place it, animate
+# it, grow the texture arrays, edit and delete the block; then paint with the mouse in the
+# texture editor. Scripts never save blocks or textures to disk.
+ui off
+anim 2
+time 0.30
+clouds off
+weather 0
+
+# a painted texture: red with a white border, a yellow diagonal and mirrored blue dots
+texture_new test_paint
+paint filled 0 0 31 31 b03020
+paint rect 0 0 31 31 f0f0f0
+paint line 1 1 30 30 ffd040
+mirror x on
+paint pencil 6 20 6 20 2040ff
+mirror x off
+paint fill 20 5 20 5 c04030
+expect_texel test_paint 0 0 0 f0f0f0
+expect_texel test_paint 0 15 15 ffd040
+expect_texel test_paint 0 6 20 2040ff
+expect_texel test_paint 0 25 20 2040ff
+expect_texel test_paint 0 10 3 c04030
+expect_texel test_paint 0 3 10 b03020
+
+# a block that uses it, with blue light
+block_new test_block lamp
+block_set test_block texture all test_paint
+block_set test_block light 80 140 255 12
+block_set test_block emission 0
+block_set test_block display Test Block
+
+# a wall of it in the sky
+select -3 300 0 3 304 0
+block test_block
+op fill
+pos 0.5 302.5 -5
+look 180 0
+settle
+expect_block 0 302 0 test_block
+expect_pick test_block
+expect_image crates/engine/tests/golden/painted_block.png
+
+# animation: a second frame (solid green) at 2 fps; at 0.75 s the clock shows frame 1
+texture_frame dup
+paint filled 0 0 31 31 20a040
+texture_fps 2
+expect_texel test_paint 1 5 5 20a040
+expect_texel test_paint 0 3 9 b03020
+
+# a texture with 40 frames on another block outgrows the texture arrays (128 layers): they are
+# rebuilt and every layer uploaded again
+texture_new big_anim stone
+texture_frame dup 39
+paint filled 0 0 7 7 ffffff
+block_new test_block2 stone
+block_set test_block2 texture top big_anim
+anim 0.75
+settle
+wait 4
+expect_image crates/engine/tests/golden/painted_block_frame1.png
+anim 2
+
+# an edit that changes the mesh (now a cutout cube), then the block is deleted: placed blocks
+# turn into air
+block_set test_block kind cutout
+settle
+expect_block 0 302 0 test_block
+block_delete test_block
+settle
+expect_block 0 302 0 air
+
+# painting with the mouse in the texture editor: a click with the pencil, a line drag, undo
+ui on
+window texture_editor on
+texture_edit test_paint
+texture_frame 0
+paint_tool pencil
+paint_color 00ff00
+wait 3
+texel 4 6
+click left
+wait 2
+expect_texel test_paint 0 4 6 00ff00
+paint_tool line
+drag_texel 2 10 20 10 6
+wait 2
+expect_texel test_paint 0 11 10 00ff00
+key ctrl+z
+wait 2
+expect_texel test_paint 0 11 10 c04030
+expect_texel test_paint 0 4 6 00ff00
+
+# the block editor on a custom block (screenshot for the docs, not compared)
+block_set test_block2 texture side test_paint
+edit_block test_block2
+wait 20
+screenshot target/script-out/editors.png

@@ -1,0 +1,11 @@
+(
+    display: "Acacia Log",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "acacia_log_top",
+        bottom: "acacia_log_top",
+        side: "acacia_log",
+    ),
+    rotation: Column,
+)

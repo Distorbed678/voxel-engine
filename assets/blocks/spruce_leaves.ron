@@ -1,0 +1,9 @@
+(
+    display: "Spruce Leaves",
+    category: "Trees",
+    kind: Cutout,
+    textures: (
+        all: "spruce_leaves",
+    ),
+    attenuation: 1,
+)

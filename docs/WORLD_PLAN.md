@@ -296,6 +296,10 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
 - **Tests**: unit tests for block data round trips and name stability; a GPU script that
   creates a block, places it and checks it (`expect_block`, `expect_pick`); a golden of a
   painted texture on a block.
+- **Done 2026-11-12.** One change from the text above: `blocks.glsl` is gone. The generator
+  reads block kinds and rotations from the GPU block table, and only the ids of the core blocks
+  it falls back to are compiled in (they can't be deleted), so block edits never rebuild the
+  generator. See "Blocks and textures as data" in ARCHITECTURE.md.
 
 ### Phase B (item 20): Prop graphs, trees included
 - **New graph kind `Prop`**:

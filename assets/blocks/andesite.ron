@@ -1,0 +1,8 @@
+(
+    display: "Andesite",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "andesite",
+    ),
+)

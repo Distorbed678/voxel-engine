@@ -1,0 +1,13 @@
+(
+    display: "Lamp",
+    category: "Building",
+    kind: Opaque,
+    textures: (
+        all: "lamp",
+    ),
+    emission: 240,
+    light: (
+        color: (255, 225, 170),
+        level: 15,
+    ),
+)

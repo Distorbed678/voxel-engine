@@ -1,0 +1,11 @@
+(
+    display: "Oak Log",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "oak_log_top",
+        bottom: "oak_log_top",
+        side: "oak_log",
+    ),
+    rotation: Column,
+)

@@ -681,7 +681,7 @@ impl NodeEditorUi {
         let biome_names = wg.project.names(GraphKind::Biome);
         let zone_names = wg.project.names(GraphKind::Zone);
         let fn_names = wg.project.names(GraphKind::Function);
-        let block_names: Vec<&str> = blocks.blocks.iter().map(|b| b.name).collect();
+        let block_names: Vec<&str> = std::iter::once("air").chain(blocks.live().map(|(_, b)| b.name.as_str())).collect();
         let prefab_names = wg.prefab_names.clone();
         let mut changed = false;
         let mut snapshot = false;

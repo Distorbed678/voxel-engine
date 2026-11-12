@@ -1,0 +1,10 @@
+(
+    display: "Yellow Flower",
+    category: "Plants",
+    kind: Model,
+    model: Cross,
+    textures: (
+        all: "flower_yellow",
+    ),
+    washes_away: true,
+)

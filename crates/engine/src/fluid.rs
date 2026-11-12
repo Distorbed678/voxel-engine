@@ -163,7 +163,7 @@ impl FluidSim {
 
     /// Water can run into this cell (air, or a plant it washes away).
     fn open(&self, v: u16, reg: &BlockRegistry) -> bool {
-        v == 0 || reg.get(v).washes_away()
+        v == 0 || reg.get(v).washes_away
     }
 
     /// What `p` becomes (None = unchanged), or a chunk that has to be read first.

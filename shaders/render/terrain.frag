@@ -71,7 +71,7 @@ void main() {
         uint la = logAxis == 1u ? 0u : 2u;
         if (axis != la && abs(B[la]) < 0.5) uv = uv.yx;
     }
-    uint layer = face_layer(pc.blocks, block, dir);
+    uint layer = face_layer(pc.blocks, block, dir, f.time);
     vec4 albedo = texture(gTex2DArray[nonuniformEXT(f.blockTexAlbedo)], vec3(uv, float(layer)));
 #ifdef TRANSPARENT
     if (albedo.a < 0.02) discard;

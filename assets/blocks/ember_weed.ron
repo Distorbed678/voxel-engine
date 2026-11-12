@@ -1,0 +1,10 @@
+(
+    display: "Ember Weed",
+    category: "Plants",
+    kind: Model,
+    model: Cross,
+    textures: (
+        all: "ember_weed",
+    ),
+    washes_away: true,
+)

@@ -1,0 +1,11 @@
+(
+    display: "Cactus",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "cactus_top",
+        bottom: "cactus_top",
+        side: "cactus_side",
+    ),
+    rotation: Column,
+)

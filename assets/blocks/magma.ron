@@ -1,0 +1,13 @@
+(
+    display: "Magma",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "magma",
+    ),
+    emission: 120,
+    light: (
+        color: (255, 100, 40),
+        level: 11,
+    ),
+)

@@ -189,6 +189,22 @@ These follow from the choices above.
   (face axis / away from the camera); clipboard rotation and rotated prefab props turn them;
   prefab files and scripts write `name:state`. Water surfaces sit 1/8 block lower.
 
+- [x] **Blocks and textures as data** (item 19, phase A of the layered world): one RON file per
+  block in `assets/blocks` (`--export-block-defaults`, `_order.ron` keeps ids), textures as PNGs
+  in `assets/textures` (frames stacked vertically, fps in a `.ron` next to them). A **Block
+  Editor** (list with search and categories, new/duplicate/delete, kind, model, per-face textures
+  with a picker, tint, glow, light colour and reach, absorption, rotation, fluid behaviour,
+  rotating preview, select-for-placing and place-at-crosshair) and a **Texture Editor** (32×32
+  pencil, eraser, fill, line, rectangle, picker, mirror X/Y, palette + texture colours + recent,
+  undo/redo, zoom, grid; frames: add/duplicate/delete/reorder, fps, play, onion skin; rotating
+  preview), both live in the world and autosaved. Animated textures in the renderer (frames are
+  array layers, per-face frames and fps in `BlockInfo`); the default lava is animated. Block
+  edits never rebuild the generator (kinds and rotations come from the GPU block table; only core
+  block ids are compiled in). Script commands for blocks and textures; GPU test `blocks.vxs`
+  with two goldens (a painted block, its second animation frame), array growth and mouse
+  painting. Benchmark unchanged within noise: 277–287 fps over three runs (289 before), main pass
+  +0.05 ms.
+
 **Measured** (RTX 4080, 1080p, `--benchmark`):
 - 289 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
 - Full 4 km world regeneration takes about 0.5 s of GPU time.
@@ -224,6 +240,12 @@ Still needs a hand test (real input devices or complex UI flows):
 - [ ] Flowing water at real lakes and rivers (digging a channel, breaking a lake bed), and with
   big brush edits
 - [ ] VSync toggle, window resize
+- [ ] Block Editor in a real window: the texture picker popup, New/Duplicate/Delete popups,
+  sliders and colour edits, Save now, autosave writing `assets/blocks` (the GPU test drives the
+  same registry calls and paints with synthetic mouse input)
+- [ ] Texture Editor in a real window: long pencil strokes, line/rectangle previews while
+  dragging, right-click colour pick, keyboard tool keys, frame buttons, Play and onion skin,
+  New/Open popups, PNG files written by autosave
 
 ### Known issues (found while capturing media)
 
@@ -319,8 +341,8 @@ are in **[WORLD_PLAN.md](WORLD_PLAN.md)**. Work happens on `main`, foundations f
 check-in at the end of each phase. Item 10 (GPU graph interpreter) is **no longer deferred**: it
 is part of item 21.
 
-19. Blocks and textures as data: block editor, texture editor (pixel painting, animated
-    textures).
+19. ~~Blocks and textures as data: block editor, texture editor (pixel painting, animated
+    textures).~~
 20. Prop graphs (trees included): shape nodes, tree nodes, Prop editor with 3D preview.
 21. Layered world: layers in the World graph, per-layer generators, GPU graph interpreter,
     wider biome ids, cross-layer streaming, cloud sea, layer jump UI.

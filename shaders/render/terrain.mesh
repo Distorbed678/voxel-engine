@@ -53,7 +53,7 @@ void main() {
         // water surfaces sit below the top of their cell (the same at every LOD): 1/8 for still
         // water, one more 1/8 per level for flowing water, none for falling water. The top edge
         // of an exposed water side drops with them so it doesn't stick up past the surface.
-        bool water = dir != 3u && ((pc.blocks.b[BLOCK_ID(blk)].flags >> 4) & 15u) == 3u;
+        bool water = dir != 3u && (pc.blocks.b[BLOCK_ID(blk)].flags & BLOCK_FLUID) != 0u;
         uint wl = BLOCK_STATE(blk);
         float drop = wl == 8u ? 0.0 : min(float(wl + 1u) * 0.125, 0.9375);
         float topY = max(max(corners[0].y, corners[1].y), max(corners[2].y, corners[3].y));

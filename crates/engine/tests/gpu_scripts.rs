@@ -82,3 +82,9 @@ fn world_save() {
 fn water() {
     run("water");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn blocks() {
+    run("blocks");
+}

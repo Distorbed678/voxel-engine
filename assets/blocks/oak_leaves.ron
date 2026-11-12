@@ -1,0 +1,10 @@
+(
+    display: "Oak Leaves",
+    category: "Trees",
+    kind: Cutout,
+    textures: (
+        all: "oak_leaves",
+    ),
+    tint: Foliage,
+    attenuation: 1,
+)

@@ -1,0 +1,8 @@
+(
+    display: "Copper Ore",
+    category: "Ores",
+    kind: Opaque,
+    textures: (
+        all: "copper_ore",
+    ),
+)

@@ -38,6 +38,7 @@ Dear ImGui debug UI.
 | **Light** | Colored block light and sky light are propagated on the GPU in a volume around the camera, with a coarse far-field volume so distant lava still lights its banks. Caves go dark and lanterns, lava and crystals light them. |
 | **Weather and particles** | Snow, rain, drifting ash, rising embers, fireflies at night and pollen by day, set per biome and scaled by a weather cycle. Rain and snow stay out of caves and from under roofs. |
 | **Stylized rendering** | Cascaded sun shadows, TAA, bloom, day/night with sun, moon and stars, volumetric clouds, waves with Fresnel reflections, per-biome fog and tints, wind on leaves, per-cell AO and normal-mapped 32×32 procedural textures. |
+| **Blocks and textures are data** | Every block is a small RON file in `assets/blocks`: textures per face, kind and model, biome tint, glow, coloured light, rotation and fluid behaviour. The in-game **Block Editor** creates, duplicates, edits and deletes blocks live, and the **Texture Editor** paints 32×32 textures (pencil, fill, line, rectangle, mirror, palette, undo) with animation frames, onion skin and a rotating preview. Changes show in the world at once and save as PNGs. |
 | **Editing that survives regeneration** | Blocks (logs and stairs orient to the face and view you place them from), flowing water that runs into what you dig out, brushes (add, remove, paint, smooth), box selection with fill/replace/copy/paste/rotate, undo and redo, and prefabs the generator can place. Edits live in an overlay, so they survive any graph change, and save with the seed and camera in a world file. |
 | **Tested without a human** | A scripting mode drives the engine headless: camera, mouse and keys, tools, screenshots. GPU regression tests check picking, edits, UI capture and golden images. |
 
@@ -118,6 +119,10 @@ cargo run --release
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo (also in the node editor) |
 | `Ctrl+S` (editor mode) | save the world (File → Worlds to open or save as) |
 | `F1` / `F2` / `F5` | hide UI / screenshot / reload shaders |
+| View → Block Editor / Texture Editor | edit blocks and paint textures (Blocks panel → Edit... opens the selected block) |
+
+**Texture editor**: `B` pencil, `E` eraser, `G` fill, `L` line, `R` / `Shift+R` rectangle / filled,
+`I` picker, right-click picks a colour, `Ctrl+Z`/`Ctrl+Y` undo/redo while the canvas is hovered.
 
 **Node editor**: right-click or `Space` adds a node. Dragging a pin into empty space adds a node
 and links it. `Del` deletes. `Ctrl+C`/`V`/`D` copy, paste and duplicate. "Group selection into
@@ -139,12 +144,26 @@ A **Comment** node is a resizable box with a note; dragging it moves the nodes i
 --benchmark        scripted 24 s flight, report saved to benchmarks/
 --world FILE       open a world file (seed, camera, time, edits), or create it on the first save
 --worldgen DIR     load generator graphs from DIR instead of assets/worldgen
+--blocks DIR       load block definitions from DIR instead of assets/blocks
 --validate         enable Vulkan validation layers
 --no-ui            hide the debug UI
 --export-textures DIR   dump all block textures as PNGs (texture pack template)
+--export-block-defaults DIR   write the built-in block definitions as files
 ```
 
-Any texture can be overridden by dropping `assets/textures/<name>.png` (32×32 RGBA).
+Any texture can be overridden or added by dropping `assets/textures/<name>.png` (32 pixels wide;
+animation frames are stacked vertically, with the speed in `<name>.ron`, e.g. `(fps: 8.0)`). A
+block file looks like this:
+
+```ron
+(
+    display: "Grass",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (top: "grass_top", bottom: "dirt", side: "grass_side"),
+    tint: Grass,
+)
+```
 
 </details>
 
@@ -183,6 +202,8 @@ crates/worldgen   graph model (RON), node registry, GLSL compiler, default world
 crates/engine     app: streaming, GPU world pipeline, renderer, UI, node editor, tools, scripts
 shaders/          GLSL (hot reloaded); worldgen/ is wrapped around the generated code
 assets/worldgen   the world generator graphs (edit in-app or by hand)
+assets/blocks     block definitions, one RON file per block (edit in-app or by hand)
+assets/textures   painted and overriding textures (PNG, frames stacked vertically)
 assets/prefabs    saved prefabs
 docs/             architecture, plan and roadmap, README media
 ```

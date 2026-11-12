@@ -1,0 +1,11 @@
+(
+    display: "Tall Grass",
+    category: "Plants",
+    kind: Model,
+    model: Cross,
+    textures: (
+        all: "tall_grass",
+    ),
+    tint: Grass,
+    washes_away: true,
+)

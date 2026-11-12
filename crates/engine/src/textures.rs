@@ -1,12 +1,23 @@
-//! Procedural 32x32 block textures with height-derived normal maps.
+//! Block textures: procedural 32x32 built-ins with height-derived normal maps, PNG files and
+//! painted textures, still or animated.
 //!
-//! Every texture is generated from tileable noise / cellular patterns so it repeats seamlessly.
-//! Output is sRGB albedo (+alpha for cutout/transparent) and a tangent-space normal map whose
-//! alpha channel holds the height. Any texture can be overridden by dropping
-//! `assets/textures/<name>.png` (32x32 RGBA) next to the executable's working directory.
+//! Every built-in texture is generated from tileable noise / cellular patterns so it repeats
+//! seamlessly. Output is sRGB albedo (+alpha for cutout/transparent) and a tangent-space normal
+//! map whose alpha channel holds the height.
+//!
+//! `assets/textures/<name>.png` overrides a built-in or adds a new texture: 32 pixels wide, with
+//! animation frames stacked vertically (a 32x128 PNG has 4 frames). `<name>.ron` next to it holds
+//! the speed, `(fps: 8.0)`. The height of a PNG or painted texture comes from its brightness.
+
+use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
+
+use anyhow::{Context as _, Result};
 
 pub const TEX: usize = 32;
 const N: i32 = TEX as i32;
+/// Most animation frames a texture can have (6 bits in the GPU block table).
+pub const MAX_FRAMES: usize = 64;
 
 #[derive(Clone)]
 pub struct TexImage {
@@ -18,8 +29,18 @@ pub struct TexImage {
 }
 
 impl TexImage {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self { color: vec![[0.0, 0.0, 0.0, 1.0]; TEX * TEX], height: vec![0.5; TEX * TEX], normal_strength: 2.0 }
+    }
+
+    /// A texture from RGBA8 sRGB pixels (32x32), its height taken from the brightness.
+    pub fn from_rgba8(px: &[u8]) -> Self {
+        let mut t = Self::new();
+        for (i, p) in px.as_chunks::<4>().0.iter().take(TEX * TEX).enumerate() {
+            t.color[i] = [p[0], p[1], p[2], p[3]].map(|v| v as f32 / 255.0);
+            t.height[i] = (t.color[i][0] + t.color[i][1] + t.color[i][2]) / 3.0;
+        }
+        t
     }
     fn set(&mut self, x: i32, y: i32, c: [f32; 3], a: f32, h: f32) {
         let i = idx(x, y);
@@ -463,6 +484,28 @@ fn fluid(t: &mut TexImage, deep: u32, light: u32, alpha: f32, seed: u32) {
     t.normal_strength = 1.0;
 }
 
+/// One frame of the animated lava: the noise and the crust drift a whole texture width over the
+/// loop, so it repeats seamlessly (frame 0 is the still lava).
+fn lava(f: i32, frames: i32) -> TexImage {
+    let mut t = TexImage::new();
+    let o = (f * N / frames) as f32;
+    let (deep, light) = (hex(0xc0300a), hex(0xffa020));
+    for y in 0..N {
+        for x in 0..N {
+            let (xf, yf) = (x as f32, y as f32);
+            let n = fbm(xf + o, yf + o, 4, 3, 26);
+            let w = vnoise(xf + n * 6.0 - o, yf * 2.0, 4, 26 ^ 3);
+            t.set(x, y, mix(deep, light, q(w * 0.7 + n * 0.3, 6.0)), 1.0, w);
+            let (f1, f2, _) = worley(xf - o, yf + o, 4, 27, 1.0);
+            if f2 - f1 < 0.12 {
+                t.set(x, y, hex(0xffe070), 1.0, 0.9);
+            }
+        }
+    }
+    t.normal_strength = 1.0;
+    t
+}
+
 fn generate_builtin(name: &str) -> TexImage {
     let mut t = TexImage::new();
     let s = hash(name.len() as i32, name.bytes().map(|b| b as i32).sum(), 1234);
@@ -652,19 +695,155 @@ fn generate_builtin(name: &str) -> TexImage {
     t
 }
 
-/// Generate a texture, preferring a user override PNG if present.
-pub fn generate(name: &str) -> TexImage {
-    let path = std::path::Path::new("assets/textures").join(format!("{name}.png"));
-    if let Ok(img) = image::open(&path) {
-        let img = img.resize_exact(TEX as u32, TEX as u32, image::imageops::FilterType::Nearest).to_rgba8();
-        let mut t = TexImage::new();
-        for (i, p) in img.pixels().enumerate() {
-            t.color[i] = p.0.map(|v| v as f32 / 255.0);
-            t.height[i] = (t.color[i][0] + t.color[i][1] + t.color[i][2]) / 3.0;
-        }
-        return t;
+/// A texture's frames and animation speed.
+#[derive(Clone)]
+pub struct TexAsset {
+    pub frames: Vec<TexImage>,
+    /// frames per second (animated textures)
+    pub fps: f32,
+}
+
+impl TexAsset {
+    pub fn still(t: TexImage) -> Self {
+        Self { frames: vec![t], fps: 8.0 }
     }
-    generate_builtin(name)
+}
+
+/// Animation speed next to a PNG: `assets/textures/<name>.ron`.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct TexMeta {
+    fps: f32,
+}
+
+impl Default for TexMeta {
+    fn default() -> Self {
+        Self { fps: 8.0 }
+    }
+}
+
+/// A built-in texture: procedural frames.
+pub fn builtin_asset(name: &str) -> TexAsset {
+    match name {
+        "lava" => {
+            const FRAMES: i32 = 16;
+            let frames = (0..FRAMES).map(|f| lava(f, FRAMES)).collect();
+            TexAsset { frames, fps: 3.0 }
+        }
+        _ => TexAsset::still(generate_builtin(name)),
+    }
+}
+
+/// Split a PNG into 32x32 frames: frames are stacked vertically, each as tall as the image is
+/// wide (any width is scaled to 32).
+pub fn frames_from_image(img: &image::DynamicImage) -> Vec<TexImage> {
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    let n = (h / w).clamp(1, MAX_FRAMES as u32);
+    (0..n)
+        .map(|i| {
+            let f = img.crop_imm(0, i * w, w, w).resize_exact(TEX as u32, TEX as u32, image::imageops::FilterType::Nearest).to_rgba8();
+            TexImage::from_rgba8(f.as_raw())
+        })
+        .collect()
+}
+
+/// Textures by name: loaded lazily from PNGs (when there is a folder) or generated, plus edits
+/// from the texture editor waiting to be saved.
+pub struct TextureStore {
+    pub dir: Option<PathBuf>,
+    assets: HashMap<String, TexAsset>,
+    /// loaded from or saved to a file
+    files: BTreeSet<String>,
+    dirty: BTreeSet<String>,
+}
+
+impl TextureStore {
+    pub fn new(dir: Option<PathBuf>) -> Self {
+        Self { dir, assets: HashMap::new(), files: BTreeSet::new(), dirty: BTreeSet::new() }
+    }
+
+    fn load(&mut self, name: &str) -> TexAsset {
+        if let Some(dir) = &self.dir {
+            let path = dir.join(format!("{name}.png"));
+            if let Ok(img) = image::open(&path) {
+                let meta: TexMeta = std::fs::read_to_string(dir.join(format!("{name}.ron"))).ok().and_then(|s| ron::from_str(&s).ok()).unwrap_or_default();
+                self.files.insert(name.to_string());
+                return TexAsset { frames: frames_from_image(&img), fps: meta.fps.clamp(0.125, 120.0) };
+            }
+        }
+        builtin_asset(name)
+    }
+
+    pub fn get(&mut self, name: &str) -> &TexAsset {
+        if !self.assets.contains_key(name) {
+            let a = self.load(name);
+            self.assets.insert(name.to_string(), a);
+        }
+        &self.assets[name]
+    }
+
+    /// Replace a texture (texture editor); saved on the next `save_dirty`.
+    pub fn insert(&mut self, name: &str, mut asset: TexAsset) {
+        asset.frames.truncate(MAX_FRAMES);
+        if asset.frames.is_empty() {
+            asset.frames.push(TexImage::new());
+        }
+        self.assets.insert(name.to_string(), asset);
+        self.dirty.insert(name.to_string());
+    }
+
+    pub fn has_dirty(&self) -> bool {
+        !self.dirty.is_empty()
+    }
+
+    /// Whether the texture comes from (or was saved to) a PNG rather than the generator.
+    pub fn is_file(&self, name: &str) -> bool {
+        self.files.contains(name)
+    }
+
+    /// Textures loaded so far plus the PNGs in the folder.
+    pub fn known_names(&self) -> Vec<String> {
+        let mut v: BTreeSet<String> = self.assets.keys().cloned().collect();
+        if let Some(dir) = &self.dir
+            && let Ok(rd) = std::fs::read_dir(dir)
+        {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().is_some_and(|e| e == "png")
+                    && let Some(s) = p.file_stem()
+                {
+                    v.insert(s.to_string_lossy().to_string());
+                }
+            }
+        }
+        v.into_iter().collect()
+    }
+
+    /// Write edited textures as PNG strips (+ the speed of animated ones).
+    pub fn save_dirty(&mut self) -> Result<()> {
+        let Some(dir) = self.dir.clone() else {
+            self.dirty.clear();
+            return Ok(());
+        };
+        std::fs::create_dir_all(&dir)?;
+        for name in std::mem::take(&mut self.dirty) {
+            let a = &self.assets[&name];
+            let mut px = Vec::with_capacity(TEX * TEX * 4 * a.frames.len());
+            for f in &a.frames {
+                px.extend(f.albedo_rgba8());
+            }
+            let path = dir.join(format!("{name}.png"));
+            image::save_buffer(&path, &px, TEX as u32, (TEX * a.frames.len()) as u32, image::ColorType::Rgba8).with_context(|| format!("writing {}", path.display()))?;
+            let meta = dir.join(format!("{name}.ron"));
+            if a.frames.len() > 1 {
+                std::fs::write(&meta, ron::to_string(&TexMeta { fps: a.fps })? + "\n")?;
+            } else if meta.exists() {
+                std::fs::remove_file(&meta)?;
+            }
+            self.files.insert(name);
+        }
+        Ok(())
+    }
 }
 
 /// Box-filtered mip chain of RGBA8 data (alpha-coverage preserving for cutouts).
@@ -730,5 +909,46 @@ mod tests {
             assert_eq!(t.color.len(), TEX * TEX);
         }
         assert_eq!(mip_chain(&vec![255u8; TEX * TEX * 4], true).len(), 6);
+    }
+
+    #[test]
+    fn animated_lava_loops_from_the_still_texture() {
+        let a = builtin_asset("lava");
+        assert_eq!(a.frames.len(), 16);
+        // frame 0 is what the still texture used to be
+        let mut still = TexImage::new();
+        fluid(&mut still, 0xc0300a, 0xffa020, 1.0, 26);
+        for y in 0..N {
+            for x in 0..N {
+                let (f1, f2, _) = worley(x as f32, y as f32, 4, 27, 1.0);
+                if f2 - f1 < 0.12 {
+                    still.set(x, y, hex(0xffe070), 1.0, 0.9);
+                }
+            }
+        }
+        assert_eq!(a.frames[0].albedo_rgba8(), still.albedo_rgba8());
+        assert_ne!(a.frames[1].albedo_rgba8(), still.albedo_rgba8());
+    }
+
+    #[test]
+    fn png_strips_round_trip() {
+        let dir = std::env::temp_dir().join(format!("ve_tex_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut st = TextureStore::new(Some(dir.clone()));
+        let mut a = TexAsset { frames: vec![TexImage::new(), generate_builtin("stone"), generate_builtin("dirt")], fps: 5.0 };
+        a.frames[0].color[3] = [1.0, 0.0, 0.0, 1.0];
+        st.insert("painted", a.clone());
+        st.save_dirty().unwrap();
+        let mut st2 = TextureStore::new(Some(dir.clone()));
+        let b = st2.get("painted").clone();
+        assert_eq!(b.frames.len(), 3);
+        assert_eq!(b.fps, 5.0);
+        for (x, y) in a.frames.iter().zip(&b.frames) {
+            assert_eq!(x.albedo_rgba8(), y.albedo_rgba8());
+        }
+        assert!(st2.is_file("painted") && st2.known_names().contains(&"painted".to_string()));
+        // a texture without a file is the built-in one
+        assert_eq!(st2.get("stone").frames[0].albedo_rgba8(), generate_builtin("stone").albedo_rgba8());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

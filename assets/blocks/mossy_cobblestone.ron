@@ -1,0 +1,8 @@
+(
+    display: "Mossy Cobblestone",
+    category: "Building",
+    kind: Opaque,
+    textures: (
+        all: "mossy_cobblestone",
+    ),
+)

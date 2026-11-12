@@ -105,6 +105,8 @@ pub struct GenPush {
     pub seed: u32,
     pub edit_count: u32,
     pub pad: u32,
+    /// the GPU block table (kinds and rotations for props and prefabs)
+    pub blocks: u64,
 }
 
 #[repr(C)]
@@ -472,6 +474,7 @@ impl WorldGpu {
                 seed,
                 edit_count,
                 pad: 0,
+                blocks: block_table,
         };
         unsafe {
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.generate);

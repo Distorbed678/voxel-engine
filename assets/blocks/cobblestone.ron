@@ -1,0 +1,8 @@
+(
+    display: "Cobblestone",
+    category: "Building",
+    kind: Opaque,
+    textures: (
+        all: "cobblestone",
+    ),
+)

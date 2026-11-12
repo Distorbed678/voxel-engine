@@ -1,0 +1,13 @@
+(
+    display: "Glow Mushroom Cap",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        all: "mushroom_cap_glow",
+    ),
+    emission: 150,
+    light: (
+        color: (90, 200, 255),
+        level: 12,
+    ),
+)

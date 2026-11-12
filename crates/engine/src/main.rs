@@ -1,5 +1,7 @@
 mod atmosphere;
 mod bench;
+mod block_editor;
+mod blockgpu;
 mod blocks;
 mod bloom;
 mod camera;
@@ -10,6 +12,7 @@ mod light;
 mod renderer;
 mod shaders;
 mod taa;
+mod texture_editor;
 mod textures;
 mod ui;
 mod node_editor;
@@ -139,6 +142,7 @@ fn parse_args() -> Options {
             "--worldgen" => o.worldgen_dir = Some(next(&mut i).into()),
             "--benchmark" => o.benchmark = true,
             "--world" => o.world = Some(next(&mut i).into()),
+            "--blocks" => o.blocks_dir = Some(next(&mut i).into()),
             "--script" => {
                 o.script = Some(next(&mut i).into());
                 o.headless = true;
@@ -152,18 +156,22 @@ fn parse_args() -> Options {
 
 /// Write every block texture as `<dir>/<name>.png` plus an atlas preview (texture pack template).
 fn export_textures(dir: &str) -> Result<()> {
-    let reg = blocks::BlockRegistry::new();
+    let mut reg = blocks::BlockRegistry::load(std::path::Path::new("assets/blocks"), std::path::Path::new("assets/textures"))?;
     std::fs::create_dir_all(dir)?;
-    let n = reg.textures.len();
+    let names: Vec<String> = reg.textures.iter().map(|s| s.name.clone()).collect();
+    let n = names.len();
     let cols = 12usize;
     let rows = n.div_ceil(cols);
     let t = textures::TEX;
     let mut atlas = image::RgbaImage::new((cols * t) as u32, (rows * t * 2) as u32);
-    for (i, name) in reg.textures.iter().enumerate() {
-        let tex = textures::generate(name);
-        let albedo = tex.albedo_rgba8();
-        let normal = tex.normal_rgba8();
-        image::save_buffer(format!("{dir}/{name}.png"), &albedo, t as u32, t as u32, image::ColorType::Rgba8)?;
+    for (i, name) in names.iter().enumerate() {
+        let asset = reg.store.get(name).clone();
+        let mut strip = Vec::new();
+        for f in &asset.frames {
+            strip.extend(f.albedo_rgba8());
+        }
+        image::save_buffer(format!("{dir}/{name}.png"), &strip, t as u32, (t * asset.frames.len()) as u32, image::ColorType::Rgba8)?;
+        let (albedo, normal) = (asset.frames[0].albedo_rgba8(), asset.frames[0].normal_rgba8());
         let (cx, cy) = ((i % cols) * t, (i / cols) * t * 2);
         for y in 0..t {
             for x in 0..t {
@@ -184,6 +192,12 @@ fn main() -> Result<()> {
         let dir = std::env::args().nth(pos + 1).unwrap_or_else(|| "assets/worldgen".into());
         worldgen::defaults::default_project().save_dir(std::path::Path::new(&dir))?;
         println!("wrote the built-in world generator to {dir}");
+        return Ok(());
+    }
+    if let Some(pos) = std::env::args().position(|a| a == "--export-block-defaults") {
+        let dir = std::env::args().nth(pos + 1).unwrap_or_else(|| "assets/blocks".into());
+        let n = blocks::BlockRegistry::export_builtin(std::path::Path::new(&dir))?;
+        println!("wrote {n} built-in blocks to {dir}");
         return Ok(());
     }
     if let Some(pos) = std::env::args().position(|a| a == "--export-textures") {

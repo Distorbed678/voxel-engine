@@ -1,0 +1,8 @@
+(
+    display: "Mud",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "mud",
+    ),
+)

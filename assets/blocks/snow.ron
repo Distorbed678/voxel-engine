@@ -1,0 +1,8 @@
+(
+    display: "Snow",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "snow",
+    ),
+)

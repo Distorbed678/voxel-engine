@@ -70,6 +70,8 @@ pub struct UiState {
     world_name: String,
     toasts: Vec<(String, Instant)>,
     block_filter: String,
+    /// open the block editor on this block
+    pub edit_block: Option<u16>,
 }
 
 impl UiState {
@@ -116,6 +118,7 @@ impl UiState {
             world_name: String::new(),
             toasts: Vec::new(),
             block_filter: String::new(),
+            edit_block: None,
         }
     }
 
@@ -165,6 +168,8 @@ pub struct UiCtx<'a> {
     pub busy_slots: usize,
     pub vsync: Option<bool>,
     pub node_editor_open: &'a mut bool,
+    pub block_editor_open: &'a mut bool,
+    pub texture_editor_open: &'a mut bool,
     pub tools_open: &'a mut bool,
     pub bench_report: Option<String>,
     pub probes: &'a crate::probe::Probes,
@@ -296,6 +301,8 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
         });
         ui.menu("View", || {
             ui.checkbox("World Generator (node editor)", c.node_editor_open);
+            ui.checkbox("Block Editor", c.block_editor_open);
+            ui.checkbox("Texture Editor", c.texture_editor_open);
             ui.checkbox("Tools", c.tools_open);
             ui.checkbox("Stats", &mut c.state.show_stats);
             ui.checkbox("World", &mut c.state.show_world);
@@ -354,7 +361,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             }
             if let Some(p) = c.pick {
                 ui.separator();
-                let name = c.blocks.get(p.block).display;
+                let name = &c.blocks.get(p.block).display;
                 ui.text(format!("looking at {} @ {} {} {}", name, p.block_pos.x, p.block_pos.y, p.block_pos.z));
                 ui.text(format!("normal {:?} lod {} dist {:.1}", p.normal.to_array(), p.lod, p.distance));
             }
@@ -508,15 +515,20 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
         ui.window("Blocks").size([300.0, 300.0], Condition::FirstUseEver).position([ds[0] - 310.0, 330.0], Condition::FirstUseEver).opened(&mut open).build(|| {
             let sel = c.blocks.get(c.state.selected_block);
             ui.text(format!("Selected: {}", sel.display));
+            ui.same_line();
+            if ui.small_button("Edit...") {
+                c.state.edit_block = Some(crate::blocks::block_id(c.state.selected_block));
+            }
             ui.input_text("Filter", &mut c.state.block_filter).build();
             let filter = c.state.block_filter.to_lowercase();
             let mut cat = "";
-            for (i, b) in c.blocks.blocks.iter().enumerate().skip(1) {
+            for (i, b) in c.blocks.live() {
+                let i = i as usize;
                 if !filter.is_empty() && !b.display.to_lowercase().contains(&filter) {
                     continue;
                 }
                 if b.category != cat {
-                    cat = b.category;
+                    cat = &b.category;
                     ui.separator();
                     ui.text_colored([0.7, 0.7, 0.7, 1.0], cat);
                 }

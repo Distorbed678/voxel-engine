@@ -1,0 +1,10 @@
+(
+    display: "Birch Leaves",
+    category: "Trees",
+    kind: Cutout,
+    textures: (
+        all: "birch_leaves",
+    ),
+    tint: Foliage,
+    attenuation: 1,
+)

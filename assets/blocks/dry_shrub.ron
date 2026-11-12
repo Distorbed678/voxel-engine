@@ -1,0 +1,10 @@
+(
+    display: "Dry Shrub",
+    category: "Plants",
+    kind: Model,
+    model: TallCross,
+    textures: (
+        all: "dry_shrub",
+    ),
+    washes_away: true,
+)

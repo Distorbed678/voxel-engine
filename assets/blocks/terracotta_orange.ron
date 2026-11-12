@@ -1,0 +1,8 @@
+(
+    display: "Orange Terracotta",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "terracotta_orange",
+    ),
+)

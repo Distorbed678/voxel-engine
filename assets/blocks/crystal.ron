@@ -1,0 +1,13 @@
+(
+    display: "Crystal",
+    category: "Ores",
+    kind: Opaque,
+    textures: (
+        all: "crystal",
+    ),
+    emission: 90,
+    light: (
+        color: (170, 120, 255),
+        level: 9,
+    ),
+)

@@ -1,0 +1,8 @@
+(
+    display: "Sandstone",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "sandstone",
+    ),
+)

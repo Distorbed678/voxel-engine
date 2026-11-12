@@ -1,0 +1,8 @@
+(
+    display: "Sand",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "sand",
+    ),
+)

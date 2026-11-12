@@ -1,0 +1,9 @@
+(
+    display: "Ice",
+    category: "Terrain",
+    kind: Transparent,
+    textures: (
+        all: "ice",
+    ),
+    attenuation: 1,
+)

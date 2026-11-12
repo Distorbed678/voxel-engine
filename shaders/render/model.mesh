@@ -46,7 +46,7 @@ void main() {
         uint nmask = (m.x >> 15) & 63u;
         uint block = m.y & 0xFFFFu;
         uint biome = (m.y >> 24) & 127u;
-        uint model = (pc.blocks.b[BLOCK_ID(block)].flags >> 16) & 0xFFFFu;
+        uint model = (pc.blocks.b[BLOCK_ID(block)].flags >> 16) & 0xFFu;
         ivec3 wp = rec.origin + lp * int(scale);
         uint seed = hash_u32(uint(wp.x) * 73856093u ^ uint(wp.y) * 19349663u ^ uint(wp.z) * 83492791u);
         ModelQuad q;

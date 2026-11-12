@@ -1,0 +1,8 @@
+(
+    display: "Obsidian",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "obsidian",
+    ),
+)

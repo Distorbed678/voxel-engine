@@ -1,0 +1,8 @@
+(
+    display: "Deepslate",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "deepslate",
+    ),
+)

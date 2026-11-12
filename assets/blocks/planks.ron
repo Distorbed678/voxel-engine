@@ -1,0 +1,8 @@
+(
+    display: "Oak Planks",
+    category: "Building",
+    kind: Opaque,
+    textures: (
+        all: "planks",
+    ),
+)

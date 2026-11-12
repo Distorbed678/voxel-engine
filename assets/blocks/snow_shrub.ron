@@ -1,0 +1,10 @@
+(
+    display: "Frosted Shrub",
+    category: "Plants",
+    kind: Model,
+    model: Cross,
+    textures: (
+        all: "snow_shrub",
+    ),
+    washes_away: true,
+)

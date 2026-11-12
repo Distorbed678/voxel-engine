@@ -1,0 +1,11 @@
+(
+    display: "Charred Log",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "charred_log_top",
+        bottom: "charred_log_top",
+        side: "charred_log",
+    ),
+    rotation: Column,
+)

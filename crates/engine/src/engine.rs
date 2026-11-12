@@ -72,6 +72,8 @@ pub struct Options {
     pub script: Option<PathBuf>,
     /// World file to open (or to create on the first save if it doesn't exist).
     pub world: Option<PathBuf>,
+    /// Block definitions folder (default `assets/blocks`).
+    pub blocks_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -130,6 +132,12 @@ pub struct Engine {
     pub wgpu: WorldGpu,
     pub world: World,
     pub blocks: BlockRegistry,
+    /// Block table, texture arrays and the UI atlas.
+    pub blockgpu: crate::blockgpu::BlockGpu,
+    /// The UI atlas as an ImGui texture.
+    atlas_tex: Option<dear_imgui_rs::TextureId>,
+    pub block_ui: crate::block_editor::BlockEditorUi,
+    pub tex_ui: crate::texture_editor::TextureEditorUi,
     gen_pipeline: PipelineHandle,
     props_pipeline: PipelineHandle,
     probe_pipeline: PipelineHandle,
@@ -211,14 +219,10 @@ impl Engine {
         let ctx = VkContext::new(ContextDesc { display, validation: opts.validation, app_name: "voxel-engine" })?;
 
         let shader_root = find_shader_root()?;
-        let blocks = BlockRegistry::new();
-        let gen_dir = shader_root.join("generated");
-        std::fs::create_dir_all(&gen_dir)?;
-        let header = blocks.glsl_header();
-        let header_path = gen_dir.join("blocks.glsl");
-        if std::fs::read_to_string(&header_path).ok().as_deref() != Some(header.as_str()) {
-            std::fs::write(&header_path, header)?;
-        }
+        let blocks_dir = opts.blocks_dir.clone().unwrap_or_else(|| PathBuf::from("assets/blocks"));
+        let mut blocks = BlockRegistry::load(&blocks_dir, std::path::Path::new("assets/textures"))?;
+        // scripted runs never write block or texture files
+        blocks.autosave = opts.script.is_none();
 
         let mut bindless = Bindless::new(&ctx)?;
         let layout = vkcore::pipeline::create_global_layout(&ctx, &[bindless.layout])?;
@@ -259,15 +263,16 @@ impl Engine {
             None
         };
 
-        let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, &blocks, extent, out_format, FIF)?;
+        let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, extent, out_format, FIF)?;
+        let blockgpu = crate::blockgpu::BlockGpu::new(&ctx, &mut bindless, &mut blocks, FIF)?;
         let light = crate::light::LightGpu::new(&ctx, &mut pm, &mut bindless)?;
         let taa = crate::taa::Taa::new(&ctx, &mut pm, &mut bindless, extent)?;
         let particles = crate::particles::Particles::new(&ctx, &mut pm)?;
         let bloom = crate::bloom::Bloom::new(&ctx, &mut pm, &mut bindless, extent)?;
-        let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
+        let block_ids = blocks.id_map();
         let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
         prefabs.upload(&ctx)?;
-        let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, prefabs.compile_info(), opts.worldgen_dir.clone().unwrap_or_else(|| PathBuf::from("assets/worldgen")))?;
+        let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, blocks.glsl_header(), prefabs.compile_info(), opts.worldgen_dir.clone().unwrap_or_else(|| PathBuf::from("assets/worldgen")))?;
         // Build the generator synchronously at startup (fall back to the built-in one on error).
         let (terrain_src, props_src, probe_src) = wg.sources();
         let t0 = Instant::now();
@@ -381,8 +386,12 @@ impl Engine {
             dear_imgui_ash::DynamicRendering { color_attachment_format: out_format, depth_attachment_format: None },
         )
         .with_options(dear_imgui_ash::Options { in_flight_frames: FIF, ..Default::default() });
-        let imgui_renderer =
+        let mut imgui_renderer =
             unsafe { dear_imgui_ash::AshRenderer::with_default_allocator(&ctx.instance, ctx.physical_device, config, &mut ictx)? };
+        // the block texture atlas for thumbnails and previews in the editors
+        let atlas_tex = unsafe { imgui_renderer.register_external_texture(blockgpu.atlas.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) }
+            .map_err(|e| log::warn!("could not register the block atlas with ImGui: {e}"))
+            .ok();
 
         let mut camera = Camera::default();
         if let Some(p) = opts.cam_pos {
@@ -427,6 +436,10 @@ impl Engine {
             wgpu,
             world,
             blocks,
+            blockgpu,
+            atlas_tex,
+            block_ui: crate::block_editor::BlockEditorUi::new(),
+            tex_ui: crate::texture_editor::TextureEditorUi::new(),
             gen_pipeline,
             props_pipeline,
             probe_pipeline,
@@ -677,6 +690,10 @@ impl Engine {
                 None => self.ui.show_worlds = true,
             }
         }
+        // Ctrl+Z/Y over the texture canvas undo painting (the editor handles them)
+        if self.tex_ui.hovered && self.tex_ui.open {
+            return;
+        }
         let inp = &self.input;
         if inp.ctrl() && inp.pressed(KeyCode::KeyZ)
             && let Some((label, touched)) = self.world.overlay.undo() {
@@ -697,6 +714,59 @@ impl Engine {
             return;
         }
         self.tools.handle_input(&self.input, self.dt, self.fly_mode, self.pick, self.camera.forward(), &mut self.world, &mut self.ui, &self.blocks);
+    }
+
+    /// Apply block and texture edits (block editor, texture editor, scripts): GPU table, texture
+    /// layers, the generator's block header, and regeneration where the world changes.
+    fn sync_blocks(&mut self, slot: usize) -> Result<()> {
+        if let Some(Err(e)) = self.blocks.autosave_tick() {
+            self.ui.toast(format!("Saving blocks failed: {e:#}"));
+        }
+        let ch = self.blocks.take_changes();
+        if !ch.any() {
+            return Ok(());
+        }
+        if ch.layout {
+            self.blockgpu.relayout(&self.ctx, &mut self.bindless, &mut self.blocks)?;
+            if std::mem::take(&mut self.blockgpu.atlas_replaced)
+                && let (Some(id), Some(r)) = (self.atlas_tex, self.imgui.renderer.as_mut())
+            {
+                // SAFETY: the new atlas view lives until the next replacement or shutdown;
+                // this waits for the GPU before swapping the descriptor
+                let _ = unsafe { r.update_external_texture(id, self.blockgpu.atlas.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) };
+            }
+        } else if !ch.layers.is_empty() {
+            let layers = ch.layers.iter().filter_map(|&l| self.blocks.layer_image(l).map(|t| (l, t))).collect();
+            self.blockgpu.queue_layers(layers);
+        }
+        if ch.table || ch.layout {
+            self.blockgpu.set_table(self.blocks.gpu_table());
+            // this frame records with the new table too
+            self.blockgpu.begin_frame(slot);
+        }
+        for &id in &ch.deleted {
+            // blocks of a deleted kind turn into air
+            let mut n = 0;
+            for c in self.world.overlay.chunks.values_mut() {
+                for v in c.values_mut() {
+                    if crate::blocks::block_id(*v) == id {
+                        *v = 0;
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                self.world.overlay.revision += 1;
+            }
+            if crate::blocks::block_id(self.ui.selected_block) == id {
+                self.ui.selected_block = self.blocks.id("stone");
+            }
+        }
+        self.wg.set_blocks(self.blocks.id_map(), self.blocks.glsl_header());
+        if ch.remesh || !ch.deleted.is_empty() {
+            self.world.invalidate_all();
+        }
+        Ok(())
     }
 
     /// New / changed prefabs: re-upload and recompile the generator so Prefab nodes see them.
@@ -888,6 +958,9 @@ impl Engine {
             self.probes.read(slot);
             self.apply_environment();
         }
+        // this slot's previous frame is done: its block table copy can be rewritten
+        self.blockgpu.begin_frame(slot);
+        self.renderer.block_table_addr = self.blockgpu.table_address(slot);
         let completed = self.timeline.value(&self.ctx);
         self.profiler.begin_frame(&self.ctx, slot);
         for (name, ms) in &self.profiler.last {
@@ -1029,6 +1102,7 @@ impl Engine {
         // ---- UI ----
         let actions = self.build_ui()?;
         self.apply_ui_actions(actions, value)?;
+        self.sync_blocks(slot)?;
 
         // ---- acquire ----
         let mut image_index = 0u32;
@@ -1066,6 +1140,8 @@ impl Engine {
         let copies = std::mem::take(&mut self.world.copies);
         let updates = std::mem::take(&mut self.world.record_updates);
         self.wgpu.record_uploads(&self.ctx, cb, slot, value, &copies, &updates);
+        // block texture layers changed by the editors
+        self.blockgpu.record_uploads(&self.ctx, cb, slot);
 
         // light volume: images ready before the batch fills them
         self.light.record_init(&self.ctx, cb);
@@ -1115,7 +1191,7 @@ impl Engine {
                     value,
                     jobs,
                     &pipes,
-                    self.renderer.block_table.address,
+                    self.blockgpu.table_address(slot),
                     self.seed,
                     &mut self.profiler,
                     profiler_slot,
@@ -1137,7 +1213,7 @@ impl Engine {
         if let Some(origin) = self.world.light.origin_block()
             && self.ui.block_light
         {
-            self.light.record(&self.ctx, cb, &self.pm, self.bindless.set, origin, self.world.coarse_light.origin_block(), self.renderer.block_table.address, &mut self.profiler, profiler_slot);
+            self.light.record(&self.ctx, cb, &self.pm, self.bindless.set, origin, self.world.coarse_light.origin_block(), self.blockgpu.table_address(slot), &mut self.profiler, profiler_slot);
         }
 
         // ambient particles and weather
@@ -1147,7 +1223,7 @@ impl Engine {
             let light_blocks = if self.ui.block_light && self.light.ready() { self.light.blocks_img } else { u32::MAX };
             let push = self.particles.push(
                 self.renderer.per_slot[slot].frame_buf.address,
-                self.renderer.block_table.address,
+                self.blockgpu.table_address(slot),
                 light_blocks,
                 wind,
                 self.taa_frame as u32,
@@ -1180,6 +1256,7 @@ impl Engine {
                 seed: self.seed,
                 edit_count: 0,
                 pad: 0,
+                blocks: self.blockgpu.table_address(slot),
             };
             unsafe {
                 self.ctx.device.cmd_push_constants(cb, self.pm.layout, vk::ShaderStageFlags::ALL, 0, bytemuck::bytes_of(&push));
@@ -1525,8 +1602,8 @@ impl Engine {
             debug_mode: self.ui.debug_view,
             flags,
             pick_pixel: pick_px.0.min(0xFFFF) | (pick_px.1.min(0xFFFF) << 16),
-            block_tex_albedo: self.renderer.albedo_tex,
-            block_tex_normal: self.renderer.normal_tex,
+            block_tex_albedo: self.blockgpu.albedo_tex,
+            block_tex_normal: self.blockgpu.normal_tex,
             // what the tonemap pass reads: the TAA resolve when enabled
             hdr_tex: self.scene_output(),
             depth_tex: self.renderer.depth_tex,
@@ -1661,9 +1738,17 @@ impl Engine {
         }
         self.node_ui.prepare(&self.imgui.ctx, &self.wg);
         let ui = self.imgui.ctx.frame();
+        let mut block_act = crate::block_editor::BlockEditorActions::default();
         if self.ui.show_ui {
             self.node_ui.draw(ui, &mut self.wg, &self.blocks);
             self.tools.draw_ui(ui, &mut self.world, &self.blocks, &mut self.ui, self.pick);
+            if let Some(id) = self.ui.edit_block.take() {
+                self.block_ui.open = true;
+                self.block_ui.select(&self.blocks, id);
+            }
+            let atlas = self.atlas_tex.map(|id| self.blockgpu.atlas_ref(id));
+            block_act = self.block_ui.draw(ui, &mut self.blocks, atlas, &mut self.tex_ui, self.anim_time);
+            self.tex_ui.draw(ui, &mut self.blocks, self.anim_time);
         }
         self.tools.draw_overlay(ui, &self.camera, self.pick);
         let unsaved = self.world.overlay.revision != self.saved_revision;
@@ -1690,6 +1775,8 @@ impl Engine {
                 zone_names: &self.wg.compiled.zones,
                 vsync: self.swapchain.as_ref().map(|s| s.vsync),
                 node_editor_open: &mut self.node_ui.open,
+                block_editor_open: &mut self.block_ui.open,
+                texture_editor_open: &mut self.tex_ui.open,
                 tools_open: &mut self.tools.show_tools,
                 bench_report: self.bench.as_ref().and_then(|b| b.report.clone()),
                 world_path: self.world_path.as_deref(),
@@ -1699,6 +1786,18 @@ impl Engine {
         );
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
             p.prepare_render(ui, w)?;
+        }
+        if let Some(id) = block_act.select {
+            self.ui.selected_block = id;
+            self.tools.kind = crate::tools::ToolKind::Block;
+        }
+        if let Some(id) = block_act.place {
+            // a few blocks in front of the camera (the mouse is over the editor, not the world)
+            let f = self.camera.forward();
+            let at = (self.camera.pos + f.as_dvec3() * 4.0).floor().as_ivec3();
+            let v = self.blocks.oriented(id, IVec3::Y, f);
+            let touched = self.world.overlay.apply("Place", &[(at, v)]);
+            self.world.invalidate_blocks(&touched);
         }
         Ok(actions)
     }
@@ -1814,6 +1913,7 @@ impl Drop for Engine {
         self.particles.destroy(&self.ctx);
         self.bloom.destroy(&self.ctx, &mut self.bindless);
         self.wg.destroy(&self.ctx);
+        self.blockgpu.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);
         if let Some(mut o) = self.offscreen.take() {
             o.destroy(&self.ctx);

@@ -1,0 +1,9 @@
+(
+    display: "Plank Slab",
+    category: "Building",
+    kind: Model,
+    model: Slab,
+    textures: (
+        all: "planks",
+    ),
+)

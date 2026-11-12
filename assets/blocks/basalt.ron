@@ -1,0 +1,11 @@
+(
+    display: "Basalt",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        top: "basalt_top",
+        bottom: "basalt_top",
+        side: "basalt_side",
+    ),
+    rotation: Column,
+)

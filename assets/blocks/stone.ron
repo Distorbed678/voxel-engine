@@ -1,0 +1,8 @@
+(
+    display: "Stone",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "stone",
+    ),
+)

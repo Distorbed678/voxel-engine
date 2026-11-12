@@ -1,0 +1,13 @@
+(
+    display: "Lava",
+    category: "Fluids",
+    kind: Opaque,
+    textures: (
+        all: "lava",
+    ),
+    emission: 220,
+    light: (
+        color: (255, 140, 50),
+        level: 15,
+    ),
+)

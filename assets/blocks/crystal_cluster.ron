@@ -1,0 +1,15 @@
+(
+    display: "Crystal Cluster",
+    category: "Plants",
+    kind: Model,
+    model: TallCross,
+    textures: (
+        all: "crystal",
+    ),
+    emission: 110,
+    light: (
+        color: (170, 120, 255),
+        level: 10,
+    ),
+    washes_away: true,
+)

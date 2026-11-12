@@ -1,0 +1,11 @@
+(
+    display: "Spruce Log",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "spruce_log_top",
+        bottom: "spruce_log_top",
+        side: "spruce_log",
+    ),
+    rotation: Column,
+)

@@ -427,7 +427,7 @@ impl Tools {
                             self.sel_a = None;
                             self.sel_b = None;
                         }
-                        let names: Vec<&str> = blocks.blocks.iter().map(|b| b.display).collect();
+                        let names: Vec<&str> = blocks.blocks.iter().map(|b| if b.deleted { "(deleted)" } else { b.display.as_str() }).collect();
                         let mut from = self.replace_from as usize;
                         if ui.combo_simple_string("Replace from", &mut from, &names) {
                             self.replace_from = from as u16;

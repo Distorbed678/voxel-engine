@@ -1,0 +1,8 @@
+(
+    display: "Dirt",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "dirt",
+    ),
+)

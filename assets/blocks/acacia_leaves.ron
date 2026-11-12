@@ -1,0 +1,9 @@
+(
+    display: "Acacia Leaves",
+    category: "Trees",
+    kind: Cutout,
+    textures: (
+        all: "acacia_leaves",
+    ),
+    attenuation: 1,
+)

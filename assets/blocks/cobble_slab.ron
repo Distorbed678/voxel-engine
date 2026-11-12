@@ -1,0 +1,9 @@
+(
+    display: "Cobblestone Slab",
+    category: "Building",
+    kind: Model,
+    model: Slab,
+    textures: (
+        all: "cobblestone",
+    ),
+)

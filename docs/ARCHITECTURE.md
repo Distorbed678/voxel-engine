@@ -36,6 +36,51 @@ pipeline layout: a bindless image set plus 256 bytes of push constants.
 - Voxels are transient. They only exist between generation and meshing inside a batch, so
   only meshes are resident: 8-byte quads in a 512 MiB pool with a CPU range allocator.
 
+## Blocks and textures as data
+
+- **Block files**: `assets/blocks/NAME.ron`, one per block; the file name is the block name
+  (`crates/engine/src/blocks.rs`). A file holds the display name, category, kind (opaque,
+  cutout, transparent, model), model, face textures (`all`, `side`, `top`/`bottom`, single
+  faces), biome tint, glow, light colour and reach, light absorption, rotation behaviour (none,
+  column, facing) and fluid behaviour (washed away, fluid). Optional fields are left out when
+  they have their default. `--export-block-defaults DIR` writes the built-in list, which is also
+  what an empty folder gets.
+- **Ids**: `air` is always 0. `_order.ron` lists the names in id order, so ids stay the same
+  between sessions; files it doesn't list come after it, by name. Everything persistent (graphs,
+  prefabs, world files) stores names. Within a session ids never move: a deleted block leaves a
+  tombstone that acts as air, and blocks of that kind in the edit overlay turn into air. The
+  core blocks the generator falls back to (stone, dirt, grass, snow, gravel, water, lava, ice)
+  can be edited but not deleted.
+- **Textures** (`textures.rs`): a `TextureStore` loads `assets/textures/NAME.png` if it exists
+  (32 pixels wide, animation frames stacked vertically, the speed in `NAME.ron`), otherwise
+  generates the built-in procedural texture. The height map of a PNG or a painted texture comes
+  from its brightness. The built-in lava is animated: 16 frames whose noise and crust drift a
+  whole texture width over the loop, so it repeats seamlessly.
+- **Layers**: each texture some block uses gets `frames` consecutive layers of the albedo and
+  normal arrays. `BlockInfo` holds the first layer of each face plus an animation word per face
+  (frames − 1 in 6 bits, frames per second × 8 in 10 bits); `face_layer` adds
+  `uint(time * fps) % frames` with the animation clock, so scripts get deterministic frames.
+- **Runtime changes** (block editor, texture editor, scripts) go through `BlockRegistry`
+  (`create`, `update`, `delete`, `set_texture`), which records `BlockChanges`; the engine applies
+  them once per frame (`sync_blocks`):
+  - the GPU block table has one copy per frame in flight, rewritten when that slot's previous
+    frame has finished, so dragging a slider never waits for the GPU;
+  - changed texture layers are uploaded from a per-slot staging buffer at the start of the
+    frame's command buffer. The arrays have spare capacity (steps of 128 layers); only growing
+    them waits for the GPU and rebuilds the images (bindless slots and the ImGui atlas are
+    pointed at the new ones);
+  - edits that change meshes or light (kind, model, light, fluid) regenerate the world;
+    textures, tint and glow are read at draw time and need nothing else.
+- **The generator** compiles block names to ids, and reads kinds and rotations (props and
+  prefabs) from the GPU block table through its push constants. Only the ids of the core blocks
+  are compiled in (`B_STONE` etc.), and they can't change within a session, so block edits never
+  rebuild the generator; only a graph that names a new block recompiles, like any graph edit.
+- **Editors** (`block_editor.rs`, `texture_editor.rs`): ImGui windows. A UI atlas (the first
+  mip of every layer, UNORM so ImGui shows the sRGB bytes as they are) is registered with ImGui
+  for thumbnails and the block preview; the texture editor's preview draws its own pixels, so it
+  also works for textures no block uses yet. Edits autosave 2 s after the last change (scripted
+  runs never save).
+
 ## Block values
 
 - A voxel is a u16: the block id in the low 12 bits and a state in the high 4 (`BLOCK_ID` /

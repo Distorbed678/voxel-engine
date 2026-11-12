@@ -77,6 +77,9 @@ pub struct WorldgenSystem {
     pub last_build_ms: f32,
     pub biome_table: Buffer,
     pub block_ids: HashMap<String, u32>,
+    /// Block defines and tables (`BlockRegistry::glsl_header`), put in front of the compiled
+    /// graph code, so a block change rebuilds the generator like a graph edit.
+    pub blocks_header: String,
     pub prefab_info: HashMap<String, (u32, [i32; 3])>,
     pub prefab_names: Vec<String>,
     pub unsaved: bool,
@@ -91,6 +94,7 @@ impl WorldgenSystem {
         shader_root: &Path,
         layout: vk::PipelineLayout,
         block_ids: HashMap<String, u32>,
+        blocks_header: String,
         prefab_info: HashMap<String, (u32, [i32; 3])>,
         dir: PathBuf,
     ) -> Result<Self> {
@@ -250,6 +254,7 @@ impl WorldgenSystem {
             last_build_ms: 0.0,
             biome_table,
             block_ids,
+            blocks_header,
             prefab_names: {
                 let mut v: Vec<String> = prefab_info.keys().cloned().collect();
                 v.sort();
@@ -265,6 +270,16 @@ impl WorldgenSystem {
         Ok(s)
     }
 
+    /// The block list changed (block editor): recompile with the new ids and header. The shaders
+    /// are rebuilt in the background only if the generated code changed.
+    pub fn set_blocks(&mut self, block_ids: HashMap<String, u32>, header: String) {
+        if block_ids != self.block_ids || header != self.blocks_header {
+            self.block_ids = block_ids;
+            self.blocks_header = header;
+            self.dirty = true;
+        }
+    }
+
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
         self.unsaved = true;
@@ -274,7 +289,8 @@ impl WorldgenSystem {
 
     fn recompile_cpu(&mut self) -> Result<()> {
         let t0 = Instant::now();
-        let c = worldgen::compile(&self.project, &self.block_ids, &self.prefab_info)?;
+        let mut c = worldgen::compile(&self.project, &self.block_ids, &self.prefab_info)?;
+        c.source = format!("{}\n{}", self.blocks_header, c.source);
         self.last_compile_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.compiled = c;
         self.write_biome_table();
@@ -317,9 +333,12 @@ impl WorldgenSystem {
         let mut params_changed = false;
         if self.dirty {
             self.dirty = false;
+            let (old_params, old_source) = (self.compiled.params.clone(), self.compiled.source.clone());
             match self.recompile_cpu() {
                 Ok(()) => {
-                    params_changed = true;
+                    // a recompile that changes nothing (e.g. a new block no graph names yet)
+                    // must not regenerate the world
+                    params_changed = self.compiled.params != old_params || self.compiled.source != old_source;
                     let src = self.compiled.source.clone();
                     let already = self.pending_source.as_ref() == Some(&src) || (self.pending_source.is_none() && self.active_source == src);
                     if !already {

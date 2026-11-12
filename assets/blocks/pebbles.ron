@@ -1,0 +1,10 @@
+(
+    display: "Pebbles",
+    category: "Plants",
+    kind: Model,
+    model: Pebbles,
+    textures: (
+        all: "cobblestone",
+    ),
+    washes_away: true,
+)

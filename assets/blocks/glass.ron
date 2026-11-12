@@ -1,0 +1,8 @@
+(
+    display: "Glass",
+    category: "Building",
+    kind: Transparent,
+    textures: (
+        all: "glass",
+    ),
+)

@@ -1,0 +1,8 @@
+(
+    display: "Moss",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "moss",
+    ),
+)

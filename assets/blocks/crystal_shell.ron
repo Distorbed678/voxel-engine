@@ -1,0 +1,8 @@
+(
+    display: "Crystal Shell",
+    category: "Ores",
+    kind: Opaque,
+    textures: (
+        all: "crystal_shell",
+    ),
+)

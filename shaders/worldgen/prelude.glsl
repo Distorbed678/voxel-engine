@@ -2,7 +2,7 @@
 #include "common.glsl"
 #include "noise.glsl"
 #include "voxel.glsl"
-#include "generated/blocks.glsl"
+// the core block ids (B_STONE, B_WATER, ...) come with the generated code
 
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer EditBuf { uvec2 e[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer ParamBuf { float p[]; };
@@ -21,6 +21,7 @@ layout(push_constant, scalar) uniform GenPC {
     uint seed;
     uint editCount;
     uint pad;
+    BlockTable blocks;   // kinds and rotations (BlockInfo.flags), so block edits never recompile
 } pc;
 
 // Globals set by the main template before calling into generated code.
@@ -31,13 +32,14 @@ float gScale;   // cell size in blocks (1 << gLod)
 // Node parameters are read through this so dragging a slider never recompiles the shader.
 float P(uint i) { return pc.params.p[i]; }
 
-uint block_kind(uint b) { b &= 0xFFFu; return b < NUM_BLOCKS ? BLOCK_KIND[b] : 0u; }
+uint block_kind(uint b) { return pc.blocks.b[b & 0xFFFu].flags & 15u; }
 // a voxel value turned `steps` quarter turns around Y, +X towards +Z (BlockRegistry::rotated_y)
 uint rotate_value(uint v, uint steps) {
     uint id = v & 0xFFFu, st = v >> 12;
-    if (id >= NUM_BLOCKS || st == 0u) return v;
-    if (BLOCK_ROT[id] == 1u && (steps & 1u) == 1u && st <= 2u) st = 3u - st;  // column axis X <-> Z
-    else if (BLOCK_ROT[id] == 2u) st = ((st - 1u + steps) & 3u) + 1u;       // stairs facing
+    uint rot = (pc.blocks.b[id].flags >> 25) & 3u;
+    if (st == 0u) return v;
+    if (rot == 1u && (steps & 1u) == 1u && st <= 2u) st = 3u - st;  // column axis X <-> Z
+    else if (rot == 2u) st = ((st - 1u + steps) & 3u) + 1u;        // stairs facing
     return id | (st << 12);
 }
 

@@ -1,0 +1,15 @@
+(
+    display: "Glow Mushroom",
+    category: "Plants",
+    kind: Model,
+    model: Mushroom,
+    textures: (
+        all: "mushroom_cap_glow",
+    ),
+    emission: 120,
+    light: (
+        color: (90, 200, 255),
+        level: 10,
+    ),
+    washes_away: true,
+)

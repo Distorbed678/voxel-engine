@@ -1,0 +1,8 @@
+(
+    display: "Iron Ore",
+    category: "Ores",
+    kind: Opaque,
+    textures: (
+        all: "iron_ore",
+    ),
+)

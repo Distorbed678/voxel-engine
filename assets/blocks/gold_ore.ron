@@ -1,0 +1,8 @@
+(
+    display: "Gold Ore",
+    category: "Ores",
+    kind: Opaque,
+    textures: (
+        all: "gold_ore",
+    ),
+)

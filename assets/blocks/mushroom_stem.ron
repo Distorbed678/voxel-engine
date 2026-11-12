@@ -1,0 +1,11 @@
+(
+    display: "Mushroom Stem",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "mushroom_stem_top",
+        bottom: "mushroom_stem_top",
+        side: "mushroom_stem",
+    ),
+    rotation: Column,
+)

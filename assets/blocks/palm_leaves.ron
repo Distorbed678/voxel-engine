@@ -1,0 +1,9 @@
+(
+    display: "Palm Leaves",
+    category: "Trees",
+    kind: Cutout,
+    textures: (
+        all: "palm_leaves",
+    ),
+    attenuation: 1,
+)

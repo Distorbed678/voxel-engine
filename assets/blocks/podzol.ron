@@ -1,0 +1,10 @@
+(
+    display: "Podzol",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        top: "podzol_top",
+        bottom: "dirt",
+        side: "podzol_side",
+    ),
+)

@@ -1,0 +1,10 @@
+(
+    display: "Stone Stairs",
+    category: "Building",
+    kind: Model,
+    model: Stairs,
+    textures: (
+        all: "stone_bricks",
+    ),
+    rotation: Facing,
+)

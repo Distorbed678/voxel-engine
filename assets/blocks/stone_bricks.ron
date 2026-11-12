@@ -1,0 +1,8 @@
+(
+    display: "Stone Bricks",
+    category: "Building",
+    kind: Opaque,
+    textures: (
+        all: "stone_bricks",
+    ),
+)

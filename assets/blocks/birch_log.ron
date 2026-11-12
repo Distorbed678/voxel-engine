@@ -1,0 +1,11 @@
+(
+    display: "Birch Log",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "birch_log_top",
+        bottom: "birch_log_top",
+        side: "birch_log",
+    ),
+    rotation: Column,
+)

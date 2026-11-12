@@ -1,0 +1,10 @@
+(
+    display: "Dead Bush",
+    category: "Plants",
+    kind: Model,
+    model: Cross,
+    textures: (
+        all: "dead_bush",
+    ),
+    washes_away: true,
+)

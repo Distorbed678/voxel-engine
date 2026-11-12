@@ -1,0 +1,11 @@
+(
+    display: "Fern",
+    category: "Plants",
+    kind: Model,
+    model: Cross,
+    textures: (
+        all: "fern",
+    ),
+    tint: Grass,
+    washes_away: true,
+)

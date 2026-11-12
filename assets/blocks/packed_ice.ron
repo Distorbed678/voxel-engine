@@ -1,0 +1,8 @@
+(
+    display: "Packed Ice",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "packed_ice",
+    ),
+)

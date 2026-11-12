@@ -1,0 +1,8 @@
+(
+    display: "Coal Ore",
+    category: "Ores",
+    kind: Opaque,
+    textures: (
+        all: "coal_ore",
+    ),
+)

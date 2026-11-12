@@ -7,9 +7,7 @@ use vkcore::pipeline::BlendMode;
 use vkcore::sync::{image_barrier, memory_barrier};
 use vkcore::{Bindless, Buffer, GpuProfiler, Image, VkContext, vk};
 
-use crate::blocks::BlockRegistry;
 use crate::shaders::{GraphicsState, PipelineHandle, PipelineManager, PipelineSource};
-use crate::textures;
 
 pub const HDR_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
@@ -202,11 +200,8 @@ pub struct Renderer {
     pub overdraw: Image,
     pub overdraw_img: u32,
     overdraw_ready: bool,
-    pub albedo: Image,
-    pub normal: Image,
-    pub albedo_tex: u32,
-    pub normal_tex: u32,
-    pub block_table: Buffer,
+    /// The block table this frame's passes read (`BlockGpu::table_address`, set every frame).
+    pub block_table_addr: u64,
     pub per_slot: Vec<FramePerSlot>,
     pub pick: Buffer,
     pub args: Buffer,
@@ -371,86 +366,11 @@ fn create_targets(ctx: &VkContext, extent: vk::Extent2D) -> Result<(Image, Image
     Ok((hdr, depth))
 }
 
-fn upload_texture_array(ctx: &VkContext, name: &str, format: vk::Format, layers: &[Vec<Vec<u8>>]) -> Result<Image> {
-    let mips = layers[0].len() as u32;
-    let n = layers.len() as u32;
-    let size = textures::TEX as u32;
-    let image = Image::new(
-        ctx,
-        &ImageDesc {
-            name,
-            format,
-            extent: vk::Extent3D { width: size, height: size, depth: 1 },
-            mips,
-            layers: n,
-            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            view_type: vk::ImageViewType::TYPE_2D_ARRAY,
-            per_mip_views: false,
-        },
-    )?;
-    let total: usize = layers.iter().map(|l| l.iter().map(|m| m.len()).sum::<usize>()).sum();
-    let mut staging = Buffer::upload(ctx, "tex_staging", total as u64)?;
-    let mut regions = Vec::new();
-    let mut offset = 0u64;
-    for mip in 0..mips as usize {
-        let mip_size = (size >> mip).max(1);
-        let start = offset;
-        for layer in layers {
-            staging.write(offset, &layer[mip]);
-            offset += layer[mip].len() as u64;
-        }
-        regions.push(
-            vk::BufferImageCopy::default()
-                .buffer_offset(start)
-                .image_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: mip as u32,
-                    base_array_layer: 0,
-                    layer_count: n,
-                })
-                .image_extent(vk::Extent3D { width: mip_size, height: mip_size, depth: 1 }),
-        );
-    }
-    let range = image.full_range();
-    ctx.immediate(|cb| {
-        image_barrier(
-            ctx,
-            cb,
-            image.raw,
-            range,
-            vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::PipelineStageFlags2::NONE,
-            vk::AccessFlags2::NONE,
-            vk::PipelineStageFlags2::TRANSFER,
-            vk::AccessFlags2::TRANSFER_WRITE,
-        );
-        unsafe {
-            ctx.device.cmd_copy_buffer_to_image(cb, staging.raw, image.raw, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
-        }
-        image_barrier(
-            ctx,
-            cb,
-            image.raw,
-            range,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::PipelineStageFlags2::TRANSFER,
-            vk::AccessFlags2::TRANSFER_WRITE,
-            vk::PipelineStageFlags2::ALL_COMMANDS,
-            vk::AccessFlags2::SHADER_READ,
-        );
-    })?;
-    staging.destroy(ctx);
-    Ok(image)
-}
-
 impl Renderer {
     pub fn new(
         ctx: &VkContext,
         bindless: &mut Bindless,
         pm: &mut PipelineManager,
-        blocks: &BlockRegistry,
         extent: vk::Extent2D,
         output_format: vk::Format,
         frames_in_flight: usize,
@@ -461,25 +381,6 @@ impl Renderer {
         let overdraw_img = bindless.add_storage(ctx, overdraw.view);
         let hdr_tex = bindless.add_sampled(ctx, hdr.view, bindless.samplers.linear_clamp, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let depth_tex = bindless.add_sampled(ctx, depth.view, bindless.samplers.nearest_clamp, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
-
-        // ---- block textures ----
-        let t0 = std::time::Instant::now();
-        let mut albedo_layers = Vec::new();
-        let mut normal_layers = Vec::new();
-        for name in &blocks.textures {
-            let t = textures::generate(name);
-            albedo_layers.push(textures::mip_chain(&t.albedo_rgba8(), true));
-            normal_layers.push(textures::mip_chain(&t.normal_rgba8(), false));
-        }
-        let albedo = upload_texture_array(ctx, "block_albedo", vk::Format::R8G8B8A8_SRGB, &albedo_layers)?;
-        let normal = upload_texture_array(ctx, "block_normal", vk::Format::R8G8B8A8_UNORM, &normal_layers)?;
-        log::info!("generated {} block textures in {:.1} ms", blocks.textures.len(), t0.elapsed().as_secs_f32() * 1000.0);
-        let albedo_tex = bindless.add_sampled(ctx, albedo.view, bindless.samplers.pixel_repeat, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        let normal_tex = bindless.add_sampled(ctx, normal.view, bindless.samplers.pixel_repeat, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-        let table = blocks.gpu_table();
-        let mut block_table = Buffer::upload(ctx, "block_table", std::mem::size_of_val(table.as_slice()) as u64)?;
-        block_table.write(0, &table);
 
         let per_slot = (0..frames_in_flight)
             .map(|i| {
@@ -534,11 +435,7 @@ impl Renderer {
             overdraw,
             overdraw_img,
             overdraw_ready: false,
-            albedo,
-            normal,
-            albedo_tex,
-            normal_tex,
-            block_table,
+            block_table_addr: 0,
             per_slot,
             pick: Buffer::gpu(ctx, "pick", 16)?,
             args: Buffer::gpu(ctx, "draw_args", (ARG_WORDS * 4) as u64)?,
@@ -946,7 +843,7 @@ impl Renderer {
             .layer_count(1)
             .color_attachments(&color_att)
             .depth_attachment(&depth_att);
-        let (block_table, pick) = (self.block_table.address, self.pick.address);
+        let (block_table, pick) = (self.block_table_addr, self.pick.address);
         let terrain_push = |draws: u64| TerrainPush {
             frame: frame_addr,
             records: records.address,
@@ -1228,7 +1125,7 @@ impl Renderer {
                     records: records.address,
                     draws: self.shadow_draws_addr(c),
                     quads: quads.address,
-                    blocks: self.block_table.address,
+                    blocks: self.block_table_addr,
                     pick: self.pick.address,
                     biomes,
                     flags: c as u32,
@@ -1287,9 +1184,6 @@ impl Renderer {
         self.hdr.destroy(ctx);
         self.depth.destroy(ctx);
         self.overdraw.destroy(ctx);
-        self.albedo.destroy(ctx);
-        self.normal.destroy(ctx);
-        self.block_table.destroy(ctx);
         for s in &mut self.per_slot {
             s.frame_buf.destroy(ctx);
             s.pick_readback.destroy(ctx);

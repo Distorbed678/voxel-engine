@@ -1,0 +1,10 @@
+(
+    display: "Red Mushroom",
+    category: "Plants",
+    kind: Model,
+    model: Mushroom,
+    textures: (
+        all: "mushroom_cap_red",
+    ),
+    washes_away: true,
+)

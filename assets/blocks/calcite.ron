@@ -1,0 +1,8 @@
+(
+    display: "Calcite",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "calcite",
+    ),
+)

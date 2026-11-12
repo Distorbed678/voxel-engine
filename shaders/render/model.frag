@@ -22,7 +22,7 @@ void main() {
     bool twoSided = (pData.y & 256u) != 0u;
     vec3 N = normalize(unpack_normal(pData.z));
     if (twoSided && !gl_FrontFacing) N = -N;
-    uint layer = face_layer(pc.blocks, block, texDir);
+    uint layer = face_layer(pc.blocks, block, texDir, f.time);
     vec4 albedo = texture(gTex2DArray[nonuniformEXT(f.blockTexAlbedo)], vec3(vUV, float(layer)));
     if (albedo.a < 0.5) discard;
 

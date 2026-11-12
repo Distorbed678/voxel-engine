@@ -42,6 +42,15 @@
 //! | `expect_clipboard SX SY SZ` / `expect_selection X1 Y1 Z1 X2 Y2 Z2` | tool state |
 //! | `expect_image GOLDEN [TOL]` | compare this frame against a reference PNG (created if missing, `UPDATE_GOLDEN=1` rewrites) |
 //! | `check_apron CX CY CZ` / `check_apron ~DX ~DY ~DZ` | (debugging) compare a LOD0 chunk's generated apron cells with its neighbours' blocks |
+//! | `block_new NAME [FROM]` / `block_delete NAME` | create a block (a copy of FROM) / delete one (session only: scripts never save blocks) |
+//! | `block_set NAME PROPERTY VALUE...` | `kind opaque\|cutout\|transparent\|model`, `model cross\|tall_cross\|slab\|stairs\|lantern\|pebbles\|mushroom`, `texture all\|top\|bottom\|side\|east\|west\|south\|north TEX`, `tint none\|grass\|foliage\|water`, `emission N`, `light R G B REACH`, `absorb N`, `rotation none\|column\|facing`, `fluid on\|off`, `washes on\|off`, `display TEXT` |
+//! | `texture_new NAME [FROM]` / `texture_edit NAME` | create a texture (a copy of FROM, else transparent) / open one in the texture editor |
+//! | `paint TOOL X1 Y1 X2 Y2 RRGGBB[AA]` | paint the open texture: `pencil\|line\|rect\|filled\|fill\|eraser` from texel 1 to texel 2 |
+//! | `texture_frame add\|dup\|delete [COUNT]` / `texture_frame N` / `texture_fps F` | frames of the open texture / select frame N / animation speed |
+//! | `mirror x\|y on\|off` / `paint_tool TOOL` / `paint_color RRGGBB[AA]` | texture editor settings (for painting with the mouse) |
+//! | `texel X Y` / `drag_texel X1 Y1 X2 Y2 FRAMES` | move the mouse over a texel of the texture editor's canvas / drag across it |
+//! | `window block_editor\|texture_editor on\|off` / `edit_block NAME` | show the editors / open a block in the block editor |
+//! | `expect_texel NAME FRAME X Y RRGGBB[AA]` | a texel of a texture as the world has it |
 //! | `log TEXT` | print a line |
 
 use std::path::{Path, PathBuf};
@@ -54,6 +63,7 @@ use winit::keyboard::KeyCode;
 
 use super::{Engine, FIF};
 use crate::probe::{MAP_N, ProbeResult};
+use crate::texture_editor::Tool;
 use crate::tools::{BrushMode, Shape, ToolKind};
 use crate::world::RegionRead;
 
@@ -134,7 +144,70 @@ enum Cmd {
     ExpectImage { golden: PathBuf, tol: f32 },
     /// chunk, relative to the camera's chunk (`~` coordinates)
     CheckApron(IVec3, bool),
+    BlockNew(String, Option<String>),
+    BlockDelete(String),
+    BlockSet(String, String, Vec<String>),
+    TextureNew(String, Option<String>),
+    TextureEdit(String),
+    Paint { tool: Tool, a: (i32, i32), b: (i32, i32), color: [f32; 4] },
+    TextureFrame(String, u32),
+    TextureFps(f32),
+    Mirror(bool, bool),
+    PaintTool(Tool),
+    PaintColor([f32; 4]),
+    Texel(i32, i32),
+    DragTexel((i32, i32), (i32, i32), u32),
+    Window(String, bool),
+    EditBlock(String),
+    ExpectTexel { name: String, frame: usize, x: i32, y: i32, color: [u8; 4] },
     Log(String),
+}
+
+/// The ImGui key of a script key (letters, digits and a few named keys).
+fn imgui_key(code: KeyCode) -> Option<dear_imgui_rs::Key> {
+    use dear_imgui_rs::Key as K;
+    const LETTERS: [K; 26] = [
+        K::A, K::B, K::C, K::D, K::E, K::F, K::G, K::H, K::I, K::J, K::K, K::L, K::M, K::N, K::O, K::P, K::Q, K::R, K::S, K::T, K::U, K::V, K::W,
+        K::X, K::Y, K::Z,
+    ];
+    let name = format!("{code:?}");
+    if let Some(l) = name.strip_prefix("Key")
+        && l.len() == 1
+    {
+        return LETTERS.get((l.as_bytes()[0] - b'A') as usize).copied();
+    }
+    Some(match code {
+        KeyCode::Tab => K::Tab,
+        KeyCode::Escape => K::Escape,
+        KeyCode::Space => K::Space,
+        KeyCode::Enter => K::Enter,
+        KeyCode::Delete => K::Delete,
+        _ => return None,
+    })
+}
+
+fn paint_tool(t: Option<&&str>) -> Result<Tool> {
+    Ok(match t.copied() {
+        Some("pencil") => Tool::Pencil,
+        Some("eraser") => Tool::Eraser,
+        Some("line") => Tool::Line,
+        Some("rect") => Tool::Rect,
+        Some("filled") => Tool::FilledRect,
+        Some("fill") => Tool::Fill,
+        Some("picker") => Tool::Picker,
+        other => bail!("unknown paint tool {other:?}"),
+    })
+}
+
+/// `RRGGBB` or `RRGGBBAA` (hex; `#` starts a comment in scripts)
+fn color8(t: Option<&&str>) -> Result<[u8; 4]> {
+    let h = t.context("missing colour")?.trim_start_matches("0x");
+    let v = u32::from_str_radix(h, 16).map_err(|_| anyhow::anyhow!("bad colour `{h}`"))?;
+    Ok(match h.len() {
+        6 => [(v >> 16) as u8, (v >> 8) as u8, v as u8, 255],
+        8 => [(v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8],
+        _ => bail!("colours are RRGGBB or RRGGBBAA (hex)"),
+    })
 }
 
 /// A command that spans several frames.
@@ -174,6 +247,8 @@ pub struct Script {
     release_mouse: Vec<(MouseButton, u32)>,
     /// Synthetic keys to release: (key, frames left).
     release_keys: Vec<(KeyCode, u32)>,
+    /// Keys sent to ImGui to release next frame (headless runs have no window events).
+    release_imgui: Vec<dear_imgui_rs::Key>,
     pub failures: Vec<String>,
     pub done: bool,
     started: bool,
@@ -201,6 +276,7 @@ impl Script {
             waypoints: Vec::new(),
             release_mouse: Vec::new(),
             release_keys: Vec::new(),
+            release_imgui: Vec::new(),
             failures: Vec::new(),
             done: false,
             started: false,
@@ -408,6 +484,41 @@ fn parse(line: &str) -> Result<Cmd> {
             let t: Vec<&str> = a.iter().map(|t| t.trim_start_matches('~')).map(|t| if t.is_empty() { "0" } else { t }).collect();
             Cmd::CheckApron(ivec(&t, "chunk")?, rel)
         }
+        "block_new" => Cmd::BlockNew(a.first().context("missing name")?.to_string(), a.get(1).map(|s| s.to_string())),
+        "block_delete" => Cmd::BlockDelete(a.first().context("missing name")?.to_string()),
+        "block_set" => Cmd::BlockSet(
+            a.first().context("missing block name")?.to_string(),
+            a.get(1).context("missing property")?.to_string(),
+            a.get(2..).unwrap_or(&[]).iter().map(|s| s.to_string()).collect(),
+        ),
+        "texture_new" => Cmd::TextureNew(a.first().context("missing name")?.to_string(), a.get(1).map(|s| s.to_string())),
+        "texture_edit" => Cmd::TextureEdit(a.first().context("missing name")?.to_string()),
+        "paint" => Cmd::Paint {
+            tool: paint_tool(a.first())?,
+            a: (num(a.get(1), "x1")?, num(a.get(2), "y1")?),
+            b: (num(a.get(3), "x2")?, num(a.get(4), "y2")?),
+            color: color8(a.get(5))?.map(|v| v as f32 / 255.0),
+        },
+        "texture_frame" => Cmd::TextureFrame(a.first().context("missing add/dup/delete/N")?.to_string(), a.get(1).map(|n| n.parse()).transpose()?.unwrap_or(1)),
+        "texture_fps" => Cmd::TextureFps(num(a.first(), "fps")?),
+        "mirror" => match a.first().copied() {
+            Some("x") => Cmd::Mirror(true, on_off(a.get(1))?),
+            Some("y") => Cmd::Mirror(false, on_off(a.get(1))?),
+            other => bail!("expected `mirror x|y on|off`, got {other:?}"),
+        },
+        "paint_tool" => Cmd::PaintTool(paint_tool(a.first())?),
+        "paint_color" => Cmd::PaintColor(color8(a.first())?.map(|v| v as f32 / 255.0)),
+        "texel" => Cmd::Texel(num(a.first(), "x")?, num(a.get(1), "y")?),
+        "drag_texel" => Cmd::DragTexel((num(a.first(), "x1")?, num(a.get(1), "y1")?), (num(a.get(2), "x2")?, num(a.get(3), "y2")?), num(a.get(4), "frames")?),
+        "window" => Cmd::Window(a.first().context("missing window")?.to_string(), on_off(a.get(1))?),
+        "edit_block" => Cmd::EditBlock(a.first().context("missing block name")?.to_string()),
+        "expect_texel" => Cmd::ExpectTexel {
+            name: a.first().context("missing texture")?.to_string(),
+            frame: num(a.get(1), "frame")?,
+            x: num(a.get(2), "x")?,
+            y: num(a.get(3), "y")?,
+            color: color8(a.get(4))?,
+        },
         "log" => Cmd::Log(a.join(" ")),
         other => bail!("unknown command `{other}`"),
     })
@@ -662,6 +773,84 @@ impl Engine {
         None
     }
 
+    /// `block_set NAME PROPERTY VALUE...`
+    fn script_block_set(&mut self, name: &str, key: &str, args: &[String]) -> Result<()> {
+        use crate::blocks::{BlockKind, Model, Rotation, Tint};
+        let id = self.blocks.try_id(name).with_context(|| format!("unknown block `{name}`"))?;
+        let mut d = self.blocks.get(id).clone();
+        let arg = |i: usize| args.get(i).map(String::as_str).with_context(|| format!("missing value {}", i + 1));
+        let n = |i: usize| -> Result<u8> { arg(i)?.parse().map_err(|_| anyhow::anyhow!("bad number `{}`", args[i])) };
+        match key {
+            "kind" => {
+                d.kind = match arg(0)? {
+                    "opaque" => BlockKind::Opaque,
+                    "cutout" => BlockKind::Cutout,
+                    "transparent" => BlockKind::Transparent,
+                    "model" => BlockKind::Model,
+                    o => bail!("unknown kind `{o}`"),
+                }
+            }
+            "model" => {
+                d.model = match arg(0)? {
+                    "cross" => Model::Cross,
+                    "tall_cross" => Model::TallCross,
+                    "slab" => Model::Slab,
+                    "stairs" => Model::Stairs,
+                    "lantern" => Model::Lantern,
+                    "pebbles" => Model::Pebbles,
+                    "mushroom" => Model::Mushroom,
+                    o => bail!("unknown model `{o}`"),
+                }
+            }
+            "texture" => {
+                let t = arg(1)?.to_string();
+                let faces: &[usize] = match arg(0)? {
+                    "all" => &[0, 1, 2, 3, 4, 5],
+                    "side" => &[0, 1, 4, 5],
+                    "top" => &[2],
+                    "bottom" => &[3],
+                    "east" => &[0],
+                    "west" => &[1],
+                    "south" => &[4],
+                    "north" => &[5],
+                    o => bail!("unknown face `{o}`"),
+                };
+                for &f in faces {
+                    d.faces[f] = t.clone();
+                }
+            }
+            "tint" => {
+                d.tint = match arg(0)? {
+                    "none" => Tint::None,
+                    "grass" => Tint::Grass,
+                    "foliage" => Tint::Foliage,
+                    "water" => Tint::Water,
+                    o => bail!("unknown tint `{o}`"),
+                }
+            }
+            "emission" => d.emission = n(0)?,
+            "light" => {
+                d.light_color = [n(0)?, n(1)?, n(2)?];
+                d.light_level = n(3)?.min(15);
+            }
+            "absorb" => d.light_att = n(0)?.min(15),
+            "rotation" => {
+                d.rotation = match arg(0)? {
+                    "none" => Rotation::None,
+                    "column" => Rotation::Column,
+                    "facing" => Rotation::Facing,
+                    o => bail!("unknown rotation `{o}`"),
+                }
+            }
+            "fluid" => d.fluid = on_off(args.first().map(String::as_str).as_ref())?,
+            "washes" => d.washes_away = on_off(args.first().map(String::as_str).as_ref())?,
+            "display" => d.display = args.join(" "),
+            "category" => d.category = args.join(" "),
+            o => bail!("unknown property `{o}`"),
+        }
+        self.blocks.update(id, d)
+    }
+
     fn world_idle(&self) -> bool {
         let st = &self.world.stats;
         st.pending == 0
@@ -675,6 +864,7 @@ impl Engine {
             && self.fluid.pending() == 0
             && !self.wg.is_building()
             && !self.wg.is_optimizing()
+            && self.blockgpu.uploads_pending() == 0
     }
 
     fn run_script(&mut self, s: &mut Script) -> Result<()> {
@@ -687,6 +877,9 @@ impl Engine {
             let e = self.renderer.extent;
             let (x, y) = (e.width as f64 * 0.5, e.height as f64 * 0.5);
             self.handle_window_event(&WindowEvent::CursorMoved { device_id: DeviceId::dummy(), position: PhysicalPosition::new(x, y) });
+        }
+        for k in std::mem::take(&mut s.release_imgui) {
+            self.imgui.ctx.io_mut().add_key_event(k, false);
         }
         s.release_keys.retain_mut(|(k, left)| {
             if *left == 0 {
@@ -1052,6 +1245,21 @@ impl Engine {
                     }
                 }
                 self.input.pressed.insert(code);
+                // ImGui gets the key too (editor shortcuts), released next frame
+                if self.imgui.platform.is_none() {
+                    let mut keys = Vec::new();
+                    if ctrl {
+                        keys.extend([dear_imgui_rs::Key::ModCtrl, dear_imgui_rs::Key::LeftCtrl]);
+                    }
+                    if shift {
+                        keys.extend([dear_imgui_rs::Key::ModShift, dear_imgui_rs::Key::LeftShift]);
+                    }
+                    keys.extend(imgui_key(code));
+                    for &k in &keys {
+                        self.imgui.ctx.io_mut().add_key_event(k, true);
+                    }
+                    s.release_imgui = keys;
+                }
                 return Ok(Some(Busy::Frames(1)));
             }
             Cmd::Tool(k) => self.tools.kind = k,
@@ -1118,8 +1326,8 @@ impl Engine {
                 }
             }
             Cmd::ExpectSelected(want) => {
-                let got = self.blocks.get(self.ui.selected_block).name;
-                if got != want {
+                let got = &self.blocks.get(self.ui.selected_block).name;
+                if *got != want {
                     s.fail(line, format!("expected selected block {want}, got {got}"));
                 }
             }
@@ -1148,6 +1356,112 @@ impl Engine {
                 self.world.capture_raw.insert(chunk);
                 let id = self.world.request_region(o - IVec3::ONE, o + IVec3::splat(crate::world::CHUNK));
                 return Ok(Some(Busy::Apron { id, chunk, left: 600 }));
+            }
+            Cmd::BlockNew(name, from) => {
+                let from = match from {
+                    Some(f) => match self.blocks.try_id(&f) {
+                        Some(id) => Some(id),
+                        None => {
+                            s.fail(line, format!("unknown block `{f}`"));
+                            return Ok(None);
+                        }
+                    },
+                    None => None,
+                };
+                if let Err(e) = self.blocks.create(&name, from) {
+                    s.fail(line, format!("{e:#}"));
+                }
+            }
+            Cmd::BlockDelete(name) => match self.blocks.try_id(&name) {
+                Some(id) => {
+                    if let Err(e) = self.blocks.delete(id) {
+                        s.fail(line, format!("{e:#}"));
+                    }
+                }
+                None => s.fail(line, format!("unknown block `{name}`")),
+            },
+            Cmd::BlockSet(name, key, args) => {
+                if let Err(e) = self.script_block_set(&name, &key, &args) {
+                    s.fail(line, format!("block_set {name} {key}: {e:#}"));
+                }
+            }
+            Cmd::TextureNew(name, from) => {
+                if let Err(e) = self.tex_ui.create(&mut self.blocks, &name, from.as_deref().unwrap_or("")) {
+                    s.fail(line, format!("{e:#}"));
+                }
+            }
+            Cmd::TextureEdit(name) => self.tex_ui.edit(&mut self.blocks, &name),
+            Cmd::Paint { tool, a, b, color } => {
+                if self.tex_ui.name.is_empty() {
+                    s.fail(line, "no texture open (texture_new / texture_edit)");
+                } else {
+                    self.tex_ui.tool = tool;
+                    self.tex_ui.color = color;
+                    self.tex_ui.stroke(a, b);
+                    self.tex_ui.apply(&mut self.blocks);
+                }
+            }
+            Cmd::TextureFrame(what, count) => {
+                match what.as_str() {
+                    "add" => (0..count).for_each(|_| self.tex_ui.add_frame(false)),
+                    "dup" => (0..count).for_each(|_| self.tex_ui.add_frame(true)),
+                    "delete" => (0..count).for_each(|_| self.tex_ui.delete_frame()),
+                    n => match n.parse() {
+                        Ok(f) => self.tex_ui.set_frame(f),
+                        Err(_) => s.fail(line, format!("expected add/dup/delete or a frame number, got `{n}`")),
+                    },
+                }
+                self.tex_ui.apply(&mut self.blocks);
+            }
+            Cmd::TextureFps(f) => {
+                self.tex_ui.set_fps(f);
+                self.tex_ui.apply(&mut self.blocks);
+            }
+            Cmd::Mirror(x, on) => {
+                if x {
+                    self.tex_ui.mirror_x = on;
+                } else {
+                    self.tex_ui.mirror_y = on;
+                }
+            }
+            Cmd::PaintTool(t) => self.tex_ui.tool = t,
+            Cmd::PaintColor(c) => self.tex_ui.color = c,
+            Cmd::Texel(x, y) => match self.tex_ui.canvas {
+                Some((p0, cell)) if self.tex_ui.open => {
+                    let (px, py) = (p0[0] + (x as f32 + 0.5) * cell, p0[1] + (y as f32 + 0.5) * cell);
+                    self.handle_window_event(&WindowEvent::CursorMoved { device_id: DeviceId::dummy(), position: PhysicalPosition::new(px as f64, py as f64) });
+                    return Ok(Some(Busy::Frames(2)));
+                }
+                _ => s.fail(line, "the texture editor's canvas isn't on screen"),
+            },
+            Cmd::DragTexel(a, b, frames) => match self.tex_ui.canvas {
+                Some((p0, cell)) if self.tex_ui.open => {
+                    let px = |t: (i32, i32)| ((p0[0] + (t.0 as f32 + 0.5) * cell) as f64, (p0[1] + (t.1 as f32 + 0.5) * cell) as f64);
+                    let (from, to) = (px(a), px(b));
+                    self.handle_window_event(&WindowEvent::CursorMoved { device_id: DeviceId::dummy(), position: PhysicalPosition::new(from.0, from.1) });
+                    return Ok(Some(Busy::Drag { from, to, button: MouseButton::Left, i: 0, n: frames }));
+                }
+                _ => s.fail(line, "the texture editor's canvas isn't on screen"),
+            },
+            Cmd::Window(w, on) => match w.as_str() {
+                "block_editor" => self.block_ui.open = on,
+                "texture_editor" => self.tex_ui.open = on,
+                other => s.fail(line, format!("unknown window `{other}`")),
+            },
+            Cmd::EditBlock(name) => match self.blocks.try_id(&name) {
+                Some(id) => self.ui.edit_block = Some(id),
+                None => s.fail(line, format!("unknown block `{name}`")),
+            },
+            Cmd::ExpectTexel { name, frame, x, y, color } => {
+                let a = self.blocks.store.get(&name);
+                let got = a.frames.get(frame).map(|f| {
+                    let px = f.albedo_rgba8();
+                    let i = ((y.clamp(0, 31) * 32 + x.clamp(0, 31)) * 4) as usize;
+                    [px[i], px[i + 1], px[i + 2], px[i + 3]]
+                });
+                if got != Some(color) {
+                    s.fail(line, format!("expected texel {x},{y} of {name} frame {frame} to be {color:?}, got {got:?}"));
+                }
             }
             Cmd::Log(text) => log::info!("script: {text}"),
         }

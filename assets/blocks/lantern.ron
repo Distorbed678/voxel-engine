@@ -1,0 +1,14 @@
+(
+    display: "Lantern",
+    category: "Building",
+    kind: Model,
+    model: Lantern,
+    textures: (
+        all: "lantern",
+    ),
+    emission: 230,
+    light: (
+        color: (255, 180, 90),
+        level: 15,
+    ),
+)

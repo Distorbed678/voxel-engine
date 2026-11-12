@@ -1,0 +1,10 @@
+(
+    display: "Snowy Grass",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        top: "snow",
+        bottom: "dirt",
+        side: "snowy_grass_side",
+    ),
+)

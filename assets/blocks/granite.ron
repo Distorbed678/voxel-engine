@@ -1,0 +1,8 @@
+(
+    display: "Granite",
+    category: "Terrain",
+    kind: Opaque,
+    textures: (
+        all: "granite",
+    ),
+)

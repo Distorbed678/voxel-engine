@@ -1,0 +1,10 @@
+(
+    display: "Plank Stairs",
+    category: "Building",
+    kind: Model,
+    model: Stairs,
+    textures: (
+        all: "planks",
+    ),
+    rotation: Facing,
+)

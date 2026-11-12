@@ -1,0 +1,11 @@
+(
+    display: "Palm Log",
+    category: "Trees",
+    kind: Opaque,
+    textures: (
+        top: "palm_log_top",
+        bottom: "palm_log_top",
+        side: "palm_log",
+    ),
+    rotation: Column,
+)

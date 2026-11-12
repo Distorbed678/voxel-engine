@@ -1,0 +1,11 @@
+(
+    display: "Water",
+    category: "Fluids",
+    kind: Transparent,
+    textures: (
+        all: "water",
+    ),
+    tint: Water,
+    attenuation: 2,
+    fluid: true,
+)
