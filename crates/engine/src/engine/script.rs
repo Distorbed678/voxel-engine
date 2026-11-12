@@ -15,6 +15,7 @@
 //! | `waypoint X Y Z YAW PITCH` ... `fly_path FRAMES` | fly a smooth spline from the camera through the waypoints |
 //! | `find_biome NAME [HEIGHT]` | survey the generator, go to the nearest large patch of a biome, HEIGHT blocks above its highest block |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
+//! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
 //! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `bloom on\|off` / `block_light on\|off` | render toggles |
 //! | `wait N` / `settle [MAX]` | wait N frames / until streaming, meshing and shader builds are idle |
@@ -35,6 +36,7 @@
 //! | `expect_selected NAME` | the block selected for placing (e.g. after a middle-click pick) |
 //! | `expect_clipboard SX SY SZ` / `expect_selection X1 Y1 Z1 X2 Y2 Z2` | tool state |
 //! | `expect_image GOLDEN [TOL]` | compare this frame against a reference PNG (created if missing, `UPDATE_GOLDEN=1` rewrites) |
+//! | `check_apron CX CY CZ` | (debugging) compare a LOD0 chunk's generated apron cells with its neighbours' blocks |
 //! | `log TEXT` | print a line |
 
 use std::path::{Path, PathBuf};
@@ -76,6 +78,7 @@ enum Cmd {
     Waypoint(DVec3, f32, f32),
     FlyPath(u32),
     FindBiome { name: String, height: f64 },
+    FindCave(i32),
     Anim(Option<f32>),
     Time(f32),
     View(u32),
@@ -111,6 +114,7 @@ enum Cmd {
     ExpectClipboard(IVec3),
     ExpectSelection(IVec3, IVec3),
     ExpectImage { golden: PathBuf, tol: f32 },
+    CheckApron(IVec3),
     Log(String),
 }
 
@@ -127,6 +131,10 @@ enum Busy {
     Region { id: u64, pos: IVec3, want: u16, left: u32 },
     /// Column read under the camera after `find_biome`: lands HEIGHT above the top block.
     Ground { id: u64, height: f64, left: u32 },
+    /// Region read for `check_apron`.
+    Apron { id: u64, chunk: IVec3, left: u32 },
+    /// Column read for `find_cave`.
+    Cave { id: u64, min_height: i32, tries: u32, left: u32 },
     Image { shot: PathBuf, golden: PathBuf, tol: f32, left: u32 },
 }
 
@@ -254,6 +262,7 @@ fn parse(line: &str) -> Result<Cmd> {
             num(a.get(4), "pitch")?,
         ),
         "fly_path" => Cmd::FlyPath(num(a.first(), "frames")?),
+        "find_cave" => Cmd::FindCave(a.first().map(|h| h.parse()).transpose()?.unwrap_or(8)),
         "find_biome" => Cmd::FindBiome {
             name: a.first().context("missing biome name")?.to_string(),
             height: a.get(1).map(|h| h.parse()).transpose()?.unwrap_or(40.0),
@@ -354,6 +363,7 @@ fn parse(line: &str) -> Result<Cmd> {
             golden: a.first().context("missing golden path")?.into(),
             tol: a.get(1).map(|t| t.parse()).transpose()?.unwrap_or(1.5),
         },
+        "check_apron" => Cmd::CheckApron(ivec(a, "chunk")?),
         "log" => Cmd::Log(a.join(" ")),
         other => bail!("unknown command `{other}`"),
     })
@@ -493,6 +503,94 @@ impl Engine {
             s.busy = None;
             return None;
         }
+        if let Some(Busy::Apron { id, chunk, .. }) = &s.busy {
+            if *id != r.id {
+                return Some(r);
+            }
+            let chunk = *chunk;
+            let line = s.line;
+            match self.world.raw_slots.remove(&chunk) {
+                None => s.fail(line, "raw slot not captured"),
+                Some(raw) => {
+                    let origin = chunk * crate::world::CHUNK;
+                    let ca = crate::world::CA;
+                    let mut bad = 0;
+                    for y in 0..ca {
+                        for z in 0..ca {
+                            for x in 0..ca {
+                                let l = IVec3::new(x, y, z) - IVec3::ONE;
+                                let interior = l.cmpge(IVec3::ZERO).all() && l.cmplt(IVec3::splat(crate::world::CHUNK)).all();
+                                if interior {
+                                    continue;
+                                }
+                                let got = raw[((y * ca + z) * ca + x) as usize];
+                                let want = r.get(origin + l);
+                                if got != want {
+                                    if bad < 8 {
+                                        let name = |b: u16| self.blocks.blocks.get(b as usize).map(|d| d.name).unwrap_or("?");
+                                        log::warn!("script: apron {} has {} but the world has {}", origin + l, name(got), name(want));
+                                    }
+                                    bad += 1;
+                                }
+                            }
+                        }
+                    }
+                    if bad > 0 {
+                        s.fail(line, format!("{bad} apron cells of chunk {chunk} differ from their neighbours"));
+                    } else {
+                        log::info!("script: apron of chunk {chunk} matches");
+                    }
+                }
+            }
+            s.busy = None;
+            return None;
+        }
+        if let Some(Busy::Cave { id, min_height, tries, .. }) = &s.busy {
+            if *id != r.id {
+                return Some(r);
+            }
+            let (min_height, tries) = (*min_height, *tries);
+            // below the top block, the highest air run at least `min_height` tall
+            let col: Vec<u16> = (0..r.size.y).map(|y| r.get(r.min + IVec3::new(0, y, 0))).collect();
+            let top = col.iter().rposition(|&b| b != 0);
+            let mut found = None;
+            if let Some(top) = top {
+                let mut y = top as i32;
+                while y >= 0 && found.is_none() {
+                    if col[y as usize] == 0 {
+                        let end = y;
+                        while y >= 0 && col[y as usize] == 0 {
+                            y -= 1;
+                        }
+                        // below sea level: air under trees or floating islands isn't a cave
+                        if end - y >= min_height && r.min.y + end < 56 {
+                            found = Some(r.min.y + y + 1 + (end - y) / 3);
+                        }
+                    }
+                    y -= 1;
+                }
+            }
+            let line = s.line;
+            match found {
+                Some(cy) => {
+                    self.camera.pos.y = cy as f64 + 0.5;
+                    log::info!("script: cave found at {:.0} {:.0} {:.0}", self.camera.pos.x, self.camera.pos.y, self.camera.pos.z);
+                    s.busy = None;
+                }
+                None if tries == 0 => {
+                    s.fail(line, "no cave found");
+                    s.busy = None;
+                }
+                None => {
+                    self.camera.pos.x += 53.0;
+                    self.camera.pos.z += 31.0;
+                    let (x, z) = (self.camera.pos.x.floor() as i32, self.camera.pos.z.floor() as i32);
+                    let id = self.world.request_region(IVec3::new(x, GROUND_MIN, z), IVec3::new(x, 200, z));
+                    s.busy = Some(Busy::Cave { id, min_height, tries: tries - 1, left: 600 });
+                }
+            }
+            return None;
+        }
         let Some(Busy::Region { id, pos, want, .. }) = &s.busy else { return Some(r) };
         if *id != r.id {
             return Some(r);
@@ -594,6 +692,10 @@ impl Engine {
             Busy::Settle { left, quiet } => {
                 let quiet = if self.world_idle() { quiet + 1 } else { 0 };
                 if quiet >= 4 {
+                    // restart the TAA jitter sequence and history: what follows doesn't depend on
+                    // how many frames streaming took
+                    self.taa_frame = 0;
+                    self.taa.reset = true;
                     None
                 } else if left == 0 {
                     s.fail(line, "settle timed out (world still streaming)");
@@ -670,6 +772,22 @@ impl Engine {
                 }
                 (i < n + 5).then_some(Busy::Drag { from, to, button, i, n })
             }
+            Busy::Apron { id, chunk, left } => {
+                if left == 0 {
+                    s.fail(line, "apron read timed out");
+                    None
+                } else {
+                    Some(Busy::Apron { id, chunk, left: left - 1 })
+                }
+            }
+            Busy::Cave { id, min_height, tries, left } => {
+                if left == 0 {
+                    s.fail(line, "cave search timed out");
+                    None
+                } else {
+                    Some(Busy::Cave { id, min_height, tries, left: left - 1 })
+                }
+            }
             Busy::Ground { id, height, left } => {
                 if left == 0 {
                     s.fail(line, "ground read timed out");
@@ -733,6 +851,11 @@ impl Engine {
                     return Ok(None);
                 }
                 return Ok(Some(Busy::Path { keys, i: 0, n: frames }));
+            }
+            Cmd::FindCave(min_height) => {
+                let (x, z) = (self.camera.pos.x.floor() as i32, self.camera.pos.z.floor() as i32);
+                let id = self.world.request_region(IVec3::new(x, GROUND_MIN, z), IVec3::new(x, 200, z));
+                return Ok(Some(Busy::Cave { id, min_height, tries: 200, left: 600 }));
             }
             Cmd::FindBiome { name, height } => {
                 let Some(biome) = self.wg.compiled.biomes.iter().position(|b| b.name == name) else {
@@ -901,6 +1024,12 @@ impl Engine {
                 let _ = std::fs::remove_file(&shot);
                 self.screenshot_request = Some(shot.clone());
                 return Ok(Some(Busy::Image { shot, golden, tol, left: FIF as u32 + 2 }));
+            }
+            Cmd::CheckApron(chunk) => {
+                let o = chunk * crate::world::CHUNK;
+                self.world.capture_raw.insert(chunk);
+                let id = self.world.request_region(o - IVec3::ONE, o + IVec3::splat(crate::world::CHUNK));
+                return Ok(Some(Busy::Apron { id, chunk, left: 600 }));
             }
             Cmd::Log(text) => log::info!("script: {text}"),
         }

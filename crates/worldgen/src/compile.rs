@@ -344,6 +344,12 @@ impl<'s, 'a> Em<'s, 'a> {
                     self.emit(format!("distance({pos}, vec3({x}, {y}, {z}))"), &[], true, ctx)
                 }
             }
+            "river" => {
+                let (sp, w, bank, warp) = (self.p(&n, "spacing"), self.p(&n, "width"), self.p(&n, "bank"), self.p(&n, "warp"));
+                let seed = self.pu(&n, "seed");
+                let e = format!("river_mask({pos}.xz, {sp}, {w}, {bank}, {warp}, gSeed + {seed} * 7919u + {}u)", n.id);
+                self.emit(e, &[], false, ctx)
+            }
             "y_gradient" => {
                 let (yl, yh, vl, vh) = (self.p(&n, "y_low"), self.p(&n, "y_high"), self.p(&n, "value_low"), self.p(&n, "value_high"));
                 self.emit(format!("mix({vl}, {vh}, clamp(({pos}.y - {yl}) / max({yh} - {yl}, 1e-3), 0.0, 1.0))"), &[], true, ctx)
@@ -754,6 +760,28 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         let _ = writeln!(fns, "float fn_{}(vec3 p, float a0, float a1, float a2, float a3) {{\n{body}\n    return {res};\n}}\n", sanitize(name));
     }
 
+    // ---- biomes used as cave biomes (Zone Output "Cave Biomes"): they also get flat
+    // material / decoration functions, evaluated per voxel on cave floors and ceilings ----
+    let mut cave_biome_ids: std::collections::BTreeSet<u32> = Default::default();
+    for name in &zone_names {
+        let g = project.get(GraphKind::Zone, name).unwrap();
+        let Some(o) = g.output_node() else { continue };
+        let Some(l) = g.input_link(o.id, 2) else { continue };
+        let Some(n) = g.node(l.from_node) else { continue };
+        let refs: Vec<&Node> = match n.kind.as_str() {
+            "biome" => vec![n],
+            "cave_biomes" => (0..4u8).filter_map(|i| g.input_link(n.id, i)).filter_map(|l| g.node(l.from_node)).collect(),
+            _ => Vec::new(),
+        };
+        for bn in refs {
+            if let Some(Value::Ref(r)) = bn.params.get("biome")
+                && let Some(&id) = sh.biome_ids.get(r)
+            {
+                cave_biome_ids.insert(id);
+            }
+        }
+    }
+
     // ---- biomes ----
     let mut biome_infos = Vec::new();
     let mut maxh = 1usize;
@@ -971,6 +999,15 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         for m in masks {
             let _ = writeln!(biome_code, "{}", m.replace("{EXPORTS}", &exports));
         }
+        if cave_biome_ids.contains(&(bi as u32)) {
+            let mut cem = Em::new(&mut sh, g, format!("b{bi}c_"), true);
+            let cmat = g.input_link(outn.id, 1).copied().map(|l| cem.material(l.from_node)).unwrap_or_else(|| "B_STONE".into());
+            let cmat_body = cem.take_body().join("\n");
+            let cdec = g.input_link(outn.id, 2).copied().map(|l| cem.decor(l.from_node)).unwrap_or_else(|| "0u".into());
+            let cdec_body = cem.take_body().join("\n");
+            let _ = writeln!(biome_code, "uint b{bi}_cmat(vec3 p, float depth, float airAbove) {{\n    bool skyOpen = false;\n{cmat_body}\n    return {cmat};\n}}");
+            let _ = writeln!(biome_code, "uint b{bi}_cdec(vec3 p, uint ground) {{\n{cdec_body}\n    return {cdec};\n}}");
+        }
     }
 
     // ---- zones: biome layout + carvers ----
@@ -1051,12 +1088,73 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         }
         f.push_str("}\n");
         zone_code.push_str(&f);
+
+        // cave biome selection (per voxel)
+        let cave_sel = g.input_link(outn.id, 2).copied().and_then(|l| g.node(l.from_node).cloned());
+        let biome_ref = |em: &Em, n: &Node| match em.value(n, "biome") {
+            Value::Ref(r) => em.sh.biome_ids.get(&r).copied(),
+            _ => None,
+        };
+        let mut cf = format!("uint z{zi}_cave(vec3 p) {{\n");
+        match cave_sel {
+            Some(n) if n.kind == "biome" => match biome_ref(&em, &n) {
+                Some(id) => {
+                    let _ = writeln!(cf, "    return {id}u;");
+                }
+                None => {
+                    em.warn("Biome node without a valid biome".into());
+                    cf.push_str("    return NO_CAVE_BIOME;\n");
+                }
+            },
+            Some(n) if n.kind == "cave_biomes" => {
+                let mut entries = Vec::new();
+                for i in 0..4u8 {
+                    let Some(l) = g.input_link(n.id, i).copied() else { continue };
+                    let Some(bn) = g.node(l.from_node).cloned() else { continue };
+                    match biome_ref(&em, &bn) {
+                        Some(id) => {
+                            let w = em.p(&n, &format!("weight{}", i + 1));
+                            entries.push((id, w));
+                        }
+                        None => em.warn("Biome node without a valid biome".into()),
+                    }
+                }
+                if entries.is_empty() {
+                    em.warn("Cave Biome Select has no biomes connected".into());
+                    cf.push_str("    return NO_CAVE_BIOME;\n");
+                } else {
+                    let (cs, wa) = (em.p(&n, "cell_size"), em.p(&n, "warp"));
+                    let seed = em.pu(&n, "seed");
+                    let _ = writeln!(cf, "    uint seed = gSeed + {seed} * 7919u + {}u;", n.id * 37 + zi as u32);
+                    let _ = writeln!(
+                        cf,
+                        "    vec3 q = p + vec3(fbm3(p / ({cs} * 0.5), seed + 1u, 2, 2.0, 0.5), fbm3(p / ({cs} * 0.5), seed + 2u, 2, 2.0, 0.5), fbm3(p / ({cs} * 0.5), seed + 3u, 2, 2.0, 0.5)) * {wa};"
+                    );
+                    let total = entries.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>().join(" + ");
+                    let _ = writeln!(cf, "    float r = rand3(ivec3(floor(q / {cs})), seed) * max({total}, 1e-4);");
+                    let mut acc = String::from("0.0");
+                    for (id, w) in &entries {
+                        acc = format!("{acc} + {w}");
+                        let _ = writeln!(cf, "    if (r < {acc}) return {id}u;");
+                    }
+                    let _ = writeln!(cf, "    return {}u;", entries.last().unwrap().0);
+                }
+            }
+            Some(n) => {
+                em.warn(format!("'{}' cannot choose cave biomes (use Biome or Cave Biome Select)", n.kind));
+                cf.push_str("    return NO_CAVE_BIOME;\n");
+            }
+            None => cf.push_str("    return NO_CAVE_BIOME;\n"),
+        }
+        cf.push_str("}\n");
+        zone_code.push_str(&cf);
     }
 
     // ---- world: zone layout ----
     let mut world_code = String::new();
     let world = project.graphs.iter().find(|g| g.kind == GraphKind::World);
     let mut sea = "62.0".to_string();
+    let mut river = (String::from("float wg_river(vec2 xz) { return 0.0; }"), "5.0".to_string(), "48.0".to_string(), "B_GRAVEL".to_string());
     {
         let _ = writeln!(world_code, "void zone_select(vec2 xz, out uint z0, out uint z1, out float w1) {{");
         match world {
@@ -1065,6 +1163,15 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
                 let outn = g.output_node().cloned();
                 if let Some(o) = &outn {
                     sea = em.p(o, "sea_level");
+                    // rivers: a 2D mask (World Output pin 1) carved down to the river bed
+                    if let Some(l) = g.input_link(o.id, 1).copied() {
+                        let m = em.density(l.from_node, l.from_pin, 0).e;
+                        let body = em.take_body().join("\n");
+                        river.0 = format!("float wg_river(vec2 xz) {{\n    vec3 p = vec3(xz.x, 0.0, xz.y);\n{body}\n    return clamp({m}, 0.0, 1.0);\n}}");
+                    }
+                    river.1 = em.p(o, "river_depth");
+                    river.2 = em.p(o, "river_carve");
+                    river.3 = em.block(o, "river_bed");
                 }
                 let sel = outn.as_ref().and_then(|o| g.input_link(o.id, 0).copied()).and_then(|l| g.node(l.from_node).cloned());
                 match sel {
@@ -1131,13 +1238,18 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     let nz = zone_infos.len();
     let mut s = String::new();
     let _ = writeln!(s, "#define MAXH {maxh}\n#define NUM_BIOMES {nb}u\n#define NUM_ZONES {nz}u\n#define NUM_PROP_LAYERS {}u", prop_layers.len());
-    let _ = writeln!(s, "struct WgColumn {{\n    uint zone0; uint zone1; float zw1;\n    uint nb;\n    uint biome[3];\n    float bw[3];\n    float h[3][MAXH];\n}};");
-    let _ = writeln!(s, "float gSeaLevel;\nvoid wg_init() {{ gSeaLevel = {sea}; }}");
+    let _ = writeln!(s, "struct WgColumn {{\n    uint zone0; uint zone1; float zw1;\n    uint nb;\n    uint biome[3];\n    float bw[3];\n    float h[3][MAXH];\n    float river;\n}};");
+    let _ = writeln!(
+        s,
+        "float gSeaLevel; float gRiverDepth; float gRiverCarve; uint gRiverBed;\nvoid wg_init() {{ gSeaLevel = {sea}; gRiverDepth = {}; gRiverCarve = {}; gRiverBed = {}; }}",
+        river.1, river.2, river.3
+    );
     s.push_str(&out);
     s.push_str(&fns);
     s.push_str(&biome_code);
     s.push_str(&zone_code);
     s.push_str(&world_code);
+    let _ = writeln!(s, "{}", river.0);
 
     // dispatchers
     let sw = |name: &str, call: &dyn Fn(usize) -> String, n: usize, default: &str| -> String {
@@ -1161,6 +1273,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     uint z0, z1; float zw1;
     zone_select(xz, z0, z1, zw1);
     c.zone0 = z0; c.zone1 = z1; c.zw1 = zw1;
+    c.river = wg_river(xz);
     uint cb[4]; float cw[4];
     uint a0, a1; float aw;
     zone_biomes(z0, xz, a0, a1, aw);
@@ -1201,16 +1314,29 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     let _ = writeln!(s, "}}");
     let _ = writeln!(
         s,
-        r#"float wg_density(vec3 p, in WgColumn c) {{
+        r#"// `carved`: the cell is solid terrain removed by the zone's cave carver (cave air)
+float wg_density_c(vec3 p, in WgColumn c, out bool carved) {{
+    carved = false;
     float d = 0.0;
     if (c.nb == 1u) d = biome_density(c.biome[0], p, c.h[0]);
     else for (uint k = 0u; k < c.nb; ++k) d += c.bw[k] * biome_density(c.biome[k], p, c.h[k]);
+    // rivers: pull the terrain down towards the river bed (sea level - depth at the centre),
+    // up to `river_carve` above sea level so floating islands and high overhangs stay intact
+    if (c.river > 0.0) {{
+        float top = gSeaLevel + gRiverCarve;
+        float k = smoothstep(0.0, 1.0, c.river) * (1.0 - smoothstep(top, top + 16.0, p.y));
+        if (k > 0.0) d = mix(d, min(d, gSeaLevel - gRiverDepth * c.river - p.y), k);
+    }}
     if (d > 0.0) {{
         // carving only removes solid: skip the cave noise for cells that are already air
         float cv = wg_carve(p, c);
-        if (cv > 0.0) d = min(d, -cv * 4.0);
+        if (cv > 0.0) {{ d = min(d, -cv * 4.0); carved = d <= 0.0; }}
     }}
     return d;
+}}
+float wg_density(vec3 p, in WgColumn c) {{
+    bool carved;
+    return wg_density_c(p, c, carved);
 }}
 uint wg_pick(vec3 p, in WgColumn c) {{
     if (c.nb == 1u) return 0u;
@@ -1221,7 +1347,10 @@ uint wg_pick(vec3 p, in WgColumn c) {{
 }}
 uint wg_main_biome(in WgColumn c) {{ return c.biome[0]; }}"#
     );
-    let _ = writeln!(s, "uint wg_material(vec3 p, float depth, float airAbove, bool skyOpen, in WgColumn c) {{\n    uint k = wg_pick(p, c);");
+    let _ = writeln!(
+        s,
+        "uint wg_material(vec3 p, float depth, float airAbove, bool skyOpen, in WgColumn c) {{\n    if (c.river > 0.4 && skyOpen && depth < 2.5 && p.y < gSeaLevel + 1.0) return gRiverBed;\n    uint k = wg_pick(p, c);"
+    );
     s.push_str(&sw("c.biome[k]", &|i| format!("return b{i}_mat(p, depth, airAbove, skyOpen, c.h[k]);"), nb, "return B_STONE;"));
     let _ = writeln!(s, "}}");
     let _ = writeln!(s, "uint wg_decorate(vec3 p, uint ground, in WgColumn c) {{\n    uint k = wg_pick(p, c);");
@@ -1240,6 +1369,21 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0]; }}"#
         "return B_WATER;",
     ));
     let _ = writeln!(s, "}}");
+
+    // ---- cave biomes ----
+    let _ = writeln!(s, "uint wg_cave_biome(vec3 p, in WgColumn c) {{\n    uint z = c.zw1 > 0.5 ? c.zone1 : c.zone0;");
+    s.push_str(&sw("z", &|i| format!("return z{i}_cave(p);"), nz, "return NO_CAVE_BIOME;"));
+    let _ = writeln!(s, "}}");
+    let mut cm = String::from("uint wg_cave_material(uint b, vec3 p, float depth, float airAbove) {\n    switch (b) {\n");
+    let mut cd = String::from("uint wg_cave_decorate(uint b, vec3 p, uint ground) {\n    switch (b) {\n");
+    for id in &cave_biome_ids {
+        let _ = writeln!(cm, "        case {id}u: return b{id}_cmat(p, depth, airAbove);");
+        let _ = writeln!(cd, "        case {id}u: return b{id}_cdec(p, ground);");
+    }
+    cm.push_str("        default: return B_STONE;\n    }\n}\n");
+    cd.push_str("        default: return 0u;\n    }\n}\n");
+    s.push_str(&cm);
+    s.push_str(&cd);
 
     // ---- props ----
     let _ = writeln!(s, "void prop_layer(uint i, inout PropLayer L) {{\n    switch (i) {{");

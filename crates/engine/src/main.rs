@@ -177,6 +177,12 @@ fn export_textures(dir: &str) -> Result<()> {
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    if let Some(pos) = std::env::args().position(|a| a == "--export-worldgen-defaults") {
+        let dir = std::env::args().nth(pos + 1).unwrap_or_else(|| "assets/worldgen".into());
+        worldgen::defaults::default_project().save_dir(std::path::Path::new(&dir))?;
+        println!("wrote the built-in world generator to {dir}");
+        return Ok(());
+    }
     if let Some(pos) = std::env::args().position(|a| a == "--export-textures") {
         let dir = std::env::args().nth(pos + 1).unwrap_or_else(|| "assets/textures_export".into());
         return export_textures(&dir);

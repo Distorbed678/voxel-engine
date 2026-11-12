@@ -71,6 +71,18 @@ pub const FLAG_TAA: u32 = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct SortPush {
+    frame: u64,
+    records: u64,
+    src: u64,
+    dst: u64,
+    args: u64,
+    max_draws: u32,
+    pad: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct CullPush {
     frame: u64,
     records: u64,
@@ -145,6 +157,7 @@ pub struct Pipelines {
     pub sky: PipelineHandle,
     pub clouds: PipelineHandle,
     pub tonemap: PipelineHandle,
+    pub sort_trans: PipelineHandle,
     pub apply_edits: PipelineHandle,
     pub mesh_count: PipelineHandle,
     pub mesh_write: PipelineHandle,
@@ -167,6 +180,8 @@ pub struct Renderer {
     pub args: Buffer,
     pub opaque_draws: Buffer,
     pub trans_draws: Buffer,
+    /// Transparent draw groups sorted back to front (what the translucent pass draws).
+    pub trans_sorted: Buffer,
     pub model_draws: Buffer,
     pub shadow_map: Image,
     pub shadow_views: Vec<vk::ImageView>,
@@ -369,6 +384,7 @@ impl Renderer {
             args: Buffer::gpu(ctx, "draw_args", 64)?,
             opaque_draws: Buffer::gpu(ctx, "opaque_draws", MAX_DRAWS as u64 * 16)?,
             trans_draws: Buffer::gpu(ctx, "trans_draws", MAX_DRAWS as u64 * 16)?,
+            trans_sorted: Buffer::gpu(ctx, "trans_sorted", MAX_DRAWS as u64 * 16)?,
             model_draws: Buffer::gpu(ctx, "model_draws", MAX_DRAWS as u64 * 16)?,
             shadow_map,
             shadow_views,
@@ -492,6 +508,7 @@ impl Renderer {
                     },
                 ),
             )?,
+            sort_trans: pm.create(ctx, "sort_trans", compute("render/sort_trans.comp", &[]))?,
             tonemap: pm.create(
                 ctx,
                 "tonemap",
@@ -574,6 +591,21 @@ impl Renderer {
                 pad: 0,
             }));
             d.cmd_dispatch(cb, num_records.div_ceil(64).max(1), 1, 1);
+        }
+        // transparent groups back to front
+        vkcore::sync::compute_barrier(ctx, cb);
+        unsafe {
+            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.pipes.sort_trans));
+            push(bytemuck::bytes_of(&SortPush {
+                frame: frame_addr,
+                records: records.address,
+                src: self.trans_draws.address,
+                dst: self.trans_sorted.address,
+                args: self.args.address,
+                max_draws: MAX_DRAWS,
+                pad: 0,
+            }));
+            d.cmd_dispatch(cb, 1, 1, 1);
         }
         memory_barrier(
             ctx,
@@ -698,7 +730,7 @@ impl Renderer {
         unsafe {
             d.cmd_begin_rendering(cb, &info2);
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.terrain_trans));
-            push(bytemuck::bytes_of(&terrain_push(self.trans_draws.address)));
+            push(bytemuck::bytes_of(&terrain_push(self.trans_sorted.address)));
             ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.args.raw, 12, 1, 12);
             if clouds.enabled {
                 d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.clouds));
@@ -916,6 +948,7 @@ impl Renderer {
         self.args.destroy(ctx);
         self.opaque_draws.destroy(ctx);
         self.trans_draws.destroy(ctx);
+        self.trans_sorted.destroy(ctx);
         self.model_draws.destroy(ctx);
         for v in self.shadow_views.drain(..) {
             unsafe { ctx.device.destroy_image_view(v, None) };

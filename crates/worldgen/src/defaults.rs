@@ -457,7 +457,65 @@ fn lava_fields() -> Graph {
     b.g
 }
 
-fn zone(name: &str, biomes: &[(&str, f32)], cell: f32, color: [f32; 3], ravines: bool) -> Graph {
+/// A cave biome: only its Material (floors / ceilings) and Ground Cover (floors) are used, via a
+/// zone's Cave Biomes input. `accent` sprinkles a second block over the ceilings (3D noise).
+fn cave_biome(name: &str, floor: &str, ceiling: &str, accent: Option<(&str, f32)>, cover: &[(&str, f32)], chance: f32, map: [f32; 3]) -> Graph {
+    let mut b = B::new(name, GraphKind::Biome);
+    let o = b.out();
+    let ceil = b.n("block", 0.0, 0.0, &[("block", bk(ceiling))]);
+    let mut ceil_mat = ceil;
+    if let Some((blk, threshold)) = accent {
+        let acc = b.n("block", 0.0, 90.0, &[("block", bk(blk))]);
+        let nz = b.noise("simplex3d", 0.0, 180.0, 6.0, 1, 1.0, 51);
+        let ns = b.n("noise_select", 260.0, 60.0, &[("threshold", fv(threshold))]);
+        b.l(ceil, ns, 0);
+        b.l(acc, ns, 1);
+        b.l(nz, ns, 2);
+        ceil_mat = ns;
+    }
+    // in caves Surface Layers puts `cave_floor` on floors and its base input on ceilings
+    let s = b.n("surface_layers", 520.0, 60.0, &[("cave_floor", bk(floor))]);
+    b.l(ceil_mat, s, 0);
+    b.l(s, o, 1);
+    let mut params = vec![("on", bk(floor)), ("chance", fv(chance))];
+    for (i, (plant, w)) in cover.iter().enumerate().take(4) {
+        params.push((["plant1", "plant2", "plant3", "plant4"][i], bk(plant)));
+        params.push((["weight1", "weight2", "weight3", "weight4"][i], fv(*w)));
+    }
+    for i in cover.len()..4 {
+        params.push((["weight1", "weight2", "weight3", "weight4"][i], fv(0.0)));
+    }
+    let gc = b.n("ground_cover", 520.0, 260.0, &params);
+    b.l(gc, o, 2);
+    b.out_params(&[("fluid", ev("None")), ("map_color", Value::Color(map))]);
+    b.g
+}
+
+fn lush_caves() -> Graph {
+    cave_biome(
+        "lush_caves",
+        "moss",
+        "moss",
+        Some(("mushroom_cap_glow", 0.72)),
+        &[("fern", 3.0), ("tall_grass", 3.0), ("mushroom_glow", 1.2), ("mushroom_red", 0.8)],
+        0.5,
+        [0.3, 0.6, 0.35],
+    )
+}
+
+fn crystal_caves() -> Graph {
+    cave_biome("crystal_caves", "calcite", "calcite", Some(("crystal", 0.6)), &[("crystal_cluster", 2.0), ("pebbles", 1.0)], 0.18, [0.65, 0.5, 0.85])
+}
+
+fn magma_caves() -> Graph {
+    cave_biome("magma_caves", "basalt", "basalt", Some(("magma", 0.55)), &[("ember_weed", 3.0), ("dead_bush", 1.0)], 0.14, [0.55, 0.25, 0.15])
+}
+
+fn frost_caves() -> Graph {
+    cave_biome("frost_caves", "snow", "packed_ice", Some(("crystal", 0.78)), &[("snow_shrub", 2.0), ("pebbles", 0.5)], 0.15, [0.7, 0.85, 0.95])
+}
+
+fn zone(name: &str, biomes: &[(&str, f32)], caves: &[(&str, f32)], cell: f32, color: [f32; 3], ravines: bool) -> Graph {
     let mut b = B::new(name, GraphKind::Zone);
     let vor = b.n("biome_voronoi", 300.0, 0.0, &[("cell_size", fv(cell))]);
     for (i, (bn, w)) in biomes.iter().enumerate() {
@@ -485,6 +543,15 @@ fn zone(name: &str, biomes: &[(&str, f32)], cell: f32, color: [f32; 3], ravines:
         last = m3;
     }
     b.l(last, o, 1);
+    if !caves.is_empty() {
+        let sel = b.n("cave_biomes", 300.0, 860.0, &[]);
+        for (i, (bn, w)) in caves.iter().enumerate() {
+            let n = b.n("biome", 0.0, 860.0 + i as f32 * 90.0, &[("biome", rv(bn))]);
+            b.l(n, sel, i as u8);
+            b.g.set(sel, &format!("weight{}", i + 1), fv(*w));
+        }
+        b.l(sel, o, 2);
+    }
     b.out_params(&[("map_color", Value::Color(color))]);
     b.g
 }
@@ -500,6 +567,8 @@ fn world() -> Graph {
     b.g.set(vor, "weight4", fv(0.7));
     let o = b.out();
     b.l(vor, o, 0);
+    let river = b.n("river", 0.0, 420.0, &[]);
+    b.l(river, o, 1);
     b.g
 }
 
@@ -520,10 +589,17 @@ pub fn default_project() -> Project {
     Project {
         graphs: vec![
             world(),
-            zone("temperate", &[("meadow", 1.0), ("oak_forest", 1.4), ("birch_hills", 1.0), ("floating_isles", 0.35)], 420.0, [0.35, 0.7, 0.3], true),
-            zone("arid", &[("desert", 1.5), ("badlands", 1.0), ("savanna", 1.0)], 520.0, [0.9, 0.75, 0.4], true),
-            zone("frozen", &[("taiga", 1.3), ("glacier", 0.8), ("snowy_peaks", 1.0)], 480.0, [0.8, 0.9, 1.0], false),
-            zone("volcanic", &[("ashlands", 1.0), ("lava_fields", 0.8)], 380.0, [0.6, 0.2, 0.15], false),
+            zone(
+                "temperate",
+                &[("meadow", 1.0), ("oak_forest", 1.4), ("birch_hills", 1.0), ("floating_isles", 0.35)],
+                &[("lush_caves", 1.2), ("crystal_caves", 0.5)],
+                420.0,
+                [0.35, 0.7, 0.3],
+                true,
+            ),
+            zone("arid", &[("desert", 1.5), ("badlands", 1.0), ("savanna", 1.0)], &[("crystal_caves", 1.0), ("lush_caves", 0.4)], 520.0, [0.9, 0.75, 0.4], true),
+            zone("frozen", &[("taiga", 1.3), ("glacier", 0.8), ("snowy_peaks", 1.0)], &[("frost_caves", 1.0), ("crystal_caves", 0.6)], 480.0, [0.8, 0.9, 1.0], false),
+            zone("volcanic", &[("ashlands", 1.0), ("lava_fields", 0.8)], &[("magma_caves", 1.0), ("crystal_caves", 0.3)], 380.0, [0.6, 0.2, 0.15], false),
             meadow(),
             oak_forest(),
             birch_hills(),
@@ -536,6 +612,10 @@ pub fn default_project() -> Project {
             snowy_peaks(),
             ashlands(),
             lava_fields(),
+            lush_caves(),
+            crystal_caves(),
+            magma_caves(),
+            frost_caves(),
             ridge_function(),
         ],
     }
@@ -555,6 +635,7 @@ mod tests {
             "oak_log", "oak_leaves", "birch_log", "birch_leaves", "spruce_log", "spruce_leaves", "acacia_log", "acacia_leaves", "charred_log", "cactus",
             "palm_log", "palm_leaves", "mushroom_stem", "mushroom_cap_red", "cobblestone", "mossy_cobblestone", "andesite", "tall_grass", "fern",
             "flower_red", "flower_yellow", "flower_blue", "flower_white", "dead_bush", "dry_shrub", "snow_shrub", "ember_weed", "pebbles", "mushroom_red",
+            "moss", "mushroom_cap_glow", "mushroom_glow", "crystal_cluster",
         ]
         .iter()
         .enumerate()
@@ -571,9 +652,16 @@ mod tests {
         let p = default_project();
         let c = compile::compile(&p, &blocks(), &prefabs()).unwrap();
         assert!(c.warnings.is_empty(), "warnings: {:#?}", c.warnings);
-        assert_eq!(c.biomes.len(), 12);
+        assert_eq!(c.biomes.len(), 16);
         assert_eq!(c.zones.len(), 4);
         assert!(c.source.contains("wg_column"));
+        // cave biomes get flat per-voxel functions, every zone selects them, rivers are wired
+        for b in ["lush_caves", "crystal_caves", "magma_caves", "frost_caves"] {
+            let id = c.biomes.iter().position(|i| i.name == b).unwrap();
+            assert!(c.source.contains(&format!("uint b{id}_cmat(")), "{b} has no cave material");
+        }
+        assert!(c.source.contains("return NO_CAVE_BIOME;") && c.source.matches("_cave(vec3 p)").count() == 4);
+        assert!(c.source.contains("river_mask("));
         assert!(c.prop_layers > 10);
     }
 

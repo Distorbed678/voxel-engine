@@ -109,6 +109,7 @@ impl Taa {
         scene_tex: u32,
         extent: vk::Extent2D,
         n: u64,
+        jitter_index: u64,
         profiler: &mut GpuProfiler,
         slot: usize,
     ) {
@@ -148,7 +149,7 @@ impl Taa {
             history_out: self.storage[out],
             reset: self.reset as u32,
             scene_tex,
-            jitter: jitter(n).to_array(),
+            jitter: jitter(jitter_index).to_array(),
         };
         unsafe {
             d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, pm.layout, 0, &[set], &[]);

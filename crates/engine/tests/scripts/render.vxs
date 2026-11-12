@@ -85,3 +85,20 @@ op clear
 settle
 wait 30
 expect_image crates/engine/tests/golden/room_lamp_removed.png
+
+# cave biomes: a lush cave (moss, glow mushrooms, crystal accents) lit only by block light
+time 0.36
+pos 900 60 -400
+find_cave 10
+look 0 -15
+settle
+wait 60
+expect_image crates/engine/tests/golden/cave.png
+
+# rivers from above: channels at sea level through forest and meadow
+clouds off
+pos 200 700 -300
+look 0 -89
+settle
+wait 30
+expect_image crates/engine/tests/golden/rivers.png

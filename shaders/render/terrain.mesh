@@ -22,7 +22,10 @@ void main() {
     ChunkRecord rec = pc.records.c[pl.chunk];
     uint lod = rec.lodFlags & 15u;
     float scale = float(1u << lod);
-    vec3 relOrigin = vec3(rec.origin - f.camBlock.xyz) - f.camFrac.xyz;
+    // integer offset of the chunk from the camera block; corners are added to it exactly before
+    // the fractional camera offset is subtracted, so vertices shared by neighbouring chunks are
+    // bit-identical (otherwise water and ice show double-blended seams along chunk borders)
+    ivec3 relOriginI = rec.origin - f.camBlock.xyz;
     uint meta = hash_u32(pl.chunk * 7919u + pl.group * 131u + meshlet);
 
     for (uint k = 0u; k < 2u; ++k) {
@@ -49,7 +52,7 @@ void main() {
         bool sway = lod == 0u && (pc.blocks.b[blk].flags & 15u) == KIND_CUTOUT;
         for (uint c = 0u; c < 4u; ++c) {
             vec3 local = corners[c] * scale;
-            vec3 rel = relOrigin + local;
+            vec3 rel = vec3(relOriginI + ivec3(local)) - f.camFrac.xyz;
             if (sway) {
                 // position-based sway keeps neighbouring leaf quads welded together
                 vec3 wp = vec3(rec.origin & 1023) + local;

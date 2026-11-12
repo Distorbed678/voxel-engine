@@ -115,6 +115,9 @@ pub struct Engine {
     prev_cam_pos: DVec3,
     /// Whether the previous frame used TAA (turning it on resets the history).
     prev_taa: bool,
+    /// Jitter sequence position (scripts restart it after `settle` so screenshots don't depend
+    /// on how many frames loading took).
+    taa_frame: u64,
     pub wg: WorldgenSystem,
     pub node_ui: NodeEditorUi,
     pub tools: crate::tools::Tools,
@@ -380,6 +383,7 @@ impl Engine {
             bloom,
             prev_cam_pos: DVec3::ZERO,
             prev_taa: false,
+            taa_frame: 0,
             wg,
             node_ui: NodeEditorUi::new(),
             tools: crate::tools::Tools::new(prefabs),
@@ -1022,7 +1026,7 @@ impl Engine {
         let mut m = self.camera.matrices(aspect);
         if self.ui.taa {
             // sub-pixel jitter (culling keeps the unjittered frustum)
-            let j = crate::taa::jitter_matrix(crate::taa::jitter(self.frame_counter), extent);
+            let j = crate::taa::jitter_matrix(crate::taa::jitter(self.taa_frame), extent);
             m.view_proj = j * m.view_proj;
             m.proj = j * m.proj;
             m.inv_view_proj = m.view_proj.inverse();
@@ -1066,7 +1070,7 @@ impl Engine {
         );
         if self.ui.taa {
             let frame_addr = self.renderer.per_slot[slot].frame_buf.address;
-            self.taa.record(&self.ctx, cb, &self.pm, self.bindless.set, frame_addr, self.renderer.hdr_tex, extent, self.frame_counter, &mut self.profiler, profiler_slot);
+            self.taa.record(&self.ctx, cb, &self.pm, self.bindless.set, frame_addr, self.renderer.hdr_tex, extent, self.frame_counter, self.taa_frame, &mut self.profiler, profiler_slot);
         }
         if self.ui.bloom {
             let src = self.scene_output();
@@ -1235,6 +1239,7 @@ impl Engine {
             }
         }
         self.frame_counter += 1;
+        self.taa_frame += 1;
         self.input.end_frame();
         if let Some(batch) = retire_batch
             && let Some(ir) = self.imgui.renderer.as_mut() {

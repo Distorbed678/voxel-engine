@@ -1,0 +1,79 @@
+#version 460
+// Back-to-front order for transparent draw groups. The cull pass appends groups with atomics, so
+// their order between chunks is arbitrary. Layered transparent surfaces (water under ice or
+// glass) then blend in the wrong order wherever a pixel sees layers from two different chunks
+// (parallax near chunk borders). One workgroup bitonic-sorts up to SORT_CAP groups by chunk
+// distance, farthest first (ties by chunk and direction, so the order is deterministic), into a
+// second buffer. Groups beyond the cap keep their order and
+// are drawn last.
+#include "common.glsl"
+#include "voxel.glsl"
+
+#define SORT_CAP 4096u
+#define THREADS 1024u
+
+layout(local_size_x = THREADS) in;
+
+layout(push_constant, scalar) uniform PC {
+    FrameRef frame;
+    ChunkRecordBuf records;
+    DrawGroupBuf src;
+    DrawGroupBuf dst;
+    U32Buf args;      // args[3] = transparent group count
+    uint maxDraws;
+} pc;
+
+// key = distance (19 bits) | chunk record (16) | direction (3) | group index (12): ties are
+// broken by chunk and direction, not by the (non-deterministic) atomic append order
+shared uint64_t sKeys[SORT_CAP];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint count = min(pc.args.v[3], pc.maxDraws);
+    uint n = min(count, SORT_CAP);
+    uint np = 1u;
+    while (np < n) np <<= 1u;
+    FrameData f = pc.frame.d;
+
+    for (uint i = tid; i < np; i += THREADS) {
+        uint64_t key = 0ul;   // padding sorts to the end
+        if (i < n) {
+            DrawGroup g = pc.src.g[i];
+            ChunkRecord r = pc.records.c[g.chunk];
+            float size = float(32u << (r.lodFlags & 15u));
+            vec3 c = vec3(r.origin - f.camBlock.xyz) + size * 0.5 - f.camFrac.xyz;
+            uint d = min(uint(length(c) * 2.0) + 1u, (1u << 19) - 1u);
+            // within equal keys a later index must draw later (groups of one chunk and
+            // direction are appended in order), so the index is stored inverted
+            key = (uint64_t(d) << 31) | (uint64_t(g.chunk & 0xFFFFu) << 15) | (uint64_t(g.dir & 7u) << 12) | uint64_t(0xFFFu - i);
+        }
+        sKeys[i] = key;
+    }
+    barrier();
+
+    // bitonic sort, descending
+    for (uint k = 2u; k <= np; k <<= 1u) {
+        for (uint j = k >> 1u; j > 0u; j >>= 1u) {
+            for (uint i = tid; i < np; i += THREADS) {
+                uint l = i ^ j;
+                if (l > i) {
+                    uint64_t a = sKeys[i];
+                    uint64_t b = sKeys[l];
+                    bool desc = (i & k) == 0u;
+                    if (desc ? (a < b) : (a > b)) {
+                        sKeys[i] = b;
+                        sKeys[l] = a;
+                    }
+                }
+            }
+            barrier();
+        }
+    }
+
+    for (uint i = tid; i < n; i += THREADS) {
+        pc.dst.g[i] = pc.src.g[0xFFFu - uint(sKeys[i] & 0xFFFul)];
+    }
+    for (uint i = n + tid; i < count; i += THREADS) {
+        pc.dst.g[i] = pc.src.g[i];
+    }
+}

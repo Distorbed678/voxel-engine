@@ -150,6 +150,9 @@ pub struct World {
     pub light: light::LightTracker,
     /// Same for the coarse (far-field) light volume.
     pub coarse_light: light::LightTracker,
+    /// LOD0 chunks whose raw 34³ voxel slot (apron included) the next region read keeps (debugging).
+    pub capture_raw: std::collections::HashSet<IVec3>,
+    pub raw_slots: HashMap<IVec3, Vec<u16>>,
 }
 
 impl World {
@@ -173,6 +176,8 @@ impl World {
             frozen: false,
             light: light::LightTracker::fine(),
             coarse_light: light::LightTracker::coarse(),
+            capture_raw: Default::default(),
+            raw_slots: HashMap::new(),
         }
     }
 
@@ -398,6 +403,9 @@ impl World {
     pub fn fill_region(&mut self, key: ChunkKey, voxels: &[u16]) {
         if key.lod != 0 {
             return;
+        }
+        if self.capture_raw.remove(&key.pos) {
+            self.raw_slots.insert(key.pos, voxels.to_vec());
         }
         let origin = key.origin();
         for r in &mut self.region_reads {

@@ -60,6 +60,15 @@ Streams per chunk: 6 opaque directions, 6 transparent directions, and model inst
 - **Precision**: rendering is camera-relative, with an integer camera block plus a fractional
   offset, so it stays precise anywhere in the i32 world.
 
+## Transparency order
+
+Transparent quads (water, ice, glass) are blended without depth writes. The cull pass appends
+draw groups with atomics, so their order between chunks is arbitrary, and layered surfaces (water
+under ice or glass) used to blend in the wrong order wherever parallax made a pixel see layers
+from two chunks. `sort_trans.comp` sorts up to 4096 transparent groups back to front in one
+workgroup: a bitonic sort in shared memory on a 64-bit key of distance, chunk, direction and
+group. Within a chunk, quads are already ordered by slice.
+
 ## Temporal anti-aliasing
 
 The projection is jittered by a sub-pixel Halton (2,3) offset every frame (8-frame cycle). Culling,
@@ -121,8 +130,10 @@ the face, so distant lava still lights its banks.
 
 Graph kinds:
 
-- **World**: a Zone Voronoi node feeds the World Output, which also holds the sea level.
-- **Zone**: biome layout (Biome Voronoi or a single Biome) plus the cave carver density.
+- **World**: a Zone Voronoi node feeds the World Output, which also holds the sea level and the
+  river settings. A River node (or any 2D mask) feeds its Rivers input.
+- **Zone**: biome layout (Biome Voronoi or a single Biome), the cave carver density, and the cave
+  biomes (a Biome, or Cave Biome Select picking up to four biomes in warped 3D cells).
 - **Biome**: Terrain (density > 0 means solid), Material, Ground Cover, up to 6 prop layers,
   and environment colours.
 - **Function**: a reusable density subgraph with 4 arguments.
@@ -137,6 +148,16 @@ The compiler emits GLSL:
   Upstream nodes are re-emitted per context with memoisation.
 - **Blending**: up to 3 candidate biomes per column (2 zones × 2 biomes, merged), with
   weighted density blending. Material and decoration choices are dithered by weight.
+- **Caves**: the density function reports cells removed by the zone's carver, so the column
+  scan knows cave air exactly. The solid cell below cave air is a cave floor and the solid cell
+  above it a ceiling. Both take the cave biome's material (compiled a second time in flat form,
+  without the 2D column cache, since cave biomes aren't in the column's blend), and floors get its
+  ground cover. Natural overhangs aren't carved, so they don't count as caves.
+- **Rivers**: a 2D mask in [0, 1] per column. Near a river, terrain density is blended toward a
+  bed at `sea_level - river_depth * mask`, up to `river_carve` above sea level, so floating islands
+  survive. Rivers fill with the column biome's fluid at sea level (water, ice or lava) and get a
+  bed block. The River node follows the zero line of warped noise, using `|n| / |grad n|` as the
+  distance, so channel width stays even.
 - **Props**: one workgroup per chunk. Candidate anchors on a jittered grid go through biome,
   chance, mask, surface-scan and surface-block tests, then all threads rasterise the shapes.
   Props are deterministic per anchor, so they are seamless across chunks.

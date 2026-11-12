@@ -136,6 +136,39 @@
             params: {},
             comment: "",
         ),
+        (
+            id: 13,
+            kind: "cave_biomes",
+            pos: (300.0, 860.0),
+            params: {
+                "cell_size": F(64.0),
+                "seed": I(0),
+                "warp": F(24.0),
+                "weight1": F(1.0),
+                "weight2": F(0.4),
+                "weight3": F(1.0),
+                "weight4": F(1.0),
+            },
+            comment: "",
+        ),
+        (
+            id: 14,
+            kind: "biome",
+            pos: (0.0, 860.0),
+            params: {
+                "biome": Ref("crystal_caves"),
+            },
+            comment: "",
+        ),
+        (
+            id: 15,
+            kind: "biome",
+            pos: (0.0, 950.0),
+            params: {
+                "biome": Ref("lush_caves"),
+            },
+            comment: "",
+        ),
     ],
     links: [
         (
@@ -204,6 +237,24 @@
             to_node: 1,
             to_pin: 1,
         ),
+        (
+            from_node: 14,
+            from_pin: 0,
+            to_node: 13,
+            to_pin: 0,
+        ),
+        (
+            from_node: 15,
+            from_pin: 0,
+            to_node: 13,
+            to_pin: 1,
+        ),
+        (
+            from_node: 13,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 2,
+        ),
     ],
-    next_id: 13,
+    next_id: 16,
 )

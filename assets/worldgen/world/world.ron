@@ -7,6 +7,9 @@
             kind: "world_output",
             pos: (600.0, 200.0),
             params: {
+                "river_bed": Block("gravel"),
+                "river_carve": F(48.0),
+                "river_depth": F(5.0),
                 "sea_level": F(62.0),
             },
             comment: "",
@@ -68,6 +71,19 @@
             },
             comment: "",
         ),
+        (
+            id: 7,
+            kind: "river",
+            pos: (0.0, 420.0),
+            params: {
+                "bank": F(36.0),
+                "seed": I(0),
+                "spacing": F(1100.0),
+                "warp": F(180.0),
+                "width": F(9.0),
+            },
+            comment: "",
+        ),
     ],
     links: [
         (
@@ -100,6 +116,12 @@
             to_node: 1,
             to_pin: 0,
         ),
+        (
+            from_node: 7,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 1,
+        ),
     ],
-    next_id: 7,
+    next_id: 8,
 )

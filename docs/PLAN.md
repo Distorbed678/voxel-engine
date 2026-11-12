@@ -150,6 +150,16 @@ These follow from the choices above.
 - [x] **Bloom**: half-resolution mip chain (13-tap downsample with soft threshold + Karis
   average, tent upsample), added in the tonemap pass. About 0.04 ms. Strength and threshold
   sliders in the Render panel.
+- [x] **Cave biomes**: Zone Output "Cave Biomes" input; Cave Biome Select (3D warped cells);
+  carved-cell tracking gives exact cave floors/ceilings that take the cave biome's material,
+  floors get its ground cover. Defaults: lush (moss, glow mushrooms), crystal (calcite, crystal
+  clusters), magma (basalt, magma), frost (snow, packed ice) caves, all lit by block light.
+  `find_cave` script command.
+- [x] **Rivers**: River node (warped noise zero line, even width via |n|/|grad n|) into the World
+  Output's Rivers input; valleys carved to a bed below sea level, filled with the biome's fluid
+  (water, ice or lava), river-bed block.
+- [x] **Transparency order fix**: transparent draw groups sorted back to front on the GPU (the
+  "dark rectangle / grid lines on glacier lakes" issue was blend order between chunks).
 - [x] **Far-field block light**: a coarse 4-blocks-per-cell volume (block light only) over the
   LOD0 box, filled by LOD0 jobs as a side effect, sampled beyond the fine volume. Distant lava
   lights its banks.
@@ -181,17 +191,14 @@ Still needs a hand test (real input devices or complex UI flows):
 ### Known issues (found while capturing media)
 
 - [ ] The default biome graphs (e.g. oak_forest) have overlapping nodes in the editor.
-- [ ] A dark rectangle on the glacier lake surface (seen at 144,110,3280 looking 35°/-14°):
-  probably water drawn twice or a stale chunk.
-- [ ] Desert oasis water looks pale lavender rather than blue.
+- [x] ~~Dark rectangle / grid lines on the glacier lake~~: fixed by sorting transparent draws.
+- [x] ~~Desert oasis water looks lavender~~: not water; dry sinkholes where ravines and caves reach
+  the surface (they now get cave biome floors).
+- [ ] Apron cells on the Y faces of a chunk miss decorations and props owned by the chunk below
+  (found with `check_apron`); harmless for meshing today.
 
 ### Not done yet (owner's choices that are still open)
 
-- [ ] **Cave biomes.** Caves exist, but there are no distinct underground biomes yet (lush,
-  crystal, magma). Plan: a 3D biome selector in the Zone graph, plus cave floor/ceiling
-  materials and cave props (glow mushrooms, crystals, stalactites).
-- [ ] **Rivers.** Oceans and lakes come from sea level. Plan: a River node that carves channels
-  with a consistent water level.
 - [ ] **Colour grading per biome.** Fog is per-biome; grading (tint, contrast, saturation in the
   tonemapper) is not yet.
 - [ ] **Overdraw debug view.** It's listed in the debug-view combo but not implemented.
@@ -225,7 +232,7 @@ suggestions; the rest is the earlier roadmap.
    cheap far-field glow for distant lava (the volume reaches ±64 blocks), bloom.
 5. ~~TAA~~, then ~~bloom~~ (approved 2026-11-11).
 6. ~~**Far-field lava glow**~~ (approved 2026-11-11).
-7. Cave biomes + river node (completes the requested terrain features).
+7. ~~Cave biomes + river node~~.
 8. Small open items: per-biome colour grading, overdraw debug view, node comments / group boxes,
    **node auto-layout** (approved 2026-11-11; also tidies the overlapping default biome graphs),
    the known issues above.

@@ -114,6 +114,21 @@ uint strata_pick(vec3 p, float bh, float wob, uint seed, uint b1, uint b2, uint 
     return arr[h];
 }
 
+// Meandering river network: 1 in the channel, falling to 0 across the banks. The channel follows
+// the zero line of a warped low-frequency noise; distance to it is |n| / |grad n| (in blocks).
+float river_mask(vec2 xz, float spacing, float width, float bank, float warp, uint seed) {
+    vec2 q = xz + vec2(fbm2(xz / (spacing * 0.7), seed + 1u, 3, 2.0, 0.5), fbm2(xz / (spacing * 0.7), seed + 2u, 3, 2.0, 0.5)) * warp;
+    float eps = spacing * 0.01;
+    float n = fbm2(q / spacing, seed, 2, 2.0, 0.45);
+    float nx = fbm2((q + vec2(eps, 0.0)) / spacing, seed, 2, 2.0, 0.45);
+    float nz = fbm2((q + vec2(0.0, eps)) / spacing, seed, 2, 2.0, 0.45);
+    float g = length(vec2(nx - n, nz - n)) / eps;
+    float dist = abs(n) / max(g, 1e-6);
+    return 1.0 - smoothstep(width * 0.5, width * 0.5 + max(bank, 1e-3), dist);
+}
+
+#define NO_CAVE_BIOME 0xFFFFu
+
 uint ground_cover(vec3 p, uint ground, uint on, float chance, vec4 w, uvec4 b, uint seed) {
     if (ground != on) return 0u;
     ivec3 c = ivec3(floor(p));
