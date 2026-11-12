@@ -515,8 +515,8 @@ fn generate_builtin(name: &str) -> TexImage {
         "snow" => speckle(&mut t, Speckle { dark: 0xdfe8ef, mid: 0xeef4f8, light: 0xffffff, cells: 4, grain: 0.25, seed: 22 }),
         "ice" => {
             speckle(&mut t, Speckle { dark: 0x8fb8e8, mid: 0xa7caf0, light: 0xc6def8, cells: 4, grain: 0.2, seed: 23 });
-            for i in 0..TEX * TEX {
-                t.color[i][3] = 0.7;
+            for c in &mut t.color {
+                c[3] = 0.7;
             }
         }
         "packed_ice" => stone_like(&mut t, 0x86aee0, 0x98bce8, 0xb0cff2, 24, 0.04),
