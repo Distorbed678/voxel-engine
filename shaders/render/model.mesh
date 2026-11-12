@@ -1,5 +1,5 @@
 #version 460
-// Expands model instances (8 bytes: local xyz + neighbour mask | block + biome) into quads.
+// Expands model instances (8 bytes: local xyz + neighbour mask | block + biome << 16) into quads.
 // 6 instances x 10 quad slots per meshlet; unused / culled slots become degenerate triangles.
 #include "render/terrain_common.glsl"
 #include "render/models.glsl"
@@ -45,7 +45,7 @@ void main() {
         ivec3 lp = ivec3(m.x & 31u, (m.x >> 5) & 31u, (m.x >> 10) & 31u);
         uint nmask = (m.x >> 15) & 63u;
         uint block = m.y & 0xFFFFu;
-        uint biome = (m.y >> 24) & 127u;
+        uint biome = (m.y >> 16) & BIOME_MASK;
         uint model = (pc.blocks.b[BLOCK_ID(block)].flags >> 16) & 0xFFu;
         ivec3 wp = rec.origin + lp * int(scale);
         uint seed = hash_u32(uint(wp.x) * 73856093u ^ uint(wp.y) * 19349663u ^ uint(wp.z) * 83492791u);

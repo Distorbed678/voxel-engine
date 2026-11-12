@@ -140,13 +140,17 @@ ivec3 slice_pos(uint axis, int s, int u, int v) {
     return p;
 }
 
+// Biome ids are 12 bits (4096 biomes): the column buffer, quads and model instances carry them.
+#define BIOME_MASK 0xFFFu
+
 // Quad packing (8 bytes):
-//  w0: u(5) v(5) s(5) w-1(5) h-1(5) dir(3) lod(4, filled in by the renderer)
-//  w1: block(16) ao(8) biome(8)
+//  w0: u(5) v(5) s(5) w-1(5) h-1(5) dir(3) biome bits 8..11 (4; the renderer puts the lod there)
+//  w1: block(16) ao(8) biome bits 0..7
 uvec2 pack_quad(uint u, uint v, uint s, uint w, uint h, uint dir, uint block, uint ao, uint biome) {
-    uint w0 = u | (v << 5) | (s << 10) | ((w - 1u) << 15) | ((h - 1u) << 20) | (dir << 25);
-    uint w1 = block | (ao << 16) | (biome << 24);
+    uint w0 = u | (v << 5) | (s << 10) | ((w - 1u) << 15) | ((h - 1u) << 20) | (dir << 25) | ((biome >> 8) << 28);
+    uint w1 = block | (ao << 16) | ((biome & 0xFFu) << 24);
     return uvec2(w0, w1);
 }
+uint quad_biome(uvec2 q) { return (q.y >> 24) | ((q.x >> 28) << 8); }
 
 #endif

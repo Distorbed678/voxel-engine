@@ -31,7 +31,8 @@ pub struct GpuBiome {
     pub zone: [f32; 4],
 }
 
-pub const MAX_BIOMES: usize = 128;
+/// Biome ids are 12 bits (quads, model instances, the column buffer).
+pub const MAX_BIOMES: usize = 4096;
 
 struct Job {
     id: u64,

@@ -83,7 +83,8 @@ void main() {
             gl_PrimitiveTriangleIndicesEXT[pb] = uvec3(vb, vb + 2u, vb + 1u);
             gl_PrimitiveTriangleIndicesEXT[pb + 1u] = uvec3(vb, vb + 3u, vb + 2u);
         }
-        uvec2 packed = uvec2((q.x & 0x0FFFFFFFu) | (lod << 28), q.y);
+        // for the fragment shader: dir and lod, the biome in the low bits; block and ao
+        uvec2 packed = uvec2((q.x & (7u << 25)) | (lod << 28) | quad_biome(q), q.y & 0x00FFFFFFu);
         pQuad[pb] = packed;
         pQuad[pb + 1u] = packed;
         pMeta[pb] = meta;

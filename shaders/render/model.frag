@@ -17,7 +17,7 @@ void main() {
     FrameData f = pc.frame.d;
     COUNT_OVERDRAW(f);
     uint block = pData.x & 0xFFFFu;
-    uint biome = (pData.x >> 16) & 127u;
+    uint biome = (pData.x >> 16) & BIOME_MASK;
     uint texDir = pData.y & 255u;
     bool twoSided = (pData.y & 256u) != 0u;
     vec3 N = normalize(unpack_normal(pData.z));

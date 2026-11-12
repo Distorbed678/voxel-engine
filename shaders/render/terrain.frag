@@ -56,7 +56,7 @@ void main() {
     uint block = pQuad.y & 0xFFFFu;
     uint ao = (pQuad.y >> 16) & 0xFFu;
     uint lod = pQuad.x >> 28;
-    uint biome = (pQuad.y >> 24) & 127u;
+    uint biome = pQuad.x & BIOME_MASK;
     BiomeGpu bio = pc.biomes.b[biome];
     uint axis = dir >> 1;
     vec3 N = vec3(dir_normal(dir));

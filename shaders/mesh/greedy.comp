@@ -66,17 +66,17 @@ ivec3 gN, gU, gV;
 int gS;
 
 uint biomeAt(ivec3 p) {
-    return uint(pc.columns.c[gJob * uint(CA * CA) + uint((p.z + 1) * CA + (p.x + 1))]) & 127u;
+    return uint(pc.columns.c[gJob * uint(CA * CA) + uint((p.z + 1) * CA + (p.x + 1))]) & BIOME_MASK;
 }
 
-// key: block(16) | ao(8) | biome(7) | transparent(1)
-uint faceKey(int u, int v) {
+// key: block(16) | ao(8) | transparent(1) << 31, biome in the high word
+uint64_t faceKey(int u, int v) {
     ivec3 p = slice_pos(gAxis, gS, u, v);
     uint b = vox(p);
     uint kb = kindOf(b);
     uint biome = biomeAt(p);
     if (kb == KIND_TRANSPARENT) {
-        return b | (0xFFu << 16) | (biome << 24) | (1u << 31);
+        return uint64_t(b | (0xFFu << 16) | (1u << 31)) | (uint64_t(biome) << 32);
     }
     ivec3 q = p + gN;
     bool xm = aoOcc(q - gU), xp = aoOcc(q + gU), ym = aoOcc(q - gV), yp = aoOcc(q + gV);
@@ -84,7 +84,7 @@ uint faceKey(int u, int v) {
     bool pp = aoOcc(q + gU + gV), mp = aoOcc(q - gU + gV);
     uint ao = aoCorner(xm, ym, mm) | (aoCorner(xp, ym, pm) << 2) |
               (aoCorner(xp, yp, pp) << 4) | (aoCorner(xm, yp, mp) << 6);
-    return b | (ao << 16) | (biome << 24);
+    return uint64_t(b | (ao << 16)) | (uint64_t(biome) << 32);
 }
 
 void main() {
@@ -132,7 +132,7 @@ void main() {
                             uint nb = vox(p + dir_normal(d));
                             if (nb != 0u && kindOf(nb) == KIND_OPAQUE) nmask |= 1u << d;
                         }
-                        pc.scratch.v[offM + nM] = uvec2(uint(p.x) | (uint(p.y) << 5) | (uint(p.z) << 10) | (nmask << 15), b | (biomeAt(p) << 24));
+                        pc.scratch.v[offM + nM] = uvec2(uint(p.x) | (uint(p.y) << 5) | (uint(p.z) << 10) | (nmask << 15), b | (biomeAt(p) << 16));
 #endif
                         nM++;
                     }
@@ -148,7 +148,7 @@ void main() {
         for (int v = 0; v < 32; ++v) {
             while (vis[v] != 0u) {
                 int u = findLSB(vis[v]);
-                uint key = faceKey(u, v);
+                uint64_t key = faceKey(u, v);
                 int w = 1;
                 while (u + w < 32 && ((vis[v] >> uint(u + w)) & 1u) != 0u && faceKey(u + w, v) == key) {
                     w++;
@@ -166,10 +166,11 @@ void main() {
                     vis[v + h] &= ~rowMask;
                     h++;
                 }
-                bool transparent = (key >> 31) != 0u;
+                uint klo = uint(key);
+                bool transparent = (klo >> 31) != 0u;
 #ifdef MESH_WRITE
                 uvec2 q = pack_quad(uint(u), uint(v), uint(gS), uint(w), uint(h), dir,
-                                    key & 0xFFFFu, (key >> 16) & 0xFFu, (key >> 24) & 127u);
+                                    klo & 0xFFFFu, (klo >> 16) & 0xFFu, uint(key >> 32));
                 if (transparent) pc.scratch.v[offT + nT] = q;
                 else pc.scratch.v[offO + nO] = q;
 #endif
