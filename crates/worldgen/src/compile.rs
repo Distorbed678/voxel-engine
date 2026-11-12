@@ -33,12 +33,47 @@ pub struct BiomeInfo {
     pub ambient: u32,
     pub precipitation: u32,
     pub particle_density: f32,
+    /// Used by a zone for its caves (and by none for its surface).
+    pub cave: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct ZoneInfo {
     pub name: String,
     pub map_color: [f32; 3],
+    /// Surface biomes its layout can pick, and its cave biomes.
+    pub biomes: Vec<u32>,
+    pub cave_biomes: Vec<u32>,
+}
+
+/// Solo preview (editor): two fixed slots at the end of the parameter buffer (whatever the
+/// graph's parameter count, which changes while a rebuild is pending) hold the zone and the biome
+/// shown everywhere (-1 = off). Surface biomes come with a zone that uses them; a cave biome
+/// replaces every cave biome. See `wg_column` / `wg_cave_biome`.
+pub const PARAM_CAPACITY: usize = 64 * 1024;
+pub const SOLO_PARAM: usize = PARAM_CAPACITY - 2;
+
+/// Biomes referenced by Biome nodes upstream of input `pin` of `node`.
+fn upstream_biomes(g: &Graph, node: u32, pin: u8, ids: &HashMap<String, u32>) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut stack: Vec<u32> = g.input_link(node, pin).map(|l| l.from_node).into_iter().collect();
+    let mut seen = std::collections::HashSet::new();
+    while let Some(n) = stack.pop() {
+        if !seen.insert(n) {
+            continue;
+        }
+        if let Some(nd) = g.node(n)
+            && nd.kind == "biome"
+            && let Some(Value::Ref(r)) = nd.params.get("biome")
+            && let Some(&id) = ids.get(r)
+            && !out.contains(&id)
+        {
+            out.push(id);
+        }
+        stack.extend(g.links.iter().filter(|l| l.to_node == n).map(|l| l.from_node));
+    }
+    out.sort_unstable();
+    out
 }
 
 /// Location of a live parameter in the GPU parameter buffer.
@@ -828,6 +863,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             ambient: 0,
             precipitation: 0,
             particle_density: outn.params.get("particle_density").map(|v| v.as_f32()).unwrap_or(1.0),
+            cave: false,
         });
         sh.depth_biome = Some(bi as u32);
         let mut em = Em::new(&mut sh, g, pfx.clone(), false);
@@ -1050,7 +1086,12 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             sh.warnings.push(format!("Zone '{name}' has no output node"));
             continue;
         };
-        zone_infos.push(ZoneInfo { name: name.clone(), map_color: color_param(g, &outn, "map_color") });
+        zone_infos.push(ZoneInfo {
+            name: name.clone(),
+            map_color: color_param(g, &outn, "map_color"),
+            biomes: upstream_biomes(g, outn.id, 0, &sh.biome_ids),
+            cave_biomes: upstream_biomes(g, outn.id, 2, &sh.biome_ids),
+        });
         let mut em = Em::new(&mut sh, g, format!("z{zi}_"), true);
         // carver
         let carve = g.input_link(outn.id, 1).copied().map(|l| em.density(l.from_node, l.from_pin, 0).e).unwrap_or_else(|| "0.0".into());
@@ -1226,6 +1267,12 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         zone_code.push_str(&cf);
     }
 
+    // cave-only biomes (the solo preview treats them as caves)
+    for (i, b) in biome_infos.iter_mut().enumerate() {
+        let i = i as u32;
+        b.cave = cave_biome_ids.contains(&i) && !zone_infos.iter().any(|z| z.biomes.contains(&i));
+    }
+
     // ---- world: zone layout ----
     let mut world_code = String::new();
     let world = project.graphs.iter().find(|g| g.kind == GraphKind::World);
@@ -1314,6 +1361,9 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     let nz = zone_infos.len();
     let mut s = String::new();
     let _ = writeln!(s, "#define MAXH {maxh}\n#define NUM_BIOMES {nb}u\n#define NUM_ZONES {nz}u\n#define NUM_PROP_LAYERS {}u", prop_layers.len());
+    let _ = writeln!(s, "#define WG_SOLO_PARAM {SOLO_PARAM}u");
+    let cave: Vec<String> = biome_infos.iter().map(|b| b.cave.to_string()).collect();
+    let _ = writeln!(s, "const bool BIOME_IS_CAVE[{}] = bool[]({});", nb.max(1), if cave.is_empty() { "false".into() } else { cave.join(", ") });
     let _ = writeln!(s, "struct WgColumn {{\n    uint zone0; uint zone1; float zw1;\n    uint nb;\n    uint biome[3];\n    float bw[3];\n    float h[3][MAXH];\n    float river;\n}};");
     let _ = writeln!(
         s,
@@ -1348,6 +1398,9 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         r#"void wg_column(vec2 xz, out WgColumn c) {{
     uint z0, z1; float zw1;
     zone_select(xz, z0, z1, zw1);
+    // solo preview: one zone (and one surface biome) everywhere
+    float soloZone = P(WG_SOLO_PARAM), soloBiome = P(WG_SOLO_PARAM + 1u);
+    if (soloZone >= 0.0) {{ z0 = uint(soloZone); z1 = z0; zw1 = 0.0; }}
     c.zone0 = z0; c.zone1 = z1; c.zw1 = zw1;
     c.river = wg_river(xz);
     uint cb[4]; float cw[4];
@@ -1356,6 +1409,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     cb[0] = a0; cw[0] = (1.0 - aw) * (1.0 - zw1);
     cb[1] = a1; cw[1] = aw * (1.0 - zw1);
     cb[2] = 0u; cw[2] = 0.0; cb[3] = 0u; cw[3] = 0.0;
+    if (soloBiome >= 0.0 && !BIOME_IS_CAVE[uint(soloBiome)]) {{ cb[0] = uint(soloBiome); cw[0] = 1.0; cw[1] = 0.0; }}
     if (zw1 > 0.0) {{
         zone_biomes(z1, xz, a0, a1, aw);
         cb[2] = a0; cw[2] = (1.0 - aw) * zw1;
@@ -1457,7 +1511,16 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0]; }}"#
     let _ = writeln!(s, "}}");
 
     // ---- cave biomes ----
-    let _ = writeln!(s, "uint wg_cave_biome(vec3 p, in WgColumn c) {{\n    uint z = c.zw1 > 0.5 ? c.zone1 : c.zone0;");
+    let _ = writeln!(
+        s,
+        "uint wg_cave_biome(vec3 p, in WgColumn c) {{\n    float solo = P(WG_SOLO_PARAM + 1u);\n    uint z = c.zw1 > 0.5 ? c.zone1 : c.zone0;"
+    );
+    // a soloed cave biome replaces the zone's choice wherever the zone has cave biomes
+    let _ = writeln!(s, "    if (solo >= 0.0 && BIOME_IS_CAVE[uint(solo)]) {{ uint b; switch (z) {{");
+    for (i, z) in zone_infos.iter().enumerate() {
+        let _ = writeln!(s, "        case {i}u: b = {}; break;", if z.cave_biomes.is_empty() { "NO_CAVE_BIOME" } else { "uint(solo)" });
+    }
+    let _ = writeln!(s, "        default: b = NO_CAVE_BIOME; break;\n    }} return b; }}");
     s.push_str(&sw("z", &|i| format!("return z{i}_cave(p);"), nz, "return NO_CAVE_BIOME;"));
     let _ = writeln!(s, "}}");
     let mut cm = String::from("uint wg_cave_material(uint b, vec3 p, float depth, float airAbove) {\n    switch (b) {\n");

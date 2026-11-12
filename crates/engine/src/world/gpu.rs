@@ -192,6 +192,8 @@ pub struct WorldGpu {
     params_staging: Buffer,
     params_dirty: bool,
     pub param_values: Vec<f32>,
+    /// solo preview zone and biome (-1 = off)
+    solo: [f32; 2],
     pub prefab_addrs: (u64, u64),
 }
 
@@ -228,9 +230,10 @@ impl WorldGpu {
             quad_capacity,
             scratch_capacity,
             last_batch: (0, 0),
-            params: Buffer::gpu(ctx, "graph_params", 64 * 1024 * 4)?,
-            params_staging: Buffer::upload(ctx, "graph_params_staging", 64 * 1024 * 4)?,
+            params: Buffer::gpu(ctx, "graph_params", worldgen::compile::PARAM_CAPACITY as u64 * 4)?,
+            params_staging: Buffer::upload(ctx, "graph_params_staging", worldgen::compile::PARAM_CAPACITY as u64 * 4)?,
             params_dirty: true,
+            solo: [-1.0, -1.0],
             param_values: vec![0.0; 16],
             prefab_addrs: (0, 0),
         })
@@ -239,6 +242,16 @@ impl WorldGpu {
     pub fn set_params(&mut self, values: &[f32]) {
         self.param_values = values.to_vec();
         self.params_dirty = true;
+    }
+
+    /// Solo preview: zone and biome indices shown everywhere (None = off); see
+    /// `worldgen::compile::SOLO_PARAM`.
+    pub fn set_solo(&mut self, zone: Option<u32>, biome: Option<u32>) {
+        let v = [zone.map_or(-1.0, |z| z as f32), biome.map_or(-1.0, |b| b as f32)];
+        if v != self.solo {
+            self.solo = v;
+            self.params_dirty = true;
+        }
     }
 
     pub fn has_free_slot(&self) -> bool {
@@ -288,13 +301,16 @@ impl WorldGpu {
         let d = &ctx.device;
         let mut any = false;
         if self.params_dirty {
-            let n = self.param_values.len().min(64 * 1024);
+            use worldgen::compile::SOLO_PARAM;
+            let n = self.param_values.len().min(SOLO_PARAM);
+            self.params_staging.write(0, &self.param_values[..n]);
+            self.params_staging.write(SOLO_PARAM as u64 * 4, &self.solo);
+            let mut regions = vec![vk::BufferCopy { src_offset: SOLO_PARAM as u64 * 4, dst_offset: SOLO_PARAM as u64 * 4, size: 8 }];
             if n > 0 {
-                self.params_staging.write(0, &self.param_values[..n]);
-                let region = [vk::BufferCopy { src_offset: 0, dst_offset: 0, size: (n * 4) as u64 }];
-                unsafe { d.cmd_copy_buffer(cb, self.params_staging.raw, self.params.raw, &region) };
-                any = true;
+                regions.push(vk::BufferCopy { src_offset: 0, dst_offset: 0, size: (n * 4) as u64 });
             }
+            unsafe { d.cmd_copy_buffer(cb, self.params_staging.raw, self.params.raw, &regions) };
+            any = true;
             self.params_dirty = false;
         }
         for slot in 0..self.slots.len() {

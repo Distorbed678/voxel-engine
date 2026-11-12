@@ -11,6 +11,14 @@ settle
 wait 240
 expect_image crates/engine/tests/golden/islands.png
 
+# solo preview: the same view with one biome everywhere (the images after this one check that
+# turning it off brings the world back)
+solo biome desert
+settle
+wait 240
+expect_image crates/engine/tests/golden/solo_desert.png
+solo off
+
 # terracotta strata, biome blending
 time 0.42
 pos -1184 142 2784

@@ -122,6 +122,8 @@ cargo run --release
 **Node editor**: right-click or `Space` adds a node. Dragging a pin into empty space adds a node
 and links it. `Del` deletes. `Ctrl+C`/`V`/`D` copy, paste and duplicate. "Group selection into
 function" turns the selected nodes into a reusable function graph. **Auto-layout** tidies a graph.
+**Solo** shows the open zone or biome across the whole world, to tune it without searching for it
+(a cave biome fills every cave).
 A **Comment** node is a resizable box with a note; dragging it moves the nodes inside.
 
 </details>

@@ -32,6 +32,7 @@
 //! | `select X1 Y1 Z1 X2 Y2 Z2` | set the box selection |
 //! | `op fill\|clear\|copy\|paste\|rotate\|replace FROM\|save_prefab NAME` | selection operations |
 //! | `save_world PATH` / `load_world PATH` / `clear_edits` | world files (seed, camera, time, edits) |
+//! | `solo zone NAME\|biome NAME\|off` | show one zone or biome everywhere (preview) |
 //! | `expect_pick NAME\|none` | block under the cursor (from the GPU pick) |
 //! | `expect_block X Y Z NAME[:STATE]` | actual block at a position (GPU region read: generation + edits) |
 //! | `expect_capture true\|false` | whether the UI owns the mouse |
@@ -93,6 +94,8 @@ enum Cmd {
     Shadows(bool),
     Taa(bool),
     ShadowCache(bool),
+    /// None = off
+    Solo(Option<(worldgen::GraphKind, String)>),
     Bloom(bool),
     Grading(bool),
     Particles(bool),
@@ -299,6 +302,12 @@ fn parse(line: &str) -> Result<Cmd> {
         "shadows" => Cmd::Shadows(on_off(a.first())?),
         "taa" => Cmd::Taa(on_off(a.first())?),
         "shadow_cache" => Cmd::ShadowCache(on_off(a.first())?),
+        "solo" => Cmd::Solo(match (a.first().copied(), a.get(1)) {
+            (Some("off"), _) => None,
+            (Some("zone"), Some(n)) => Some((worldgen::GraphKind::Zone, n.to_string())),
+            (Some("biome"), Some(n)) => Some((worldgen::GraphKind::Biome, n.to_string())),
+            _ => bail!("expected `solo zone NAME`, `solo biome NAME` or `solo off`"),
+        }),
         "bloom" => Cmd::Bloom(on_off(a.first())?),
         "grading" => Cmd::Grading(on_off(a.first())?),
         "particles" => Cmd::Particles(on_off(a.first())?),
@@ -939,6 +948,18 @@ impl Engine {
             Cmd::Shadows(on) => self.ui.shadows = on,
             Cmd::Taa(on) => self.ui.taa = on,
             Cmd::ShadowCache(on) => self.ui.shadow_cache = on,
+            Cmd::Solo(solo) => {
+                if let Some((kind, name)) = &solo {
+                    let known = match kind {
+                        worldgen::GraphKind::Zone => self.wg.compiled.zones.iter().any(|z| &z.name == name),
+                        _ => self.wg.compiled.biomes.iter().any(|b| &b.name == name),
+                    };
+                    if !known {
+                        s.fail(line, format!("no such zone or biome `{name}`"));
+                    }
+                }
+                self.node_ui.solo = solo;
+            }
             Cmd::Bloom(on) => self.ui.bloom = on,
             Cmd::Grading(on) => self.ui.grading = on,
             Cmd::Particles(on) => self.ui.particles = on,

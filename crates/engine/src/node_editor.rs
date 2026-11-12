@@ -40,6 +40,8 @@ pub struct NodeEditorUi {
     status: String,
     /// Last on-screen size of each comment box, to turn resizes into width/height changes.
     comment_sizes: HashMap<u32, [f32; 2]>,
+    /// Solo preview: this zone or biome everywhere in the world (by graph name).
+    pub solo: Option<GraphKey>,
 }
 
 fn pin_id(node: u32, out: bool, idx: u8) -> PinId {
@@ -84,6 +86,7 @@ impl NodeEditorUi {
             new_name: String::new(),
             new_kind: 2,
             rename_buf: String::new(),
+            solo: None,
             clipboard: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -186,6 +189,16 @@ impl NodeEditorUi {
             self.placed.remove(&self.current);
             self.navigate = true;
         }
+        if matches!(self.current.0, GraphKind::Zone | GraphKind::Biome) {
+            ui.same_line();
+            let on = self.solo.as_ref() == Some(&self.current);
+            if ui.button(if on { "Stop solo" } else { "Solo" }) {
+                self.solo = if on { None } else { Some(self.current.clone()) };
+            }
+            if ui.is_item_hovered() {
+                ui.tooltip_text("Show this zone or biome across the whole world, to tune it without searching for it (nothing is saved). A cave biome fills every cave.");
+            }
+        }
         ui.same_line();
         if ui.button("Undo") {
             self.restore(wg, true);
@@ -258,6 +271,7 @@ impl NodeEditorUi {
         }
         ui.separator();
         ui.text(format!("Selected: {}", self.current.1));
+
         if self.current.0 != GraphKind::World {
             ui.input_text("##rename", &mut self.rename_buf).build();
             ui.same_line();

@@ -171,6 +171,8 @@ pub struct UiCtx<'a> {
     pub world_path: Option<&'a std::path::Path>,
     /// edits changed since the world was last saved or opened
     pub unsaved: bool,
+    /// solo preview (node editor): (kind, name)
+    pub solo: &'a mut Option<(worldgen::GraphKind, String)>,
 }
 
 /// "3 min ago" etc.
@@ -304,6 +306,12 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
         ui.text_colored([0.6, 0.8, 1.0, 1.0], format!("  {:.0} fps  {:.2} ms", c.stats.fps, 1000.0 / c.stats.fps.max(1.0)));
         if c.fly_mode {
             ui.text_colored([1.0, 0.8, 0.3, 1.0], "  FLY MODE (Tab/Esc to release)");
+        }
+        if let Some((kind, name)) = c.solo.clone() {
+            ui.text_colored([1.0, 0.8, 0.3, 1.0], format!("  SOLO {} {name}", if kind == worldgen::GraphKind::Zone { "zone" } else { "biome" }));
+            if ui.small_button("Stop solo") {
+                *c.solo = None;
+            }
         }
     });
 

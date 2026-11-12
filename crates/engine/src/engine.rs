@@ -165,6 +165,8 @@ pub struct Engine {
     shadow_cache: [ShadowCache; 2],
     /// shadow cascades to redraw this frame (bit c)
     shadow_mask: u32,
+    /// solo preview (zone, biome) as last sent to the generator
+    solo_applied: (Option<u32>, Option<u32>),
     last_frame: Instant,
     pub dt: f32,
     pub pick: Option<PickHit>,
@@ -408,6 +410,7 @@ impl Engine {
             saved_revision: 0,
             shadow_cache: Default::default(),
             shadow_mask: 0,
+            solo_applied: (None, None),
             opts,
             window,
             swapchain,
@@ -752,6 +755,21 @@ impl Engine {
         Ok(unknown)
     }
 
+    /// The solo preview as generator indices: a zone alone, or a surface biome with a zone that
+    /// uses it, or a cave biome in every zone's caves.
+    fn resolve_solo(&self) -> (Option<u32>, Option<u32>) {
+        let c = &self.wg.compiled;
+        match &self.node_ui.solo {
+            Some((worldgen::GraphKind::Zone, name)) => (c.zones.iter().position(|z| &z.name == name).map(|i| i as u32), None),
+            Some((worldgen::GraphKind::Biome, name)) => {
+                let Some(b) = c.biomes.iter().position(|x| &x.name == name).map(|i| i as u32) else { return (None, None) };
+                let zone = if c.biomes[b as usize].cave { None } else { c.zones.iter().position(|z| z.biomes.contains(&b)).map(|i| i as u32) };
+                (zone, Some(b))
+            }
+            _ => (None, None),
+        }
+    }
+
     fn set_world_path(&mut self, path: Option<PathBuf>) {
         if let Some(w) = &self.window {
             match &path {
@@ -895,6 +913,13 @@ impl Engine {
         }
 
         self.sync_prefabs()?;
+        // ---- solo preview: one zone or biome everywhere ----
+        let solo = self.resolve_solo();
+        if solo != self.solo_applied {
+            self.wgpu.set_solo(solo.0, solo.1);
+            self.solo_applied = solo;
+            self.world.invalidate_all();
+        }
         // ---- world generator edits ----
         let (params_changed, built) = self.wg.update();
         if params_changed {
@@ -1657,6 +1682,7 @@ impl Engine {
                 bench_report: self.bench.as_ref().and_then(|b| b.report.clone()),
                 world_path: self.world_path.as_deref(),
                 unsaved,
+                solo: &mut self.node_ui.solo,
             },
         );
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {

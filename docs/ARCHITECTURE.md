@@ -227,6 +227,15 @@ The compiler emits GLSL:
   sorted by layer and position and drawn one at a time, since overlapping props resolve by order.
   So every chunk a prop touches draws the same blocks.
 
+### Solo preview
+
+The editor's Solo button shows one zone or biome everywhere. The zone and biome indices sit in
+two fixed slots at the end of the parameter buffer (not after the graph's parameters, whose
+count changes while a rebuild is pending), so switching just regenerates the world. `wg_column`
+forces the zone (a soloed surface biome brings a zone that uses it, for its carver and caves)
+and the biome, and `wg_cave_biome` returns a soloed cave biome wherever a zone has caves. The
+minimap, probes and biome search see the same world.
+
 ### Generation consistency
 
 A chunk also generates its neighbours' apron cells, so a cell must come out the same whichever

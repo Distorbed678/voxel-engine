@@ -255,8 +255,9 @@ Still needs a hand test (real input devices or complex UI flows):
 
 ### Approved additions (owner, 2026-11-12)
 
-- [ ] **Isolated zone / biome preview**: show one zone or one biome on its own across the whole
-  world, to tune it without searching for it.
+- [x] **Isolated zone / biome preview**: Solo in the node editor toolbar (and `solo` in scripts)
+  shows the open zone or biome everywhere; a cave biome fills every cave. A live value, so it
+  switches instantly; the menu bar shows it while it's on. Golden image `solo_desert`.
 - [x] **Faster shadow pass**: the two far cascades are cached (camera-centred windows, redrawn
   when the camera leaves a margin, the sun turns or casters inside change). Shadows 1.28 →
   0.18 ms in a forest at 1080p standing still, 0.61 → 0.09 ms over the benchmark flight. Caster
@@ -299,7 +300,7 @@ Approved on 2026-11-12, in this order (small fixes first, the largest last):
 14. ~~Apron Y-face props~~.
 15. ~~World save files~~.
 16. ~~Faster shadow pass~~.
-17. Isolated zone / biome preview.
+17. ~~Isolated zone / biome preview~~.
 18. Flowing water.
 
 Still not selected (ask before doing): node preview thumbnails, camera bookmarks / cinematic
