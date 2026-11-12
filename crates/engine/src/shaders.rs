@@ -173,6 +173,44 @@ impl PipelineManager {
         Ok(PipelineHandle(self.entries.len() - 1))
     }
 
+    /// Create several in-memory compute pipelines at once: GLSL -> SPIR-V one after another (fast),
+    /// then the driver compiles (slow) run in parallel. Used for the generated world generator.
+    pub fn create_sources_parallel(&mut self, ctx: &VkContext, items: Vec<(&str, PipelineSource)>) -> Result<Vec<PipelineHandle>> {
+        let mut spirvs = Vec::new();
+        for (name, source) in &items {
+            let PipelineSource::ComputeSource { name: n, source: src, defines } = source else {
+                anyhow::bail!("{name}: create_sources_parallel takes ComputeSource pipelines");
+            };
+            let mut out = self.compiler.compile_source(n, src, ShaderKind::Compute, &defines_ref(defines))?;
+            if n.starts_with("worldgen_") && std::env::var("VE_INLINE_ALL").is_err() {
+                vkcore::shader::spirv_dont_inline(&mut out.spirv, worldgen_noinline);
+            }
+            spirvs.push(out);
+        }
+        let layout = self.layout;
+        let built: Vec<Result<vk::Pipeline>> = std::thread::scope(|sc| {
+            let handles: Vec<_> = items.iter().zip(&spirvs).map(|((name, _), out)| sc.spawn(move || pipeline::compute(ctx, layout, &out.spirv, name))).collect();
+            handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("pipeline build thread panicked")))).collect()
+        });
+        if built.iter().any(|b| b.is_err()) {
+            let mut err = None;
+            for b in built {
+                match b {
+                    Ok(p) => unsafe { ctx.device.destroy_pipeline(p, None) },
+                    Err(e) => err = err.or(Some(e)),
+                }
+            }
+            return Err(err.unwrap());
+        }
+        let mut handles = Vec::new();
+        for (((name, source), out), pipeline) in items.into_iter().zip(spirvs).zip(built) {
+            let deps = out.deps.into_iter().map(|p| p.canonicalize().unwrap_or(p)).collect();
+            self.entries.push(Entry { name: name.to_string(), source, pipeline: pipeline?, deps });
+            handles.push(PipelineHandle(self.entries.len() - 1));
+        }
+        Ok(handles)
+    }
+
     /// Replace the source of an existing pipeline (e.g. new worldgen code) with an already-built
     /// pipeline object.
     pub fn replace(&mut self, h: PipelineHandle, source: PipelineSource, pipeline: vk::Pipeline, deps: Vec<PathBuf>, retire_after: u64) {

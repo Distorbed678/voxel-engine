@@ -137,6 +137,7 @@ impl WorldgenSystem {
                             let mut a = compiler.compile_source("worldgen_terrain.comp", &job.terrain, ShaderKind::Compute, &[])?;
                             let mut b = compiler.compile_source("worldgen_props.comp", &job.props, ShaderKind::Compute, &[])?;
                             let mut c = compiler.compile_source("worldgen_probe.comp", &job.probe, ShaderKind::Compute, &[])?;
+                            let t_glsl = t0.elapsed().as_secs_f32() * 1000.0;
                             if !optimized {
                                 vkcore::shader::spirv_dont_inline(&mut a.spirv, crate::shaders::worldgen_noinline);
                                 vkcore::shader::spirv_dont_inline(&mut b.spirv, crate::shaders::worldgen_noinline);
@@ -182,6 +183,12 @@ impl WorldgenSystem {
                                     return Err(e);
                                 }
                             };
+                            log::info!(
+                                "{} generator: GLSL -> SPIR-V {:.0} ms, driver {:.0} ms",
+                                if optimized { "optimised" } else { "quick" },
+                                t_glsl,
+                                t0.elapsed().as_secs_f32() * 1000.0 - t_glsl
+                            );
                             let mut deps = a.deps;
                             deps.extend(b.deps);
                             Ok(BuiltPipelines {

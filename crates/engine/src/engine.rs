@@ -236,24 +236,27 @@ impl Engine {
         let (terrain_src, props_src, probe_src) = wg.sources();
         let t0 = Instant::now();
         let src = |n: &str, s: String| PipelineSource::ComputeSource { name: format!("{n}.comp"), source: s, defines: vec![] };
-        let (gen_pipeline, props_pipeline, probe_pipeline) = match (
-            pm.create(&ctx, "worldgen_terrain", src("worldgen_terrain", terrain_src)),
-            pm.create(&ctx, "worldgen_props", src("worldgen_props", props_src)),
-            pm.create(&ctx, "worldgen_probe", src("worldgen_probe", probe_src)),
-        ) {
-            (Ok(a), Ok(b), Ok(c)) => (a, b, c),
-            (a, b, c) => {
-                log::error!("world generator failed to build, using defaults: {:?} {:?} {:?}", a.err(), b.err(), c.err());
+        let build = |pm: &mut PipelineManager, t: String, p: String, q: String| {
+            pm.create_sources_parallel(
+                &ctx,
+                vec![
+                    ("worldgen_terrain", src("worldgen_terrain", t)),
+                    ("worldgen_props", src("worldgen_props", p)),
+                    ("worldgen_probe", src("worldgen_probe", q)),
+                ],
+            )
+        };
+        let handles = match build(&mut pm, terrain_src, props_src, probe_src) {
+            Ok(h) => h,
+            Err(e) => {
+                log::error!("world generator failed to build, using defaults: {e:#}");
                 wg.reset_to_defaults();
                 wg.update();
                 let (t, p, q) = wg.sources();
-                (
-                    pm.create(&ctx, "worldgen_terrain", src("worldgen_terrain", t))?,
-                    pm.create(&ctx, "worldgen_props", src("worldgen_props", p))?,
-                    pm.create(&ctx, "worldgen_probe", src("worldgen_probe", q))?,
-                )
+                build(&mut pm, t, p, q)?
             }
         };
+        let (gen_pipeline, props_pipeline, probe_pipeline) = (handles[0], handles[1], handles[2]);
         wg.active_source = wg.compiled.source.clone();
         wg.dirty = false;
         wg.request_optimized();
