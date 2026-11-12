@@ -165,7 +165,8 @@ Graph kinds:
 
 - **World**: a Zone Voronoi node feeds the World Output, which also holds the sea level and the
   river settings. A River node (or any 2D mask) feeds its Rivers input.
-- **Zone**: biome layout (Biome Voronoi or a single Biome), the cave carver density, and the cave
+- **Zone**: biome layout (Biome Voronoi, Biome Threshold Select over any 2D selector such as
+  humidity noise or a height map, or a single Biome), the cave carver density, and the cave
   biomes (a Biome, or Cave Biome Select picking up to four biomes in warped 3D cells).
 - **Biome**: Terrain (density > 0 means solid), Material, Ground Cover, up to 6 prop layers,
   and environment colours.

@@ -722,7 +722,9 @@ impl Engine {
                     s.fail(line, "settle timed out (world still streaming)");
                     None
                 } else {
-                    Some(Busy::Settle { left: left - 1, quiet })
+                    // a cold shader build takes seconds of real time: don't count those frames
+                    let building = self.wg.is_building() || self.wg.is_optimizing();
+                    Some(Busy::Settle { left: if building { left } else { left - 1 }, quiet })
                 }
             }
             Busy::Survey { biome, height, spacing, sent, left } => {

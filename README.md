@@ -64,7 +64,8 @@ The generator is a set of graphs, modelled on Hytale's world generation:
 
 - **World**: a Zone Voronoi and a River network feeding the world output (which also holds the
   sea level).
-- **Zone**: a biome layout (Biome Voronoi or a single biome), a cave carver and cave biomes
+- **Zone**: a biome layout (Biome Voronoi cells, Biome Threshold Select bands of a noise or height
+  map, or a single biome), a cave carver and cave biomes
   (picked in 3D cells; they cover cave floors and ceilings and grow plants there).
 - **Biome**: terrain density, materials, ground cover, up to six prop layers and environment
   colours.

@@ -13,7 +13,7 @@ expect_image crates/engine/tests/golden/islands.png
 
 # terracotta strata, biome blending
 time 0.42
-pos -1200 115 2480
+pos -1184 142 2784
 look 35 -14
 settle
 wait 240

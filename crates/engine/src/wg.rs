@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
@@ -66,6 +68,9 @@ pub struct WorldgenSystem {
     optimizing_id: Option<u64>,
     tx: Sender<Job>,
     rx: Receiver<std::result::Result<BuiltPipelines, (u64, String)>>,
+    /// The background shader build thread (joined on destroy: it uses the device).
+    thread: Option<std::thread::JoinHandle<()>>,
+    stop: Arc<AtomicBool>,
     pub dirty: bool,
     pub last_error: Option<String>,
     pub last_compile_ms: f32,
@@ -107,7 +112,9 @@ impl WorldgenSystem {
         let (res_tx, rx) = channel();
         let device = ctx.device.clone();
         let root = shader_root.to_path_buf();
-        std::thread::Builder::new()
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = stop.clone();
+        let thread = std::thread::Builder::new()
             .name("worldgen-compiler".into())
             .spawn(move || {
                 let compiler = match ShaderCompiler::new(root) {
@@ -132,6 +139,9 @@ impl WorldgenSystem {
                     }
                     let tiers: &[bool] = if job.optimized_only { &[true] } else { &[false, true] };
                     for &optimized in tiers {
+                        if thread_stop.load(Ordering::Relaxed) {
+                            return;
+                        }
                         let t0 = Instant::now();
                         let build = || -> Result<BuiltPipelines> {
                             let mut a = compiler.compile_source("worldgen_terrain.comp", &job.terrain, ShaderKind::Compute, &[])?;
@@ -232,6 +242,8 @@ impl WorldgenSystem {
             optimizing_id: None,
             tx,
             rx,
+            thread: Some(thread),
+            stop,
             dirty: true,
             last_error: None,
             last_compile_ms: 0.0,
@@ -399,6 +411,22 @@ impl WorldgenSystem {
     }
 
     pub fn destroy(&mut self, ctx: &VkContext) {
+        // stop the build thread (it finishes the pipeline it's compiling, if any), then destroy
+        // whatever it delivered that was never used
+        self.stop.store(true, Ordering::Relaxed);
+        drop(std::mem::replace(&mut self.tx, channel().0));
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        while let Ok(msg) = self.rx.try_recv() {
+            if let Ok(b) = msg {
+                unsafe {
+                    ctx.device.destroy_pipeline(b.terrain, None);
+                    ctx.device.destroy_pipeline(b.props, None);
+                    ctx.device.destroy_pipeline(b.probe, None);
+                }
+            }
+        }
         self.biome_table.destroy(ctx);
     }
 }

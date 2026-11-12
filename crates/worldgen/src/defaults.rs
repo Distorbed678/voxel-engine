@@ -515,6 +515,33 @@ fn frost_caves() -> Graph {
     cave_biome("frost_caves", "snow", "packed_ice", Some(("crystal", 0.78)), &[("snow_shrub", 2.0), ("pebbles", 0.5)], 0.15, [0.7, 0.85, 0.95])
 }
 
+/// Replace a zone's Biome Voronoi with a Biome Threshold Select over a large humidity noise:
+/// `bands` lists the biomes from driest to wettest, split at `thresholds`.
+fn humidity_bands(mut g: Graph, bands: &[&str], thresholds: &[f32]) -> Graph {
+    let out = g.output_node().map(|n| n.id).unwrap();
+    if let Some(vor) = g.nodes.iter().find(|n| n.kind == "biome_voronoi").map(|n| n.id) {
+        g.remove_node(vor);
+    }
+    let sel = g.add("biome_threshold", [300.0, 0.0]);
+    let hum = g.add("simplex2d", [0.0, -150.0]);
+    for (k, v) in [("size", fv(1400.0)), ("octaves", iv(3)), ("amplitude", fv(1.0)), ("seed", iv(61))] {
+        g.set(hum, k, v);
+    }
+    g.connect(hum, 0, sel, 0);
+    for (i, t) in thresholds.iter().enumerate() {
+        g.set(sel, &format!("threshold{}", i + 1), fv(*t));
+    }
+    g.set(sel, "blend", fv(0.035));
+    for (i, name) in bands.iter().enumerate() {
+        let id = g.nodes.iter().find(|n| n.kind == "biome" && n.params.get("biome") == Some(&rv(name))).map(|n| n.id);
+        if let Some(id) = id {
+            g.connect(id, 0, sel, i as u8 + 1);
+        }
+    }
+    g.connect(sel, 0, out, 0);
+    g
+}
+
 fn zone(name: &str, biomes: &[(&str, f32)], caves: &[(&str, f32)], cell: f32, color: [f32; 3], ravines: bool) -> Graph {
     let mut b = B::new(name, GraphKind::Zone);
     let vor = b.n("biome_voronoi", 300.0, 0.0, &[("cell_size", fv(cell))]);
@@ -597,7 +624,12 @@ pub fn default_project() -> Project {
                 [0.35, 0.7, 0.3],
                 true,
             ),
-            zone("arid", &[("desert", 1.5), ("badlands", 1.0), ("savanna", 1.0)], &[("crystal_caves", 1.0), ("lush_caves", 0.4)], 520.0, [0.9, 0.75, 0.4], true),
+            // arid: badlands where it's driest, desert, savanna where it's wettest (humidity bands)
+            humidity_bands(
+                zone("arid", &[("desert", 1.5), ("badlands", 1.0), ("savanna", 1.0)], &[("crystal_caves", 1.0), ("lush_caves", 0.4)], 520.0, [0.9, 0.75, 0.4], true),
+                &["badlands", "desert", "savanna"],
+                &[-0.3, 0.2],
+            ),
             zone("frozen", &[("taiga", 1.3), ("glacier", 0.8), ("snowy_peaks", 1.0)], &[("frost_caves", 1.0), ("crystal_caves", 0.6)], 480.0, [0.8, 0.9, 1.0], false),
             zone("volcanic", &[("ashlands", 1.0), ("lava_fields", 0.8)], &[("magma_caves", 1.0), ("crystal_caves", 0.3)], 380.0, [0.6, 0.2, 0.15], false),
             meadow(),
@@ -718,6 +750,7 @@ mod tests {
         }
         assert!(c.source.contains("return NO_CAVE_BIOME;") && c.source.matches("_cave(vec3 p)").count() == 4);
         assert!(c.source.contains("river_mask("));
+        assert!(c.source.contains("float th[2] = float[2]("), "arid zone uses humidity bands");
         assert!(c.prop_layers > 10);
     }
 

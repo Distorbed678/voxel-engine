@@ -168,6 +168,9 @@ These follow from the choices above.
 - [x] **Node editor**: Auto-layout button (columns by distance to the output, barycentre
   ordering, estimated node heights; the default graphs are laid out with it), Comment boxes
   (resizable group boxes with a note, text edited in the inspector).
+- [x] **Biome Threshold Select** (Hytale-style selection by noise or height, alongside Voronoi):
+  a 2D selector density split into bands by thresholds, one biome per band, blended across each
+  threshold. The default arid zone uses it with a humidity noise (badlands → desert → savanna).
 - [x] **Hi-Z occlusion culling** (two-phase, per chunk): pixel-identical goldens; main pass at
   ground level −16% (taiga) / −42% (forest) / −83% (cave). Shadows are now the largest pass.
 - [x] **Far-field block light**: a coarse 4-blocks-per-cell volume (block light only) over the
@@ -248,7 +251,7 @@ suggestions; the rest is the earlier roadmap.
     flag doesn't help), ~50 ms with a warm cache. Startup now builds the three generator
     pipelines in parallel (4.7 s -> 2.4 s cold). Revisit if rebuild waits still bother.
 11. ~~Hi-Z occlusion culling~~.
-12. Hytale-style noise/height biome selectors (alongside Voronoi).
+12. ~~Hytale-style noise/height biome selectors~~.
 13. Block rotation states (stairs, logs) and partial-height water.
 
 Still not selected (ask before doing): node preview thumbnails, isolated biome preview,

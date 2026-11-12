@@ -1058,6 +1058,51 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
                 });
                 let _ = writeln!(f, "    b0 = {id}u; b1 = {id}u; w1 = 0.0;");
             }
+            Some(n) if n.kind == "biome_threshold" => {
+                let mut ids = Vec::new();
+                for i in 1..=6u8 {
+                    let Some(l) = g.input_link(n.id, i).copied() else { continue };
+                    let Some(bn) = g.node(l.from_node).cloned() else { continue };
+                    match em.value(&bn, "biome") {
+                        Value::Ref(r) if em.sh.biome_ids.contains_key(&r) => ids.push(em.sh.biome_ids[&r]),
+                        _ => em.warn("Biome node without a valid biome".into()),
+                    }
+                }
+                if ids.is_empty() {
+                    em.warn("Biome Threshold Select has no biomes connected".into());
+                    ids.push(0);
+                }
+                // selector: a 2D density evaluated at the column
+                let sel = g.input_link(n.id, 0).copied().map(|l| em.density(l.from_node, l.from_pin, 0).e);
+                let body = em.take_body().join("\n");
+                let sel = sel.unwrap_or_else(|| {
+                    em.warn("Biome Threshold Select has no selector connected".into());
+                    "0.0".into()
+                });
+                let th: Vec<String> = (1..ids.len()).map(|i| em.p(&n, &format!("threshold{i}"))).collect();
+                let bl = em.p(&n, "blend");
+                let _ = writeln!(f, "    vec3 p = vec3(xz.x, 0.0, xz.y);\n{body}\n    float v = {sel};");
+                let nb = ids.len();
+                let list = ids.iter().map(|i| format!("{i}u")).collect::<Vec<_>>().join(", ");
+                let _ = writeln!(f, "    uint ids[{nb}] = uint[{nb}]({list});");
+                if nb == 1 {
+                    let _ = writeln!(f, "    b0 = ids[0]; b1 = ids[0]; w1 = 0.0;");
+                } else {
+                    let _ = writeln!(f, "    float th[{}] = float[{}]({});", nb - 1, nb - 1, th.join(", "));
+                    let _ = writeln!(
+                        f,
+                        r#"    int k = 0;
+    while (k < {last} && v >= th[k]) k++;
+    b0 = ids[k]; b1 = b0; w1 = 0.0;
+    float bl = max({bl}, 1e-4);
+    float dLo = k > 0 ? v - th[k - 1] : 1e9;
+    float dHi = k < {last} ? th[min(k, {last} - 1)] - v : 1e9;
+    if (dLo < bl && dLo <= dHi) {{ b1 = ids[k - 1]; w1 = 0.5 * (1.0 - dLo / bl); }}
+    else if (dHi < bl) {{ b1 = ids[k + 1]; w1 = 0.5 * (1.0 - dHi / bl); }}"#,
+                        last = nb - 1
+                    );
+                }
+            }
             Some(n) if n.kind == "biome_voronoi" => {
                 let mut entries = Vec::new();
                 for i in 0..8u8 {
