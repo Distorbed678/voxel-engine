@@ -34,8 +34,9 @@ Dear ImGui debug UI.
 |---|---|
 | **GPU world pipeline** | Compute shaders generate terrain, place props and greedy-mesh chunks into packed 8-byte quads. Task and mesh shaders cull every chunk and face direction and expand the quads, all from one indirect dispatch. |
 | **Node-graph world generator** | Typed World → Zone → Biome graphs plus reusable Function graphs, compiled to GLSL. Parameter edits regenerate the world instantly; structural edits rebuild the shaders in the background. |
-| **4 zones, 12 biomes** | Meadows, forests, birch hills, floating isles, desert, badlands, savanna, taiga, glaciers, snowy peaks, ashlands and lava fields, with caves (spaghetti, cheese, noodle, ravines), ores, geodes and prefab ruins. All of it is ordinary, editable graphs. |
-| **Stylized rendering** | Cascaded sun shadows, day/night with sun, moon and stars, volumetric clouds, waves with Fresnel reflections, per-biome fog and tints, wind on leaves, per-cell AO and normal-mapped 32×32 procedural textures. |
+| **4 zones, 12 biomes, 4 cave biomes** | Meadows, forests, birch hills, floating isles, desert, badlands, savanna, taiga, glaciers, snowy peaks, ashlands and lava fields above ground. Below it: lush, crystal, magma and frost caves in spaghetti, cheese and noodle cave systems and ravines. Rivers run at sea level, with ores, geodes and prefab ruins. All of it is ordinary, editable graphs. |
+| **Light** | Colored block light and sky light are propagated on the GPU in a volume around the camera, with a coarse far-field volume so distant lava still lights its banks. Caves go dark and lanterns, lava and crystals light them. |
+| **Stylized rendering** | Cascaded sun shadows, TAA, bloom, day/night with sun, moon and stars, volumetric clouds, waves with Fresnel reflections, per-biome fog and tints, wind on leaves, per-cell AO and normal-mapped 32×32 procedural textures. |
 | **Editing that survives regeneration** | Blocks, brushes (add, remove, paint, smooth), box selection with fill/replace/copy/paste/rotate, undo and redo, and prefabs the generator can place. Edits live in an overlay, so they survive any graph change. |
 | **Tested without a human** | A scripting mode drives the engine headless: camera, mouse and keys, tools, screenshots. GPU regression tests check picking, edits, UI capture and golden images. |
 
@@ -43,12 +44,16 @@ Dear ImGui debug UI.
 
 | | |
 |---|---|
+| <img src="docs/media/cave_lush.jpg" alt="Lush cave"> | <img src="docs/media/cave_crystal.jpg" alt="Crystal cave"> |
+| *A lush cave lit only by its glowing mushrooms and crystals* | *A crystal cave under the lava fields* |
+| <img src="docs/media/rivers.jpg" alt="Rivers"> | <img src="docs/media/lava.jpg" alt="Lava fields at night"> |
+| *Rivers winding through the forest* | *Lava fields at night: block light and bloom* |
 | <img src="docs/media/badlands.jpg" alt="Badlands"> | <img src="docs/media/taiga.jpg" alt="Taiga"> |
 | *Badlands mesas next to the savanna* | *Taiga below the snowy peaks* |
 | <img src="docs/media/glacier.jpg" alt="Glacier"> | <img src="docs/media/night.jpg" alt="Night"> |
 | *A glacier lake with ice spikes* | *The same glacier at night* |
-| <img src="docs/media/lava.jpg" alt="Lava fields"> | <img src="docs/media/debug_views.jpg" alt="Debug views"> |
-| *Lava fields at dusk* | *Debug views: zones, biomes, LOD levels, meshlets* |
+| <img src="docs/media/debug_views.jpg" alt="Debug views"> | <img src="docs/media/editor.jpg" alt="Editor"> |
+| *Debug views: zones, biomes, LOD levels, meshlets* | *The editor UI* |
 
 ## The world generator
 
@@ -56,8 +61,10 @@ Dear ImGui debug UI.
 
 The generator is a set of graphs, modelled on Hytale's world generation:
 
-- **World**: a Zone Voronoi feeding the world output (which also holds the sea level).
-- **Zone**: a biome layout (Biome Voronoi or a single biome) plus a cave carver.
+- **World**: a Zone Voronoi and a River network feeding the world output (which also holds the
+  sea level).
+- **Zone**: a biome layout (Biome Voronoi or a single biome), a cave carver and cave biomes
+  (picked in 3D cells; they cover cave floors and ceilings and grow plants there).
 - **Biome**: terrain density, materials, ground cover, up to six prop layers and environment
   colours.
 - **Function**: a reusable density subgraph with four arguments.
@@ -172,8 +179,7 @@ docs/             architecture, plan and roadmap, README media
 ```
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains how it works.
-[docs/PLAN.md](docs/PLAN.md) has the decisions, status and roadmap (next up: colored block light,
-TAA, cave biomes and rivers).
+[docs/PLAN.md](docs/PLAN.md) has the decisions, status and roadmap.
 
 ## License
 

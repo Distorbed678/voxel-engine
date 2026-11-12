@@ -7,7 +7,7 @@ cargo build --release
 out=target/media
 rm -rf "$out" && mkdir -p "$out"
 ./target/release/voxel-engine --size 1920x1080 --script docs/media/stills.vxs
-for f in hero badlands taiga glacier lava night editor; do
+for f in hero badlands taiga glacier lava night editor cave_lush cave_crystal rivers; do
     magick "$out/$f.png" -quality 86 "docs/media/$f.jpg"
 done
 magick montage "$out"/view_zones.png "$out"/view_biomes.png "$out"/view_lod.png "$out"/view_meshlets.png \

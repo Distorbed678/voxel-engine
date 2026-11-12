@@ -34,10 +34,10 @@ settle
 wait 240
 screenshot target/media/glacier.png
 
-# lava fields at dusk
-time 0.78
-pos -2224 107 1968
-look 35 -14
+# lava fields at night: block light and bloom
+time 0.02
+pos -2224 140 1968
+look 35 -16
 settle
 wait 240
 screenshot target/media/lava.png
@@ -49,6 +49,31 @@ look 60 6
 settle
 wait 240
 screenshot target/media/night.png
+
+# a lush cave: moss, glowing mushrooms, crystal accents, lit only by block light
+time 0.36
+pos 900 60 -400
+find_cave 10
+look 0 -15
+settle
+wait 120
+screenshot target/media/cave_lush.png
+
+# a crystal cave under the lava fields
+pos -2224 60 1968
+find_cave 10
+look 0 -15
+settle
+wait 120
+screenshot target/media/cave_crystal.png
+
+# rivers winding through the forest
+time 0.38
+pos 120 230 -250
+look 20 -38
+settle
+wait 120
+screenshot target/media/rivers.png
 
 # debug views from above: zones, biomes, LOD levels, meshlets
 time 0.40
