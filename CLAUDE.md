@@ -7,7 +7,10 @@
   for a feature to implement. Batch related questions into one call.
 - `docs/PLAN.md` is the source of truth for decisions, status and the roadmap. Follow the work
   order there, respect choices recorded as "not selected", and update it when a milestone lands
-  or a decision changes.
+  or a decision changes. The layered-world roadmap (items 19–28) is detailed in
+  `docs/WORLD_PLAN.md`: the owner's decisions, engine facts, phases and acceptance criteria.
+- Check in with the owner at the end of each phase (question tool: summary, screenshots,
+  decisions); in between, ask only when blocked on a decision that is genuinely theirs.
 - Commit (and push to `origin main`) whenever a milestone is done and verified; no need to ask.
   The public repo is https://github.com/Distorbed678/voxel-engine.
 

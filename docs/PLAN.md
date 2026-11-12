@@ -56,7 +56,7 @@ editing tools.
 | Topic | Choice |
 |---|---|
 | Debug tools | GPU profiler panel, render debug views, worldgen overlays (zone/biome tint + minimap with teleport), benchmark mode. |
-| Node editor extras | Inline curve editor; editor quality-of-life (search palette, copy/paste, comments, group-to-function, graph undo/redo). **Not** selected: live preview thumbnails, isolated 3D biome preview. |
+| Node editor extras | Inline curve editor; editor quality-of-life (search palette, copy/paste, comments, group-to-function, graph undo/redo). Originally **not** selected: live preview thumbnails, isolated 3D biome preview; both were selected later (solo preview done, node previews in item 23). |
 | Engine extras | Save/load (RON graphs, world edits, prefabs, seed), screenshots (incl. headless), shader hot reload. **Not** selected: camera bookmarks / cinematic paths. |
 
 ### Workflow
@@ -291,7 +291,8 @@ suggestions; the rest is the earlier roadmap.
 7. ~~Cave biomes + river node~~.
 8. ~~Small open items: colour grading, overdraw view, node comments, node auto-layout~~.
 9. ~~Ambient particles + weather~~.
-10. GPU graph interpreter: **deferred by the owner (2026-11-12)**. Measured: structural edits
+10. GPU graph interpreter: deferred by the owner (2026-11-12), then **approved as part of
+    item 21** the same day (per-layer generators + interpreter). Measured: structural edits
     rebuild in ~2.3 s cold (NVIDIA driver compile; GLSL->SPIR-V is ~70 ms; the disable-optimisation
     flag doesn't help), ~50 ms with a warm cache. Startup now builds the three generator
     pipelines in parallel (4.7 s -> 2.4 s cold). Revisit if rebuild waits still bother.
@@ -307,5 +308,32 @@ Approved on 2026-11-12, in this order (small fixes first, the largest last):
 17. ~~Isolated zone / biome preview~~.
 18. ~~Flowing water~~.
 
-Still not selected (ask before doing): node preview thumbnails, camera bookmarks / cinematic
-paths.
+### The layered world (approved 2026-11-12)
+
+The owner asked for a fully editable world (everything through the node editor, data-driven
+blocks with an in-game texture editor, tree and prop graphs) and a new default world in three
+layers: 8 sky zones (y 4,000–6,000, hidden from the ground by a cloud sea), 8 surface zones and
+8 underground zones (2 depth bands × 4, down to y -6,000), each with 8 biomes, full of lived-in
+detail and moving life. All decisions, facts about today's engine, phases and acceptance criteria
+are in **[WORLD_PLAN.md](WORLD_PLAN.md)**. Work happens on `main`, foundations first, with a
+check-in at the end of each phase. Item 10 (GPU graph interpreter) is **no longer deferred**: it
+is part of item 21.
+
+19. Blocks and textures as data: block editor, texture editor (pixel painting, animated
+    textures).
+20. Prop graphs (trees included): shape nodes, tree nodes, Prop editor with 3D preview.
+21. Layered world: layers in the World graph, per-layer generators, GPU graph interpreter,
+    wider biome ids, cross-layer streaming, cloud sea, layer jump UI.
+22. Environment as graphs: sky & atmosphere, particles & weather, fluids, light & time.
+23. Editor tooling: graph browser, templates & duplicate, node previews, layer map.
+24. Surface content: 8 zones × 8 biomes, new blocks, oceans, waterfalls.
+25. Underground content: 2 depth bands × 4 zones × 8 biomes, huge and cramped caves, very rare
+    sinkholes.
+26. Sky content: 8 zones × 8 biomes above the cloud sea, very rare sky pillars.
+27. Life and details: forest floor, fire scars, rubble & ruins, cave dressing, birds and
+    butterflies, water life, wind, night glow, weather events, rare wonders, colour variety.
+28. Performance and polish: per-layer benchmarks (at least 60 fps at 1080p on the RTX 4080,
+    ideally much higher), README media, docs.
+
+Still not selected (ask before doing): camera bookmarks / cinematic paths. (Node preview
+thumbnails were selected on 2026-11-12, item 23.)
