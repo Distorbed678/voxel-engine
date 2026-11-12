@@ -1,0 +1,35 @@
+#version 460
+// Summarise flagged LOD0 jobs into the coarse light volume: one 4^3-block cell per thread, keeping
+// the brightest emission and the number of light-blocking blocks.
+#include "light/light_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(push_constant, scalar) uniform PC {
+    GenJobBuf jobs;
+    VoxelBuf voxels;
+    BlockTable blocks;
+    uint numJobs;
+    uint coarseImg;
+} pc;
+
+void main() {
+    uint job = gl_WorkGroupID.x;
+    if (job >= pc.numJobs) return;
+    GenJob j = pc.jobs.j[job];
+    if ((j.flags & GENJOB_COARSE) == 0u) return;
+    ivec3 c = ivec3(gl_LocalInvocationID);
+    uvec3 emit = uvec3(0u);
+    uint blocked = 0u;
+    for (int z = 0; z < COARSE_CELL; ++z)
+    for (int y = 0; y < COARSE_CELL; ++y)
+    for (int x = 0; x < COARSE_CELL; ++x) {
+        uint b = uint(pc.voxels.v[job * SLOT_U16 + vidx(c * COARSE_CELL + ivec3(x, y, z))]);
+        uint l = pc.blocks.b[b].light;
+        emit = max(emit, uvec3(l & 255u, (l >> 8) & 255u, (l >> 16) & 255u));
+        blocked += (l >> 28) & 1u;
+    }
+    // chunk origins are multiples of 32, so the division is exact for negative coordinates too
+    ivec3 cell = j.origin / COARSE_CELL + c;
+    imageStore(gCoarseCells[pc.coarseImg], coarse_wrap(cell), uvec4(emit, blocked));
+}

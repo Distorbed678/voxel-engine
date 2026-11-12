@@ -109,6 +109,14 @@ resident, so the volume keeps its own copy of the blocks:
 Each block has an emission colour, an attenuation and a light-blocking bit in the GPU block
 table (`BlockInfo.light`).
 
+**Far field**: a second, coarse volume (block light only, 4 blocks per cell, 128×64×128 cells)
+covers the LOD0 streaming box (±256 blocks horizontally at default settings). LOD0 jobs also
+summarise their blocks into it, one cell per thread: the brightest emission and the number of
+light-blocking blocks. Since this box matches the LOD0 box, chunks entering it are being generated
+anyway and need no extra jobs. Propagation uses a step of 4/15 per cell, which gives the same
+15-block reach. Surfaces outside the fine volume sample the coarse one, half a cell in front of
+the face, so distant lava still lights its banks.
+
 ## World generator (crates/worldgen)
 
 Graph kinds:

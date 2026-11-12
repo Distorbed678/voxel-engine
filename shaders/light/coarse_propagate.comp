@@ -1,0 +1,35 @@
+#version 460
+// One Jacobi step of block light in the coarse volume (no sky light): like propagate.comp, with
+// a step of 4/15 per cell so light reaches the same 15 blocks. Cells that are mostly
+// light-blocking only pass on their own emission.
+#include "light/light_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(push_constant, scalar) uniform PC {
+    ivec4 origin;     // world cell coordinate of the volume's min corner
+    uint cellsImg;
+    uint src;
+    uint dst;
+} pc;
+
+const float STEP = float(COARSE_CELL) / 15.0;
+
+void main() {
+    ivec3 l = ivec3(gl_GlobalInvocationID);
+    if (any(greaterThanEqual(l, COARSE_DIM))) return;
+    ivec3 w = pc.origin.xyz + l;
+    ivec3 t = coarse_wrap(w);
+    vec3 best = vec3(imageLoad(gCoarseCells[pc.cellsImg], t).rgb) / 255.0;
+    for (int i = 0; i < 6; ++i) {
+        ivec3 d = ivec3(0);
+        d[i >> 1] = (i & 1) == 0 ? 1 : -1;
+        ivec3 nl = l + d;
+        if (any(lessThan(nl, ivec3(0))) || any(greaterThanEqual(nl, COARSE_DIM))) continue;
+        ivec3 nt = coarse_wrap(w + d);
+        uvec4 nc = imageLoad(gCoarseCells[pc.cellsImg], nt);
+        vec3 c = nc.a > 32u ? vec3(nc.rgb) / 255.0 : imageLoad(gLightImg[pc.src], nt).rgb;
+        best = max(best, c - STEP);
+    }
+    imageStore(gLightImg[pc.dst], t, vec4(best, 1.0));
+}

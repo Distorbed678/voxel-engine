@@ -59,6 +59,11 @@ struct FrameData {
     uint lightTex;        // bindless sampled index of the light volume
     uint bloomTex;        // bindless sampled index of the bloom result (strength in exposure.z)
     ivec4 lightOrigin;    // light volume min corner relative to camBlock, w = LIGHT_ENABLED
+    ivec4 coarseOrigin;   // coarse light volume min corner relative to camBlock, w = LIGHT_ENABLED
+    uint coarseTex;       // bindless sampled index of the coarse light volume
+    uint pad1;
+    uint pad2;
+    uint pad3;
 };
 
 layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer FrameRef {

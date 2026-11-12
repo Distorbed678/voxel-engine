@@ -40,8 +40,10 @@ pub struct GpuGenJob {
     pub pad: u32,
 }
 
-/// Copy the job's final blocks into the light volume.
+/// Copy the job's final blocks into the fine light volume.
 pub const GENJOB_LIGHT: u32 = 1;
+/// Summarise the job's blocks into the coarse (far-field) light volume.
+pub const GENJOB_COARSE: u32 = 2;
 /// Result flag: don't mesh (region reads, light-only jobs).
 const JOB_NO_MESH: u32 = 4;
 
@@ -63,8 +65,8 @@ pub struct JobDesc {
     pub counter: u32,
     /// copy the generated voxels back to the CPU (region reads for editing tools)
     pub readback: bool,
-    /// copy the final blocks into the light volume
-    pub light: bool,
+    /// GENJOB_LIGHT / GENJOB_COARSE: copy the final blocks into the light volumes
+    pub light: u32,
     /// (cell index in the 34^3 slot, block)
     pub edits: Vec<(u32, u16)>,
 }
@@ -139,6 +141,16 @@ struct LightFillPush {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct CoarseFillPush {
+    jobs: u64,
+    voxels: u64,
+    blocks: u64,
+    num_jobs: u32,
+    coarse_img: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct PrefixPush {
     table: u64,
     results: u64,
@@ -155,9 +167,12 @@ pub struct WorldPipelines {
     pub mesh_write: vk::Pipeline,
     pub prefix: vk::Pipeline,
     pub light_fill: vk::Pipeline,
+    pub coarse_fill: vk::Pipeline,
     pub layout: vk::PipelineLayout,
     /// Bindless storage index of the light volume's block image.
     pub light_blocks_img: u32,
+    /// Bindless storage index of the coarse volume's cell image.
+    pub coarse_cells_img: u32,
 }
 
 pub struct WorldGpu {
@@ -366,7 +381,7 @@ impl WorldGpu {
                     lod: j.key.lod as u32,
                     edit_offset: edits.len() as u32,
                     edit_count: j.edits.len() as u32,
-                    flags: if j.light { GENJOB_LIGHT } else { 0 },
+                    flags: j.light,
                     pad: 0,
                 });
                 for &(idx, b) in &j.edits {
@@ -459,8 +474,21 @@ impl WorldGpu {
             }
             compute_barrier(ctx, cb);
         }
-        // light volume: copy the final blocks of flagged LOD0 jobs
-        if jobs.iter().take(n).any(|j| j.light) {
+        // light volumes: copy the final blocks of flagged LOD0 jobs
+        if jobs.iter().take(n).any(|j| j.light & GENJOB_COARSE != 0) {
+            unsafe {
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.coarse_fill);
+                push(bytemuck::bytes_of(&CoarseFillPush {
+                    jobs: slot.jobs_buf.address,
+                    voxels: self.voxels.address,
+                    blocks: block_table,
+                    num_jobs: n as u32,
+                    coarse_img: pipes.coarse_cells_img,
+                }));
+                d.cmd_dispatch(cb, n as u32, 1, 1);
+            }
+        }
+        if jobs.iter().take(n).any(|j| j.light & GENJOB_LIGHT != 0) {
             unsafe {
                 d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.light_fill);
                 push(bytemuck::bytes_of(&LightFillPush {

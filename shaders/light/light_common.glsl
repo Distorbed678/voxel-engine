@@ -10,6 +10,10 @@
 layout(set = 0, binding = 1, r16ui) uniform uimage3D gLightBlocks[];
 // light volume: rgb block light, a sky light (ping-pong pair, written by propagate.comp)
 layout(set = 0, binding = 1, rgba8) uniform image3D gLightImg[];
+// coarse cells: rgb = brightest emission inside, a = number of light-blocking blocks (of 64)
+layout(set = 0, binding = 1, rgba8ui) uniform uimage3D gCoarseCells[];
+
+ivec3 coarse_wrap(ivec3 cell) { return cell & (COARSE_DIM - 1); }
 
 vec3 light_emit(BlockTable t, uint id) {
     uint l = t.b[id].light;

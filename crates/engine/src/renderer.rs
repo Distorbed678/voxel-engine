@@ -58,6 +58,10 @@ pub struct FrameData {
     pub bloom_tex: u32,
     /// light volume min corner relative to cam_block, w = enabled
     pub light_origin: [i32; 4],
+    /// coarse light volume min corner relative to cam_block, w = enabled
+    pub coarse_origin: [i32; 4],
+    pub coarse_tex: u32,
+    pub pad: [u32; 3],
 }
 
 pub const FLAG_SHADOWS: u32 = 2;

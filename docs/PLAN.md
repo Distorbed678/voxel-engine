@@ -150,6 +150,9 @@ These follow from the choices above.
 - [x] **Bloom**: half-resolution mip chain (13-tap downsample with soft threshold + Karis
   average, tent upsample), added in the tonemap pass. About 0.04 ms. Strength and threshold
   sliders in the Render panel.
+- [x] **Far-field block light**: a coarse 4-blocks-per-cell volume (block light only) over the
+  LOD0 box, filled by LOD0 jobs as a side effect, sampled beyond the fine volume. Distant lava
+  lights its banks.
 
 **Measured** (RTX 4080, 1080p, `--benchmark`):
 - 279 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
@@ -221,8 +224,7 @@ suggestions; the rest is the earlier roadmap.
 4. ~~Colored block light + sky light~~. Follow-ups worth considering: a larger volume or a
    cheap far-field glow for distant lava (the volume reaches ±64 blocks), bloom.
 5. ~~TAA~~, then ~~bloom~~ (approved 2026-11-11).
-6. **Far-field lava glow** (approved 2026-11-11): distant emissive areas light their
-   surroundings beyond the ±64-block light volume.
+6. ~~**Far-field lava glow**~~ (approved 2026-11-11).
 7. Cave biomes + river node (completes the requested terrain features).
 8. Small open items: per-biome colour grading, overdraw debug view, node comments / group boxes,
    **node auto-layout** (approved 2026-11-11; also tidies the overlapping default biome graphs),

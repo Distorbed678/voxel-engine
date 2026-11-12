@@ -911,6 +911,9 @@ impl Engine {
         if self.world.light.take_moved() {
             self.light.mark_dirty();
         }
+        if self.world.coarse_light.take_moved() {
+            self.light.mark_coarse_dirty();
+        }
 
         // generation batch
         if self.wgpu.has_free_slot() && !self.world.frozen {
@@ -922,8 +925,11 @@ impl Engine {
             }
             let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), max_jobs);
             self.batch_sizes[slot] = jobs.len();
-            if jobs.iter().any(|j| j.light) {
+            if jobs.iter().any(|j| j.light & crate::world::gpu::GENJOB_LIGHT != 0) {
                 self.light.mark_dirty();
+            }
+            if jobs.iter().any(|j| j.light & crate::world::gpu::GENJOB_COARSE != 0) {
+                self.light.mark_coarse_dirty();
             }
             if !jobs.is_empty() {
                 let pipes = WorldPipelines {
@@ -934,8 +940,10 @@ impl Engine {
                     mesh_write: self.pm.get(self.renderer.pipes.mesh_write),
                     prefix: self.pm.get(self.renderer.pipes.prefix),
                     light_fill: self.pm.get(self.light.fill),
+                    coarse_fill: self.pm.get(self.light.coarse_fill),
                     layout: self.pm.layout,
                     light_blocks_img: self.light.blocks_img,
+                    coarse_cells_img: self.light.coarse_cells_img,
                 };
                 unsafe {
                     self.ctx.device.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, self.pm.layout, 0, &[self.bindless.set], &[]);
@@ -968,7 +976,7 @@ impl Engine {
         if let Some(origin) = self.world.light.origin_block()
             && self.ui.block_light
         {
-            self.light.record(&self.ctx, cb, &self.pm, self.bindless.set, origin, self.renderer.block_table.address, &mut self.profiler, profiler_slot);
+            self.light.record(&self.ctx, cb, &self.pm, self.bindless.set, origin, self.world.coarse_light.origin_block(), self.renderer.block_table.address, &mut self.profiler, profiler_slot);
         }
 
         // biome probes (camera environment + minimap)
@@ -1349,6 +1357,15 @@ impl Engine {
                 }
                 _ => [0; 4],
             },
+            coarse_origin: match self.world.coarse_light.origin_block() {
+                Some(o) if self.ui.block_light && self.light.ready() => {
+                    let r = o - m.cam_block;
+                    [r.x, r.y, r.z, 1]
+                }
+                _ => [0; 4],
+            },
+            coarse_tex: self.light.coarse_sampled,
+            pad: [0; 3],
         };
         let mut fd = fd;
         let light = if sky.sun_dir.y > -0.05 { sky.sun_dir } else { -sky.sun_dir };

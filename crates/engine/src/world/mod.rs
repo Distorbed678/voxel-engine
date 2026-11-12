@@ -17,7 +17,7 @@ use glam::{DVec3, IVec3, Vec3};
 
 use alloc::{Range, RangeAllocator};
 use edits::EditOverlay;
-use gpu::{GpuChunkRecord, JobDesc, JobResult};
+use gpu::{GENJOB_COARSE, GENJOB_LIGHT, GpuChunkRecord, JobDesc, JobResult};
 
 pub const CHUNK: i32 = 32;
 pub const CA: i32 = 34;
@@ -146,8 +146,10 @@ pub struct World {
     pub stats: WorldStats,
     jobs_window: (Instant, u32),
     pub frozen: bool,
-    /// Which chunks the light volume covers and still needs.
+    /// Which chunks the fine light volume covers and still needs.
     pub light: light::LightTracker,
+    /// Same for the coarse (far-field) light volume.
+    pub coarse_light: light::LightTracker,
 }
 
 impl World {
@@ -169,7 +171,8 @@ impl World {
             stats: WorldStats::default(),
             jobs_window: (Instant::now(), 0),
             frozen: false,
-            light: light::LightTracker::default(),
+            light: light::LightTracker::fine(),
+            coarse_light: light::LightTracker::coarse(),
         }
     }
 
@@ -187,6 +190,7 @@ impl World {
             return;
         }
         self.light.update(cam);
+        self.coarse_light.update(cam);
         let center = (cam / CHUNK as f64).floor().as_ivec3();
         if self.last_center == Some((center, self.settings)) {
             return;
@@ -472,22 +476,28 @@ impl World {
                 edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
             });
             // counter u32::MAX marks a pure read (results are not applied to the streamed chunk)
-            jobs.push(JobDesc { key, counter: u32::MAX, readback: true, light: false, edits });
+            jobs.push(JobDesc { key, counter: u32::MAX, readback: true, light: 0, edits });
         }
-        // light-only jobs: chunks that scrolled into the light volume while already up to date
-        // (chunks still waiting for generation fill the volume when they are meshed)
-        let light_only: Vec<IVec3> = self
-            .light
-            .pending()
-            .filter(|p| {
-                self.chunks
-                    .get(&ChunkKey { lod: 0, pos: *p })
-                    .is_none_or(|c| c.has_result && c.applied == c.dirty && !c.in_flight)
-            })
-            .take(MAX_LIGHT_ONLY.min(max / 4))
-            .collect();
+        // light-only jobs: chunks that scrolled into a light volume while already up to date
+        // (chunks still waiting for generation fill the volumes when they are meshed)
+        let ready = |p: &IVec3| {
+            self.chunks
+                .get(&ChunkKey { lod: 0, pos: *p })
+                .is_none_or(|c| c.has_result && c.applied == c.dirty && !c.in_flight)
+        };
+        let mut light_only: Vec<IVec3> = self.light.pending().filter(ready).take(MAX_LIGHT_ONLY.min(max / 4)).collect();
+        let room = MAX_LIGHT_ONLY.min(max / 4).saturating_sub(light_only.len());
+        light_only.extend(self.coarse_light.pending().filter(|p| ready(p) && !self.light.is_pending(*p)).take(room));
         for p in light_only {
+            let mut flags = 0;
+            if self.light.is_pending(p) {
+                flags |= GENJOB_LIGHT;
+            }
+            if self.coarse_light.contains(p) {
+                flags |= GENJOB_COARSE;
+            }
             self.light.filled(p);
+            self.coarse_light.filled(p);
             let key = ChunkKey { lod: 0, pos: p };
             let min = key.origin() - IVec3::ONE;
             let mut edits = Vec::new();
@@ -495,7 +505,7 @@ impl World {
                 let cell = q - min;
                 edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
             });
-            jobs.push(JobDesc { key, counter: u32::MAX, readback: false, light: true, edits });
+            jobs.push(JobDesc { key, counter: u32::MAX, readback: false, light: flags, edits });
         }
         let cands: Vec<(f32, ChunkKey)> = cands.into_iter().take(max.saturating_sub(jobs.len())).collect();
         for (_, key) in cands {
@@ -519,9 +529,14 @@ impl World {
                     edits.push((idx as u32, b));
                 }
             });
-            let light = key.lod == 0 && self.light.contains(key.pos);
-            if light {
+            let mut light = 0;
+            if key.lod == 0 && self.light.contains(key.pos) {
                 self.light.filled(key.pos);
+                light |= GENJOB_LIGHT;
+            }
+            if key.lod == 0 && self.coarse_light.contains(key.pos) {
+                self.coarse_light.filled(key.pos);
+                light |= GENJOB_COARSE;
             }
             jobs.push(JobDesc { key, counter, readback: false, light, edits });
         }
