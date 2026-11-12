@@ -73,6 +73,8 @@ pub struct WorldgenSystem {
     pub last_build_ms: f32,
     pub biome_table: Buffer,
     pub block_ids: HashMap<String, u32>,
+    pub prefab_info: HashMap<String, (u32, [i32; 3])>,
+    pub prefab_names: Vec<String>,
     pub unsaved: bool,
     last_change: Instant,
     pub autosave: bool,
@@ -80,7 +82,14 @@ pub struct WorldgenSystem {
 }
 
 impl WorldgenSystem {
-    pub fn new(ctx: &VkContext, shader_root: &Path, layout: vk::PipelineLayout, block_ids: HashMap<String, u32>, dir: PathBuf) -> Result<Self> {
+    pub fn new(
+        ctx: &VkContext,
+        shader_root: &Path,
+        layout: vk::PipelineLayout,
+        block_ids: HashMap<String, u32>,
+        prefab_info: HashMap<String, (u32, [i32; 3])>,
+        dir: PathBuf,
+    ) -> Result<Self> {
         let project = match Project::load_dir(&dir) {
             Ok(p) => {
                 log::info!("loaded world generator from {}", dir.display());
@@ -226,6 +235,12 @@ impl WorldgenSystem {
             last_build_ms: 0.0,
             biome_table,
             block_ids,
+            prefab_names: {
+                let mut v: Vec<String> = prefab_info.keys().cloned().collect();
+                v.sort();
+                v
+            },
+            prefab_info,
             unsaved: false,
             last_change: Instant::now(),
             autosave: true,
@@ -244,7 +259,7 @@ impl WorldgenSystem {
 
     fn recompile_cpu(&mut self) -> Result<()> {
         let t0 = Instant::now();
-        let c = worldgen::compile(&self.project, &self.block_ids)?;
+        let c = worldgen::compile(&self.project, &self.block_ids, &self.prefab_info)?;
         self.last_compile_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.compiled = c;
         self.write_biome_table();

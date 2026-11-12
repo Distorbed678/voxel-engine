@@ -12,6 +12,7 @@ void prop_bounds(in PropLayer L, out float R, out float H, out float below) {
         case PROP_COLUMN: R = max(L.c, 2.0) + 1.0; H = L.b + 1.0; below = 1.0; break;
         case PROP_SPIKE: R = L.c + 1.0; H = L.b + 1.0; below = 3.0; break;
         case PROP_GEODE: R = L.c + 1.0; H = L.c + 1.0; below = L.c + 1.0; break;
+        case PROP_PREFAB: R = ceil(max(L.a, L.c) * 0.75) + 1.0; H = L.b + 1.0; below = float(L.b1); break;
         default: R = 0.0; H = 0.0; below = 0.0; break;
     }
 }
@@ -174,6 +175,19 @@ uint shape_geode(in PropLayer L, vec3 r, uint seed) {
     return 0u;                           // hollow
 }
 
+uint shape_prefab(in PropLayer L, vec3 r, uint seed) {
+    uvec4 e = pc.prefabTable.t[L.variant];
+    ivec3 size = ivec3(e.yzw);
+    ivec3 q = ivec3(floor(r)) + ivec3(0, int(L.b1), 0);
+    uint rot = L.b0 != 0u ? (seed % 4u) : 0u;
+    // rotate around the prefab's horizontal centre
+    ivec2 c = ivec2(q.x, q.z);
+    for (uint i = 0u; i < rot; ++i) c = ivec2(-c.y, c.x);
+    ivec3 l = ivec3(c.x + size.x / 2, q.y, c.y + size.z / 2);
+    if (any(lessThan(l, ivec3(0))) || any(greaterThanEqual(l, size))) return 0u;
+    return uint(pc.prefabData.c[e.x + uint((l.y * size.z + l.z) * size.x + l.x)]);
+}
+
 uint prop_shape(in PropLayer L, vec3 r, uint seed) {
     switch (L.kind) {
         case PROP_TREE: return shape_tree(L, r, seed);
@@ -182,6 +196,7 @@ uint prop_shape(in PropLayer L, vec3 r, uint seed) {
         case PROP_COLUMN: return shape_column(L, r, seed);
         case PROP_SPIKE: return shape_spike(L, r, seed);
         case PROP_GEODE: return shape_geode(L, r, seed);
+        case PROP_PREFAB: return shape_prefab(L, r, seed);
         default: return 0u;
     }
 }

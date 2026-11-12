@@ -42,6 +42,7 @@ pub struct Options {
     pub time_of_day: Option<f32>,
     pub debug_view: Option<u32>,
     pub seed: Option<u32>,
+    pub worldgen_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -105,6 +106,8 @@ pub struct Engine {
     pub probes: crate::probe::Probes,
     pub wg: WorldgenSystem,
     pub node_ui: NodeEditorUi,
+    pub tools: crate::tools::Tools,
+    prefab_revision: u64,
     pub camera: Camera,
     pub atmosphere: Atmosphere,
     pub input: Input,
@@ -194,7 +197,9 @@ impl Engine {
 
         let renderer = Renderer::new(&ctx, &mut bindless, &mut pm, &blocks, extent, out_format, FIF)?;
         let block_ids = blocks.blocks.iter().enumerate().map(|(i, b)| (b.name.to_string(), i as u32)).collect();
-        let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, PathBuf::from("assets/worldgen"))?;
+        let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
+        prefabs.upload(&ctx)?;
+        let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, prefabs.compile_info(), opts.worldgen_dir.clone().unwrap_or_else(|| PathBuf::from("assets/worldgen")))?;
         // Build the generator synchronously at startup (fall back to the built-in one on error).
         let (terrain_src, props_src, probe_src) = wg.sources();
         let t0 = Instant::now();
@@ -232,6 +237,8 @@ impl Engine {
         let max_records = 1 << 16;
         let mut wgpu = WorldGpu::new(&ctx, FIF, quad_capacity, max_records)?;
         wgpu.set_params(&wg.compiled.params);
+        wgpu.prefab_addrs = (prefabs.table.as_ref().unwrap().address, prefabs.data.as_ref().unwrap().address);
+        let prefab_revision = prefabs.revision;
         let world = World::new(quad_capacity, max_records);
         let profiler = GpuProfiler::new(&ctx, FIF)?;
         let timeline = Timeline::new(&ctx)?;
@@ -340,6 +347,8 @@ impl Engine {
             probes: crate::probe::Probes::new(&ctx, FIF)?,
             wg,
             node_ui: NodeEditorUi::new(),
+            tools: crate::tools::Tools::new(prefabs),
+            prefab_revision,
             camera,
             atmosphere,
             input: Input::default(),
@@ -559,30 +568,28 @@ impl Engine {
     }
 
     fn handle_editing(&mut self) {
-        let Some(hit) = self.pick else { return };
-        let inp = &self.input;
         let can_act = self.fly_mode || !self.look_drag;
         if !can_act {
             return;
         }
-        let (break_btn, place_btn) = if self.fly_mode {
-            (inp.mouse_pressed[0], inp.mouse_pressed[1])
-        } else {
-            (inp.mouse_pressed[0] && !inp.shift(), inp.mouse_pressed[0] && inp.shift())
-        };
-        if inp.mouse_pressed[2] {
-            if hit.block != 0 {
-                self.ui.selected_block = hit.block;
-                self.ui.toast(format!("Picked {}", self.blocks.blocks[hit.block as usize].display));
-            }
-        } else if break_btn {
-            let touched = self.world.overlay.apply("Break", &[(hit.block_pos, 0)]);
-            self.world.invalidate_blocks(&touched);
-        } else if place_btn {
-            let p = hit.block_pos + hit.normal;
-            let touched = self.world.overlay.apply("Place", &[(p, self.ui.selected_block)]);
-            self.world.invalidate_blocks(&touched);
+        self.tools.handle_input(&self.input, self.fly_mode, self.pick, &mut self.world, &mut self.ui, &self.blocks);
+    }
+
+    /// New / changed prefabs: re-upload and recompile the generator so Prefab nodes see them.
+    fn sync_prefabs(&mut self) -> Result<()> {
+        if self.tools.prefabs.revision == self.prefab_revision {
+            return Ok(());
         }
+        self.prefab_revision = self.tools.prefabs.revision;
+        self.tools.prefabs.upload(&self.ctx)?;
+        self.wgpu.prefab_addrs = (
+            self.tools.prefabs.table.as_ref().map(|b| b.address).unwrap_or(0),
+            self.tools.prefabs.data.as_ref().map(|b| b.address).unwrap_or(0),
+        );
+        self.wg.prefab_info = self.tools.prefabs.compile_info();
+        self.wg.prefab_names = self.tools.prefabs.names();
+        self.wg.mark_dirty();
+        Ok(())
     }
 
     // ---------------------------------------------------------------------------------------
@@ -684,6 +691,7 @@ impl Engine {
             }
         }
 
+        self.sync_prefabs()?;
         // ---- world generator edits ----
         let (params_changed, built) = self.wg.update();
         if params_changed {
@@ -734,7 +742,17 @@ impl Engine {
 
         // ---- world results ----
         for (s, jobs, results) in self.wgpu.poll(completed) {
+            for (i, j) in jobs.iter().enumerate() {
+                if j.readback {
+                    if let Some(v) = self.wgpu.take_voxels(s, i) {
+                        self.world.fill_region(j.key, &v);
+                    }
+                }
+            }
             self.world.apply_results(s, &jobs, &results, value);
+        }
+        for region in self.world.take_finished_regions() {
+            self.tools.region_ready(region, &mut self.world, &self.blocks, &mut self.ui);
         }
 
         // ---- input, camera, editing ----
@@ -815,7 +833,11 @@ impl Engine {
                     profiler_slot,
                 ) {
                     for j in rest {
-                        if let Some(c) = self.world.chunks.get_mut(&j.key) {
+                        if j.readback {
+                            for r in &mut self.world.region_reads {
+                                r.requeue(j.key.pos);
+                            }
+                        } else if let Some(c) = self.world.chunks.get_mut(&j.key) {
                             c.in_flight = false;
                         }
                     }
@@ -838,6 +860,8 @@ impl Engine {
                 edits: self.probes.input[slot].address,
                 params: self.wgpu.params.address,
                 columns: self.wgpu.columns.address,
+                prefab_table: self.wgpu.prefab_addrs.0,
+                prefab_data: self.wgpu.prefab_addrs.1,
                 num_jobs: n,
                 seed: self.seed,
                 edit_count: 0,
@@ -1199,7 +1223,9 @@ impl Engine {
         let ui = self.imgui.ctx.frame();
         if self.ui.show_ui {
             self.node_ui.draw(ui, &mut self.wg, &self.blocks);
+            self.tools.draw_ui(ui, &mut self.world, &self.blocks, &mut self.ui, self.pick);
         }
+        self.tools.draw_overlay(ui, &self.camera, self.pick);
         let actions = ui::draw(
             ui,
             &mut ui::UiCtx {
@@ -1223,6 +1249,7 @@ impl Engine {
                 zone_names: &self.wg.compiled.zones,
                 vsync: self.swapchain.as_ref().map(|s| s.vsync),
                 node_editor_open: &mut self.node_ui.open,
+                tools_open: &mut self.tools.show_tools,
             },
         );
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
@@ -1316,6 +1343,7 @@ impl Drop for Engine {
         self.timeline.destroy(&self.ctx);
         self.profiler.destroy(&self.ctx);
         self.wgpu.destroy(&self.ctx);
+        self.tools.prefabs.destroy(&self.ctx);
         self.probes.destroy(&self.ctx);
         self.wg.destroy(&self.ctx);
         self.renderer.destroy(&self.ctx);

@@ -8,7 +8,9 @@ mod shaders;
 mod textures;
 mod ui;
 mod node_editor;
+mod prefab;
 mod probe;
+mod tools;
 mod wg;
 mod world;
 
@@ -129,6 +131,7 @@ fn parse_args() -> Options {
             "--time" => o.time_of_day = next(&mut i).parse().ok(),
             "--debug-view" => o.debug_view = next(&mut i).parse().ok(),
             "--seed" => o.seed = next(&mut i).parse().ok(),
+            "--worldgen" => o.worldgen_dir = Some(next(&mut i).into()),
             other => eprintln!("unknown argument {other}"),
         }
         i += 1;

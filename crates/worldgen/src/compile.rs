@@ -90,6 +90,7 @@ struct Ctx {
 struct Shared<'a> {
     proj: &'a Project,
     blocks: &'a HashMap<String, u32>,
+    prefabs: &'a HashMap<String, (u32, [i32; 3])>,
     params: Params,
     warnings: Vec<String>,
     biome_ids: HashMap<String, u32>,
@@ -711,11 +712,13 @@ fn color_param(g: &Graph, n: &Node, name: &str) -> [f32; 3] {
     }
 }
 
-/// Compile the whole project. `blocks` maps block names to ids.
-pub fn compile(project: &Project, blocks: &HashMap<String, u32>) -> Result<Compiled> {
+/// Compile the whole project. `blocks` maps block names to ids, `prefabs` prefab names to
+/// (GPU index, size).
+pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashMap<String, (u32, [i32; 3])>) -> Result<Compiled> {
     let mut sh = Shared {
         proj: project,
         blocks,
+        prefabs,
         params: Params::default(),
         warnings: Vec::new(),
         biome_ids: HashMap::new(),
@@ -876,6 +879,25 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>) -> Result<Compi
                                 em.p(p, "height_min"),
                                 em.p(p, "height_max"),
                                 em.p(p, "radius")
+                            );
+                        }
+                        "prefab" => {
+                            let name = match em.value(p, "prefab") {
+                                Value::Ref(r) => r,
+                                _ => String::new(),
+                            };
+                            let Some(&(idx, size)) = em.sh.prefabs.get(&name) else {
+                                em.warn(format!("prefab '{name}' not found"));
+                                continue;
+                            };
+                            let _ = write!(
+                                d,
+                                "L.kind = PROP_PREFAB; L.variant = {idx}u; L.a = {}.0; L.b = {}.0; L.c = {}.0; L.b0 = {}u; L.b1 = uint({});",
+                                size[0],
+                                size[1],
+                                size[2],
+                                em.boolean(p, "random_rotation") as u32,
+                                em.p(p, "sink")
                             );
                         }
                         other => {

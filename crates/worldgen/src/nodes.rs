@@ -48,6 +48,8 @@ pub enum ParamKind {
     Ref(GraphKind),
     Color([f32; 3]),
     Curve,
+    /// name of a saved prefab (stored as Value::Ref)
+    Prefab,
 }
 
 impl ParamKind {
@@ -61,6 +63,7 @@ impl ParamKind {
             ParamKind::Ref(_) => Value::Ref(String::new()),
             ParamKind::Color(c) => Value::Color(c),
             ParamKind::Curve => Value::Curve(vec![[-1.0, -1.0], [0.0, 0.0], [1.0, 1.0]]),
+            ParamKind::Prefab => Value::Ref("ruin".into()),
         }
     }
     /// Live params can change without recompiling the generator.
@@ -263,6 +266,8 @@ pub static NODES: &[NodeDef] = &[
         params: &[blk("block", "cactus"), f("height_min", 2.0, 1.0, 64.0), f("height_max", 5.0, 1.0, 64.0), f("radius", 0.5, 0.5, 6.0), b("arms", true)], allowed: BIOME },
     NodeDef { kind: "spike", title: "Spike", category: "Props", help: "Tall cone (ice spikes, rock spires).", inputs: &[], outputs: &[("Out", Prop)],
         params: &[blk("block", "packed_ice"), f("height_min", 8.0, 2.0, 96.0), f("height_max", 24.0, 2.0, 96.0), f("radius", 2.5, 0.5, 12.0)], allowed: BIOME },
+    NodeDef { kind: "prefab", title: "Prefab", category: "Props", help: "Place a saved prefab (Tools > Select > Save selection as prefab).", inputs: &[], outputs: &[("Out", Prop)],
+        params: &[ParamDef { name: "prefab", kind: ParamKind::Prefab }, b("random_rotation", true), f("sink", 1.0, 0.0, 16.0)], allowed: BIOME },
     NodeDef { kind: "scatter", title: "Scatter", category: "Props",
         help: "Place a prop on the surface on a jittered grid. Mask (0..1) modulates density, e.g. noise -> forests and clearings.",
         inputs: &[("Prop", Prop), ("Mask", Density)], outputs: &[("Out", PropLayer)],

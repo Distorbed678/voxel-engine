@@ -6,6 +6,7 @@
 
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer EditBuf { uvec2 e[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer ParamBuf { float p[]; };
+layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer PrefabTable { uvec4 t[]; };
 
 layout(push_constant, scalar) uniform GenPC {
     GenJobBuf jobs;
@@ -14,6 +15,8 @@ layout(push_constant, scalar) uniform GenPC {
     EditBuf edits;
     ParamBuf params;     // live-tweakable node parameters (no recompile needed)
     ColumnBuf columns;   // per job, per column: biome id (written by the terrain pass)
+    PrefabTable prefabTable;
+    ColumnBuf prefabData;
     uint numJobs;
     uint seed;
     uint editCount;
@@ -132,6 +135,7 @@ uint ground_cover(vec3 p, uint ground, uint on, float chance, vec4 w, uvec4 b, u
 #define PROP_COLUMN 4u
 #define PROP_SPIKE 5u
 #define PROP_GEODE 6u
+#define PROP_PREFAB 7u
 
 struct PropLayer {
     uint biome;

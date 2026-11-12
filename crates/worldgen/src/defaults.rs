@@ -119,6 +119,8 @@ fn meadow() -> Graph {
     b.scatter(oak, 260.0, 650.0, &[("spacing", fv(28.0)), ("chance", fv(0.35))], 3, None);
     let rock = b.n("boulder", 0.0, 800.0, &[("radius_min", fv(1.0)), ("radius_max", fv(2.0))]);
     b.scatter(rock, 260.0, 800.0, &[("spacing", fv(40.0)), ("chance", fv(0.25)), ("seed", iv(3))], 4, None);
+    let ruin = b.n("prefab", 0.0, 950.0, &[("prefab", rv("ruin"))]);
+    b.scatter(ruin, 260.0, 950.0, &[("spacing", fv(220.0)), ("chance", fv(0.35)), ("seed", iv(8))], 5, None);
     b.out_params(&[("grass_tint", Value::Color([0.5, 0.82, 0.32])), ("map_color", Value::Color([0.55, 0.8, 0.35]))]);
     b.g
 }
@@ -560,10 +562,14 @@ mod tests {
         .collect()
     }
 
+    fn prefabs() -> HashMap<String, (u32, [i32; 3])> {
+        [("ruin".to_string(), (0u32, [7, 5, 7]))].into_iter().collect()
+    }
+
     #[test]
     fn default_project_compiles() {
         let p = default_project();
-        let c = compile::compile(&p, &blocks()).unwrap();
+        let c = compile::compile(&p, &blocks(), &prefabs()).unwrap();
         assert!(c.warnings.is_empty(), "warnings: {:#?}", c.warnings);
         assert_eq!(c.biomes.len(), 12);
         assert_eq!(c.zones.len(), 4);
@@ -574,11 +580,11 @@ mod tests {
     #[test]
     fn param_change_keeps_source() {
         let mut p = default_project();
-        let a = compile::compile(&p, &blocks()).unwrap();
+        let a = compile::compile(&p, &blocks(), &prefabs()).unwrap();
         let g = p.get_mut(GraphKind::Biome, "meadow").unwrap();
         let id = g.nodes.iter().find(|n| n.kind == "simplex2d").unwrap().id;
         g.set(id, "amplitude", Value::F(99.0));
-        let b = compile::compile(&p, &blocks()).unwrap();
+        let b = compile::compile(&p, &blocks(), &prefabs()).unwrap();
         assert_eq!(a.source, b.source);
         assert_ne!(a.params, b.params);
     }

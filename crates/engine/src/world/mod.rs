@@ -98,8 +98,38 @@ pub struct PoolCopy {
     pub count: u32,
 }
 
+/// Asynchronous read of the actual blocks (generation + overlay) inside a box.
+pub struct RegionRead {
+    pub id: u64,
+    pub min: IVec3,
+    pub size: IVec3,
+    pub blocks: Vec<u16>,
+    pending: std::collections::HashSet<IVec3>,
+    queued: Vec<IVec3>,
+}
+
+impl RegionRead {
+    pub fn get(&self, p: IVec3) -> u16 {
+        let l = p - self.min;
+        if l.cmplt(IVec3::ZERO).any() || l.cmpge(self.size).any() {
+            return 0;
+        }
+        self.blocks[((l.y * self.size.z + l.z) * self.size.x + l.x) as usize]
+    }
+    pub fn done(&self) -> bool {
+        self.pending.is_empty()
+    }
+    pub fn requeue(&mut self, c: IVec3) {
+        if self.pending.contains(&c) && !self.queued.contains(&c) {
+            self.queued.push(c);
+        }
+    }
+}
+
 pub struct World {
     pub chunks: HashMap<ChunkKey, Chunk>,
+    pub region_reads: Vec<RegionRead>,
+    next_region_id: u64,
     pub settings: LodSettings,
     last_center: Option<(IVec3, LodSettings)>,
     pub overlay: EditOverlay,
@@ -119,6 +149,8 @@ impl World {
     pub fn new(quad_capacity: u32, max_records: u32) -> Self {
         Self {
             chunks: HashMap::new(),
+            region_reads: Vec::new(),
+            next_region_id: 1,
             settings: LodSettings::default(),
             last_center: None,
             overlay: EditOverlay::default(),
@@ -331,6 +363,61 @@ impl World {
         }
     }
 
+    /// Request the real block contents of [min, max] (inclusive). Returns a request id.
+    pub fn request_region(&mut self, a: IVec3, b: IVec3) -> u64 {
+        let min = a.min(b);
+        let max = a.max(b);
+        let size = max - min + IVec3::ONE;
+        let c0 = min.div_euclid(IVec3::splat(CHUNK));
+        let c1 = max.div_euclid(IVec3::splat(CHUNK));
+        let mut pending = std::collections::HashSet::new();
+        for z in c0.z..=c1.z {
+            for y in c0.y..=c1.y {
+                for x in c0.x..=c1.x {
+                    pending.insert(IVec3::new(x, y, z));
+                }
+            }
+        }
+        let id = self.next_region_id;
+        self.next_region_id += 1;
+        let queued = pending.iter().copied().collect();
+        self.region_reads.push(RegionRead { id, min, size, blocks: vec![0; (size.x * size.y * size.z) as usize], pending, queued });
+        id
+    }
+
+    /// Feed voxel data from a readback job into any region reads waiting for that chunk.
+    pub fn fill_region(&mut self, key: ChunkKey, voxels: &[u16]) {
+        if key.lod != 0 {
+            return;
+        }
+        let origin = key.origin();
+        for r in &mut self.region_reads {
+            if !r.pending.remove(&key.pos) {
+                continue;
+            }
+            for ly in 0..CHUNK {
+                for lz in 0..CHUNK {
+                    for lx in 0..CHUNK {
+                        let w = origin + IVec3::new(lx, ly, lz);
+                        let l = w - r.min;
+                        if l.cmplt(IVec3::ZERO).any() || l.cmpge(r.size).any() {
+                            continue;
+                        }
+                        let vi = ((ly + 1) * CA * CA + (lz + 1) * CA + (lx + 1)) as usize;
+                        r.blocks[((l.y * r.size.z + l.z) * r.size.x + l.x) as usize] = voxels[vi];
+                    }
+                }
+            }
+        }
+    }
+
+    /// Completed region reads (removed from the queue).
+    pub fn take_finished_regions(&mut self) -> Vec<RegionRead> {
+        let (done, rest): (Vec<RegionRead>, Vec<RegionRead>) = std::mem::take(&mut self.region_reads).into_iter().partition(|r| r.done());
+        self.region_reads = rest;
+        done
+    }
+
     /// Pick up to `max` chunks to (re)generate, nearest / most visible first.
     pub fn pick_jobs(&mut self, cam: DVec3, forward: Vec3, max: usize) -> Vec<JobDesc> {
         let mut cands: Vec<(f32, ChunkKey)> = self
@@ -358,6 +445,31 @@ impl World {
         }
         cands.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut jobs = Vec::with_capacity(cands.len());
+        // region-read chunks go first (they don't need to be in the streamed set)
+        let mut rb: Vec<IVec3> = Vec::new();
+        for r in &mut self.region_reads {
+            while let Some(c) = r.queued.pop() {
+                if rb.len() >= max / 2 {
+                    r.queued.push(c);
+                    break;
+                }
+                rb.push(c);
+            }
+        }
+        for c in rb {
+            let key = ChunkKey { lod: 0, pos: c };
+            let origin = key.origin();
+            let min = origin - IVec3::ONE;
+            let maxp = origin + IVec3::splat(CHUNK + 1);
+            let mut edits = Vec::new();
+            self.overlay.entries_in(min, maxp, |p, b| {
+                let cell = p - min;
+                edits.push((((cell.y * CA + cell.z) * CA + cell.x) as u32, b));
+            });
+            // counter u32::MAX marks a pure read (results are not applied to the streamed chunk)
+            jobs.push(JobDesc { key, counter: u32::MAX, readback: true, edits });
+        }
+        let cands: Vec<(f32, ChunkKey)> = cands.into_iter().take(max.saturating_sub(jobs.len())).collect();
         for (_, key) in cands {
             let c = self.chunks.get_mut(&key).unwrap();
             c.in_flight = true;
@@ -379,7 +491,7 @@ impl World {
                     edits.push((idx as u32, b));
                 }
             });
-            jobs.push(JobDesc { key, counter, edits });
+            jobs.push(JobDesc { key, counter, readback: false, edits });
         }
         self.stats.jobs_total += jobs.len() as u64;
         self.jobs_window.1 += jobs.len() as u32;
@@ -394,6 +506,14 @@ impl World {
     pub fn apply_results(&mut self, slot: usize, jobs: &[JobDesc], results: &[JobResult], frame_value: u64) {
         let mut overflow = 0;
         for (job, res) in jobs.iter().zip(results) {
+            if job.counter == u32::MAX {
+                if res.flags & JOB_OVERFLOW != 0 {
+                    for r in &mut self.region_reads {
+                        r.requeue(job.key.pos);
+                    }
+                }
+                continue; // region read only
+            }
             let Some(c) = self.chunks.get_mut(&job.key) else { continue };
             c.in_flight = false;
             if res.flags & JOB_OVERFLOW != 0 {

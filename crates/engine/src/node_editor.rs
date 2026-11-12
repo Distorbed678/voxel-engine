@@ -630,6 +630,7 @@ impl NodeEditorUi {
         let zone_names = wg.project.names(GraphKind::Zone);
         let fn_names = wg.project.names(GraphKind::Function);
         let block_names: Vec<&str> = blocks.blocks.iter().map(|b| b.name).collect();
+        let prefab_names = wg.prefab_names.clone();
         let mut changed = false;
         let mut snapshot = false;
         {
@@ -719,6 +720,18 @@ impl NodeEditorUi {
                         if ui.color_edit3(&label, &mut c) {
                             node.params.insert(pd.name.into(), Value::Color(c));
                             changed = true;
+                        }
+                    }
+                    ParamKind::Prefab => {
+                        let cur = match node.params.get(pd.name) {
+                            Some(Value::Ref(s)) => prefab_names.iter().position(|o| o == s),
+                            _ => None,
+                        };
+                        let mut i = cur.unwrap_or(0);
+                        if !prefab_names.is_empty() && ui.combo_simple_string(&label, &mut i, &prefab_names) && Some(i) != cur {
+                            node.params.insert(pd.name.into(), Value::Ref(prefab_names[i].clone()));
+                            changed = true;
+                            snapshot = true;
                         }
                     }
                     ParamKind::Curve => {

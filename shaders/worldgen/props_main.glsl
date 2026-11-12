@@ -125,7 +125,7 @@ void main() {
             if (b == 0u) continue;
             uint cur = uint(pc.voxels.v[vi]);
             uint ck = block_kind(cur);
-            bool replace = cur == 0u || ck == KIND_MODEL || (ck == KIND_CUTOUT && block_kind(b) == KIND_OPAQUE);
+            bool replace = cur == 0u || ck == KIND_MODEL || (ck == KIND_CUTOUT && block_kind(b) == KIND_OPAQUE) || L.kind == PROP_PREFAB;
             if (replace) {
                 pc.voxels.v[vi] = uint16_t(b);
                 written += 1u;

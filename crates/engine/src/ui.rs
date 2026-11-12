@@ -112,6 +112,7 @@ pub struct UiCtx<'a> {
     pub busy_slots: usize,
     pub vsync: Option<bool>,
     pub node_editor_open: &'a mut bool,
+    pub tools_open: &'a mut bool,
     pub probes: &'a crate::probe::Probes,
     pub biome_names: &'a [worldgen::BiomeInfo],
     pub zone_names: &'a [worldgen::ZoneInfo],
@@ -157,6 +158,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
         });
         ui.menu("View", || {
             ui.checkbox("World Generator (node editor)", c.node_editor_open);
+            ui.checkbox("Tools", c.tools_open);
             ui.checkbox("Stats", &mut c.state.show_stats);
             ui.checkbox("World", &mut c.state.show_world);
             ui.checkbox("Render", &mut c.state.show_render);

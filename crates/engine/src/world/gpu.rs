@@ -54,6 +54,8 @@ pub struct JobResult {
 pub struct JobDesc {
     pub key: ChunkKey,
     pub counter: u32,
+    /// copy the generated voxels back to the CPU (region reads for editing tools)
+    pub readback: bool,
     /// (cell index in the 34^3 slot, block)
     pub edits: Vec<(u32, u16)>,
 }
@@ -70,6 +72,7 @@ enum SlotState {
 struct BatchSlot {
     scratch: Buffer,
     readback: Buffer,
+    voxel_readback: Option<Buffer>,
     jobs_buf: Buffer,
     edits_buf: Buffer,
     state: SlotState,
@@ -85,6 +88,8 @@ pub struct GenPush {
     pub edits: u64,
     pub params: u64,
     pub columns: u64,
+    pub prefab_table: u64,
+    pub prefab_data: u64,
     pub num_jobs: u32,
     pub seed: u32,
     pub edit_count: u32,
@@ -152,6 +157,7 @@ pub struct WorldGpu {
     params_staging: Buffer,
     params_dirty: bool,
     pub param_values: Vec<f32>,
+    pub prefab_addrs: (u64, u64),
 }
 
 const RESULTS_BYTES: u64 = (MAX_JOBS * std::mem::size_of::<JobResult>()) as u64;
@@ -164,6 +170,7 @@ impl WorldGpu {
             slots.push(BatchSlot {
                 scratch: Buffer::gpu(ctx, &format!("scratch_quads_{i}"), scratch_capacity as u64 * 8)?,
                 readback: Buffer::readback(ctx, &format!("batch_readback_{i}"), RESULTS_BYTES + 64)?,
+                voxel_readback: None,
                 jobs_buf: Buffer::upload(ctx, &format!("jobs_{i}"), (MAX_JOBS * 32) as u64)?,
                 edits_buf: Buffer::upload(ctx, &format!("edits_{i}"), 1 << 20)?,
                 state: SlotState::Free,
@@ -190,6 +197,7 @@ impl WorldGpu {
             params_staging: Buffer::upload(ctx, "graph_params_staging", 64 * 1024 * 4)?,
             params_dirty: true,
             param_values: vec![0.0; 16],
+            prefab_addrs: (0, 0),
         })
     }
 
@@ -204,6 +212,12 @@ impl WorldGpu {
 
     pub fn busy_slots(&self) -> usize {
         self.slots.iter().filter(|s| s.state != SlotState::Free).count()
+    }
+
+    /// Voxel data (34^3 u16 incl. apron) of a readback job from the last poll.
+    pub fn take_voxels(&mut self, slot: usize, job_index: usize) -> Option<Vec<u16>> {
+        let rb = self.slots[slot].voxel_readback.as_ref()?;
+        Some(rb.read::<u16>(job_index as u64 * SLOT_U16 * 2, 34 * 34 * 34))
     }
 
     /// Collect finished batches. Returns (slot, jobs, results) for each.
@@ -344,6 +358,10 @@ impl WorldGpu {
                 slot.edits_buf.write(0, &edits);
             }
         }
+        if jobs.iter().take(n).any(|j| j.readback) && self.slots[slot_idx].voxel_readback.is_none() {
+            let b = Buffer::readback(ctx, "voxel_readback", MAX_JOBS as u64 * SLOT_U16 * 2).map_err(|_| jobs.clone())?;
+            self.slots[slot_idx].voxel_readback = Some(b);
+        }
         let slot = &self.slots[slot_idx];
         let edit_count = total_edits as u32;
 
@@ -368,6 +386,8 @@ impl WorldGpu {
                 edits: slot.edits_buf.address,
                 params: self.params.address,
                 columns: self.columns.address,
+                prefab_table: self.prefab_addrs.0,
+                prefab_data: self.prefab_addrs.1,
                 num_jobs: n as u32,
                 seed,
                 edit_count,
@@ -400,6 +420,19 @@ impl WorldGpu {
                 d.cmd_dispatch(cb, edit_count.div_ceil(64), 1, 1);
             }
             compute_barrier(ctx, cb);
+        }
+        // region reads: copy the final voxels of flagged jobs to the host
+        let rb_regions: Vec<vk::BufferCopy> = jobs
+            .iter()
+            .take(n)
+            .enumerate()
+            .filter(|(_, j)| j.readback)
+            .map(|(i, _)| vk::BufferCopy { src_offset: i as u64 * SLOT_U16 * 2, dst_offset: i as u64 * SLOT_U16 * 2, size: SLOT_U16 * 2 })
+            .collect();
+        if !rb_regions.is_empty() {
+            if let Some(rb) = &slot.voxel_readback {
+                unsafe { d.cmd_copy_buffer(cb, self.voxels.raw, rb.raw, &rb_regions) };
+            }
         }
         profiler.end(ctx, cb, frame_slot);
         profiler.begin(ctx, cb, frame_slot, "meshing");
@@ -471,6 +504,9 @@ impl WorldGpu {
 
     pub fn destroy(&mut self, ctx: &VkContext) {
         for s in &mut self.slots {
+            if let Some(mut b) = s.voxel_readback.take() {
+                b.destroy(ctx);
+            }
             s.scratch.destroy(ctx);
             s.readback.destroy(ctx);
             s.jobs_buf.destroy(ctx);

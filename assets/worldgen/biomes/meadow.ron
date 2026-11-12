@@ -251,6 +251,33 @@
             },
             comment: "",
         ),
+        (
+            id: 19,
+            kind: "prefab",
+            pos: (0.0, 950.0),
+            params: {
+                "prefab": Ref("ruin"),
+                "random_rotation": B(true),
+                "sink": F(1.0),
+            },
+            comment: "",
+        ),
+        (
+            id: 20,
+            kind: "scatter",
+            pos: (260.0, 950.0),
+            params: {
+                "any_surface": B(false),
+                "chance": F(0.35),
+                "jitter": F(0.9),
+                "seed": I(8),
+                "spacing": F(220.0),
+                "surface": Block("grass"),
+                "y_max": F(512.0),
+                "y_min": F(-512.0),
+            },
+            comment: "",
+        ),
     ],
     links: [
         (
@@ -355,6 +382,18 @@
             to_node: 1,
             to_pin: 4,
         ),
+        (
+            from_node: 19,
+            from_pin: 0,
+            to_node: 20,
+            to_pin: 0,
+        ),
+        (
+            from_node: 20,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 5,
+        ),
     ],
-    next_id: 19,
+    next_id: 21,
 )
