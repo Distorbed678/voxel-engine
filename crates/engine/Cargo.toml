@@ -1,0 +1,27 @@
+[package]
+name = "voxel-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vkcore = { path = "../vkcore" }
+worldgen = { path = "../worldgen" }
+ash.workspace = true
+ash-window.workspace = true
+raw-window-handle.workspace = true
+winit.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+ron.workspace = true
+notify.workspace = true
+image.workspace = true
+rayon.workspace = true
+dear-imgui-rs.workspace = true
+dear-imgui-winit.workspace = true
+dear-imgui-ash = { workspace = true, default-features = false, features = ["dynamic-rendering"] }
+dear-node-editor.workspace = true
+dear-implot.workspace = true

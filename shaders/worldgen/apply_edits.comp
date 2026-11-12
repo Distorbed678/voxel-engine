@@ -1,0 +1,29 @@
+#version 460
+// Applies user edits (the sparse overlay) on top of freshly generated chunk voxels.
+#include "common.glsl"
+#include "voxel.glsl"
+
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer EditBuf { uvec2 e[]; };
+
+layout(local_size_x = 64) in;
+
+layout(push_constant, scalar) uniform PC {
+    VoxelBuf voxels;
+    EditBuf edits;
+    JobResultBuf results;
+    uint count;
+} pc;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) return;
+    uvec2 e = pc.edits.e[i];
+    uint job = e.x & 0xFFu;
+    uint block = e.x >> 8;
+    uint idx = e.y;
+    uint prev = uint(pc.voxels.v[job * SLOT_U16 + idx]);
+    pc.voxels.v[job * SLOT_U16 + idx] = uint16_t(block);
+    // keep occupancy stats conservative: edits always make the chunk "interesting"
+    if (prev == 0u && block != 0u) atomicAdd(pc.results.r[job].nonAir, 1u);
+    if (prev != 0u && block == 0u) atomicAdd(pc.results.r[job].opaque, 0xFFFFFFFFu); // -1
+}

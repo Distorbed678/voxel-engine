@@ -1,0 +1,227 @@
+//! Pipeline registry with GLSL hot reload (file watcher on `shaders/`).
+
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use anyhow::Result;
+use notify::{RecursiveMode, Watcher};
+use vkcore::pipeline::{self, BlendMode, GraphicsDesc};
+use vkcore::{ShaderCompiler, ShaderKind, VkContext, vk};
+
+#[derive(Clone)]
+pub struct GraphicsState {
+    pub color_formats: Vec<vk::Format>,
+    pub blend: Vec<BlendMode>,
+    pub depth_format: Option<vk::Format>,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub depth_compare: vk::CompareOp,
+    pub cull: vk::CullModeFlags,
+    pub polygon_mode: vk::PolygonMode,
+    pub depth_bias: bool,
+    pub depth_clamp: bool,
+}
+
+impl Default for GraphicsState {
+    fn default() -> Self {
+        Self {
+            color_formats: vec![],
+            blend: vec![],
+            depth_format: None,
+            depth_test: false,
+            depth_write: false,
+            depth_compare: vk::CompareOp::GREATER_OR_EQUAL,
+            cull: vk::CullModeFlags::NONE,
+            polygon_mode: vk::PolygonMode::FILL,
+            depth_bias: false,
+            depth_clamp: false,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum PipelineSource {
+    Compute { path: String, defines: Vec<(String, String)> },
+    /// Compute shader whose main source is provided in memory (e.g. generated worldgen code).
+    ComputeSource { name: String, source: String, defines: Vec<(String, String)> },
+    Graphics { stages: Vec<(String, Vec<(String, String)>)>, state: GraphicsState },
+}
+
+struct Entry {
+    name: String,
+    source: PipelineSource,
+    pipeline: vk::Pipeline,
+    deps: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PipelineHandle(usize);
+
+pub struct PipelineManager {
+    pub compiler: ShaderCompiler,
+    pub layout: vk::PipelineLayout,
+    entries: Vec<Entry>,
+    changed: Arc<Mutex<HashSet<PathBuf>>>,
+    _watcher: Option<notify::RecommendedWatcher>,
+    /// Pipelines replaced by a reload, destroyed once `frame_value` completed.
+    retired: Vec<(u64, vk::Pipeline)>,
+    pub last_errors: Vec<String>,
+    pub reload_count: u32,
+}
+
+fn defines_ref(d: &[(String, String)]) -> Vec<(&str, &str)> {
+    d.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect()
+}
+
+impl PipelineManager {
+    pub fn new(root: PathBuf, layout: vk::PipelineLayout) -> Result<Self> {
+        let changed = Arc::new(Mutex::new(HashSet::new()));
+        let changed_w = changed.clone();
+        let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(ev) = res {
+                if matches!(ev.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_)) {
+                    let mut c = changed_w.lock().unwrap();
+                    for p in ev.paths {
+                        c.insert(p.canonicalize().unwrap_or(p));
+                    }
+                }
+            }
+        })
+        .ok()
+        .and_then(|mut w| w.watch(&root, RecursiveMode::Recursive).ok().map(|_| w));
+        if watcher.is_none() {
+            log::warn!("shader hot reload disabled (could not watch {})", root.display());
+        }
+        Ok(Self {
+            compiler: ShaderCompiler::new(root)?,
+            layout,
+            entries: Vec::new(),
+            changed,
+            _watcher: watcher,
+            retired: Vec::new(),
+            last_errors: Vec::new(),
+            reload_count: 0,
+        })
+    }
+
+    fn build(&self, ctx: &VkContext, name: &str, source: &PipelineSource) -> Result<(vk::Pipeline, Vec<PathBuf>)> {
+        match source {
+            PipelineSource::Compute { path, defines } => {
+                let out = self.compiler.compile_file(path, &defines_ref(defines))?;
+                Ok((pipeline::compute(ctx, self.layout, &out.spirv, name)?, out.deps))
+            }
+            PipelineSource::ComputeSource { name: n, source, defines } => {
+                let out = self.compiler.compile_source(n, source, ShaderKind::Compute, &defines_ref(defines))?;
+                Ok((pipeline::compute(ctx, self.layout, &out.spirv, name)?, out.deps))
+            }
+            PipelineSource::Graphics { stages, state } => {
+                let mut compiled = Vec::new();
+                let mut deps = Vec::new();
+                for (path, defines) in stages {
+                    let kind = ShaderKind::from_path(path).unwrap();
+                    let out = self.compiler.compile_file(path, &defines_ref(defines))?;
+                    deps.extend(out.deps);
+                    compiled.push((kind.stage(), out.spirv));
+                }
+                let desc = GraphicsDesc {
+                    stages: compiled.iter().map(|(s, c)| (*s, c.as_slice())).collect(),
+                    color_formats: state.color_formats.clone(),
+                    blend: state.blend.clone(),
+                    depth_format: state.depth_format,
+                    depth_test: state.depth_test,
+                    depth_write: state.depth_write,
+                    depth_compare: state.depth_compare,
+                    cull: state.cull,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    polygon_mode: state.polygon_mode,
+                    depth_bias: state.depth_bias,
+                    depth_clamp: state.depth_clamp,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                };
+                Ok((pipeline::graphics(ctx, self.layout, &desc, name)?, deps))
+            }
+        }
+    }
+
+    pub fn create(&mut self, ctx: &VkContext, name: &str, source: PipelineSource) -> Result<PipelineHandle> {
+        let (pipeline, deps) = self.build(ctx, name, &source)?;
+        let deps = deps.into_iter().map(|p| p.canonicalize().unwrap_or(p)).collect();
+        self.entries.push(Entry { name: name.to_string(), source, pipeline, deps });
+        Ok(PipelineHandle(self.entries.len() - 1))
+    }
+
+    /// Replace the source of an existing pipeline (e.g. new worldgen code) with an already-built
+    /// pipeline object.
+    pub fn replace(&mut self, h: PipelineHandle, source: PipelineSource, pipeline: vk::Pipeline, deps: Vec<PathBuf>, retire_after: u64) {
+        let e = &mut self.entries[h.0];
+        self.retired.push((retire_after, e.pipeline));
+        e.pipeline = pipeline;
+        e.source = source;
+        e.deps = deps.into_iter().map(|p| p.canonicalize().unwrap_or(p)).collect();
+    }
+
+    pub fn get(&self, h: PipelineHandle) -> vk::Pipeline {
+        self.entries[h.0].pipeline
+    }
+
+    /// Rebuild every pipeline that depends on a changed file. Keeps the old pipeline on error.
+    pub fn hot_reload(&mut self, ctx: &VkContext, frame_value: u64, force_all: bool) -> usize {
+        let changed: HashSet<PathBuf> = std::mem::take(&mut *self.changed.lock().unwrap());
+        if changed.is_empty() && !force_all {
+            return 0;
+        }
+        let mut n = 0;
+        let mut errors = Vec::new();
+        for i in 0..self.entries.len() {
+            let hit = force_all || self.entries[i].deps.iter().any(|d| changed.contains(d));
+            if !hit {
+                continue;
+            }
+            let name = self.entries[i].name.clone();
+            let source = self.entries[i].source.clone();
+            match self.build(ctx, &name, &source) {
+                Ok((p, deps)) => {
+                    let e = &mut self.entries[i];
+                    self.retired.push((frame_value, e.pipeline));
+                    e.pipeline = p;
+                    e.deps = deps.into_iter().map(|p| p.canonicalize().unwrap_or(p)).collect();
+                    n += 1;
+                    log::info!("reloaded pipeline {name}");
+                }
+                Err(err) => {
+                    log::error!("{err:#}");
+                    errors.push(format!("{name}: {err:#}"));
+                }
+            }
+        }
+        if n > 0 || !errors.is_empty() {
+            self.last_errors = errors;
+            self.reload_count += n as u32;
+        }
+        n
+    }
+
+    pub fn collect_garbage(&mut self, ctx: &VkContext, completed: u64) {
+        self.retired.retain(|(v, p)| {
+            if *v <= completed {
+                unsafe { ctx.device.destroy_pipeline(*p, None) };
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    pub fn destroy(&mut self, ctx: &VkContext) {
+        unsafe {
+            for e in self.entries.drain(..) {
+                ctx.device.destroy_pipeline(e.pipeline, None);
+            }
+            for (_, p) in self.retired.drain(..) {
+                ctx.device.destroy_pipeline(p, None);
+            }
+            ctx.device.destroy_pipeline_layout(self.layout, None);
+        }
+    }
+}

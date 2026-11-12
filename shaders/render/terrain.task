@@ -1,0 +1,15 @@
+#version 460
+#include "render/terrain_common.glsl"
+
+layout(local_size_x = 1) in;
+
+taskPayloadSharedEXT TaskPayload pl;
+
+void main() {
+    DrawGroup g = pc.draws.g[gl_WorkGroupID.x];
+    pl.chunk = g.chunk;
+    pl.quadOffset = g.quadOffset;
+    pl.quadCount = g.quadCount;
+    pl.group = gl_WorkGroupID.x;
+    EmitMeshTasksEXT((g.quadCount + 63u) / 64u, 1u, 1u);
+}

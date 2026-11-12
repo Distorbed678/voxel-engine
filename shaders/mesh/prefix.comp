@@ -1,0 +1,55 @@
+#version 460
+// Per-job exclusive prefix over (stream, slice) counts + batch-level compaction into scratch.
+#include "common.glsl"
+#include "voxel.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(push_constant, scalar) uniform PC {
+    U32Buf table;
+    JobResultBuf results;
+    U32Buf batchStats;     // [0] = total quads in batch, [1] = overflowed jobs
+    uint numJobs;
+    uint scratchCapacity;
+} pc;
+
+shared uint sTotals[256];
+
+void main() {
+    uint job = gl_LocalInvocationID.x;
+    uint total = 0u;
+    if (job < pc.numJobs) {
+        uint base = job * NUM_STREAMS * 32u;
+        for (uint stream = 0u; stream < NUM_STREAMS; ++stream) {
+            uint sc = 0u;
+            for (uint s = 0u; s < 32u; ++s) {
+                uint i = base + stream * 32u + s;
+                uint c = pc.table.v[i];
+                pc.table.v[i] = total;
+                total += c;
+                sc += c;
+            }
+            pc.results.r[job].counts[stream] = sc;
+        }
+        pc.results.r[job].total = total;
+    }
+    sTotals[job] = total;
+    barrier();
+    if (job == 0u) {
+        uint run = 0u;
+        uint overflow = 0u;
+        for (uint j = 0u; j < pc.numJobs; ++j) {
+            uint t = sTotals[j];
+            if (run + t > pc.scratchCapacity) {
+                pc.results.r[j].flags |= JOB_OVERFLOW;
+                pc.results.r[j].scratchBase = 0u;
+                overflow++;
+            } else {
+                pc.results.r[j].scratchBase = run;
+                run += t;
+            }
+        }
+        pc.batchStats.v[0] = run;
+        pc.batchStats.v[1] = overflow;
+    }
+}

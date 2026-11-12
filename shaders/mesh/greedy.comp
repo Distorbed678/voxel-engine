@@ -1,0 +1,166 @@
+#version 460
+// GPU greedy mesher. Runs twice per batch:
+//   count pass  (no MESH_WRITE): counts quads per (job, stream, slice) into `table`
+//   write pass  (MESH_WRITE):    re-runs the identical greedy walk and writes the quads at the
+//                                exclusive offsets produced by prefix.comp
+// One invocation handles one 32x32 slice for one face direction of one chunk.
+// Faces with identical block + identical AO pattern merge; the fragment shader evaluates AO
+// per cell (fract of the cell coordinate) so merged quads look identical to unmerged ones.
+#include "common.glsl"
+#include "voxel.glsl"
+
+layout(local_size_x = 32) in;
+
+layout(push_constant, scalar) uniform PC {
+    VoxelBuf voxels;
+    BlockTable blocks;
+    U32Buf table;          // [job][stream][slice]
+    JobResultBuf results;
+    UVec2Buf scratch;
+    uint numJobs;
+    uint scratchCapacity;
+} pc;
+
+uint gBase;
+
+uint vox(ivec3 p) { return uint(pc.voxels.v[gBase + vidx(p)]); }
+uint kindOf(uint b) { return pc.blocks.b[b].flags & 15u; }
+
+// Does neighbour block `nb` hide the face of block `b` (kind kb)?
+bool occludes(uint nb, uint b, uint kb) {
+    if (nb == 0u) return false;
+    uint kn = kindOf(nb);
+    if (kn == KIND_OPAQUE) return true;
+    if (nb == b && (kb == KIND_CUTOUT || kb == KIND_TRANSPARENT)) return true;
+    // transparent blocks are hidden by any non-air cube neighbour except other transparents
+    if (kb == KIND_TRANSPARENT && kn == KIND_CUTOUT) return true;
+    return false;
+}
+
+bool aoOcc(ivec3 p) {
+    uint b = vox(p);
+    if (b == 0u) return false;
+    uint k = kindOf(b);
+    return k == KIND_OPAQUE || k == KIND_CUTOUT;
+}
+
+uint aoCorner(bool s1, bool s2, bool c) {
+    return (s1 && s2) ? 0u : 3u - uint(s1) - uint(s2) - uint(c);
+}
+
+uint gAxis;
+ivec3 gN, gU, gV;
+int gS;
+
+uint faceKey(int u, int v) {
+    ivec3 p = slice_pos(gAxis, gS, u, v);
+    uint b = vox(p);
+    uint kb = kindOf(b);
+    if (kb == KIND_TRANSPARENT) {
+        return b | (0xFFu << 16) | (1u << 24);
+    }
+    ivec3 q = p + gN;
+    bool xm = aoOcc(q - gU), xp = aoOcc(q + gU), ym = aoOcc(q - gV), yp = aoOcc(q + gV);
+    bool mm = aoOcc(q - gU - gV), pm = aoOcc(q + gU - gV);
+    bool pp = aoOcc(q + gU + gV), mp = aoOcc(q - gU + gV);
+    uint ao = aoCorner(xm, ym, mm) | (aoCorner(xp, ym, pm) << 2) |
+              (aoCorner(xp, yp, pp) << 4) | (aoCorner(xm, yp, mp) << 6);
+    return b | (ao << 16);
+}
+
+void main() {
+    uint dir = gl_WorkGroupID.x;
+    uint job = gl_WorkGroupID.y;
+    gS = int(gl_LocalInvocationID.x);
+    gBase = job * SLOT_U16;
+    gAxis = dir >> 1;
+    gN = dir_normal(dir);
+    gU = axis_u(gAxis);
+    gV = axis_v(gAxis);
+
+    uint nonAir = pc.results.r[job].nonAir;
+    uint opaque = pc.results.r[job].opaque;
+    bool skip = nonAir == 0u || opaque >= uint(CA * CA * CA);
+
+    uint tbase = job * NUM_STREAMS * 32u;
+    uint nO = 0u, nT = 0u, nM = 0u;
+
+#ifdef MESH_WRITE
+    uint flags = pc.results.r[job].flags;
+    if ((flags & JOB_OVERFLOW) != 0u) skip = true;
+    uint sbase = pc.results.r[job].scratchBase;
+    uint offO = sbase + pc.table.v[tbase + dir * 32u + uint(gS)];
+    uint offT = sbase + pc.table.v[tbase + (6u + dir) * 32u + uint(gS)];
+    uint offM = sbase + pc.table.v[tbase + STREAM_MODELS * 32u + uint(gS)];
+#endif
+
+    if (!skip) {
+        uint vis[32];
+        for (int v = 0; v < 32; ++v) {
+            uint m = 0u;
+            for (int u = 0; u < 32; ++u) {
+                ivec3 p = slice_pos(gAxis, gS, u, v);
+                uint b = vox(p);
+                if (b == 0u) continue;
+                uint kb = kindOf(b);
+                if (kb == KIND_MODEL) {
+                    if (dir == 0u) {
+#ifdef MESH_WRITE
+                        // neighbour mask: which of the 6 neighbours are opaque (for face culling)
+                        uint nmask = 0u;
+                        for (uint d = 0u; d < 6u; ++d) {
+                            uint nb = vox(p + dir_normal(d));
+                            if (nb != 0u && kindOf(nb) == KIND_OPAQUE) nmask |= 1u << d;
+                        }
+                        pc.scratch.v[offM + nM] = uvec2(uint(p.x) | (uint(p.y) << 5) | (uint(p.z) << 10) | (nmask << 15), b);
+#endif
+                        nM++;
+                    }
+                    continue;
+                }
+                if (kb == KIND_AIR) continue;
+                uint nb = vox(p + gN);
+                if (!occludes(nb, b, kb)) m |= 1u << uint(u);
+            }
+            vis[v] = m;
+        }
+
+        for (int v = 0; v < 32; ++v) {
+            while (vis[v] != 0u) {
+                int u = findLSB(vis[v]);
+                uint key = faceKey(u, v);
+                int w = 1;
+                while (u + w < 32 && ((vis[v] >> uint(u + w)) & 1u) != 0u && faceKey(u + w, v) == key) {
+                    w++;
+                }
+                uint rowMask = (w >= 32 ? 0xFFFFFFFFu : ((1u << uint(w)) - 1u)) << uint(u);
+                vis[v] &= ~rowMask;
+                int h = 1;
+                while (v + h < 32) {
+                    if ((vis[v + h] & rowMask) != rowMask) break;
+                    bool ok = true;
+                    for (int k = 0; k < w; ++k) {
+                        if (faceKey(u + k, v + h) != key) { ok = false; break; }
+                    }
+                    if (!ok) break;
+                    vis[v + h] &= ~rowMask;
+                    h++;
+                }
+                bool transparent = (key >> 24) != 0u;
+#ifdef MESH_WRITE
+                uvec2 q = pack_quad(uint(u), uint(v), uint(gS), uint(w), uint(h), dir,
+                                    key & 0xFFFFu, (key >> 16) & 0xFFu);
+                if (transparent) pc.scratch.v[offT + nT] = q;
+                else pc.scratch.v[offO + nO] = q;
+#endif
+                if (transparent) nT++; else nO++;
+            }
+        }
+    }
+
+#ifndef MESH_WRITE
+    pc.table.v[tbase + dir * 32u + uint(gS)] = nO;
+    pc.table.v[tbase + (6u + dir) * 32u + uint(gS)] = nT;
+    if (dir == 0u) pc.table.v[tbase + STREAM_MODELS * 32u + uint(gS)] = nM;
+#endif
+}

@@ -1,0 +1,14 @@
+[package]
+name = "vkcore"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ash.workspace = true
+ash-window.workspace = true
+raw-window-handle.workspace = true
+gpu-allocator.workspace = true
+shaderc.workspace = true
+anyhow.workspace = true
+log.workspace = true
+bytemuck.workspace = true

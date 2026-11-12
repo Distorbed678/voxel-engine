@@ -1,0 +1,10 @@
+[package]
+name = "worldgen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+ron.workspace = true
+anyhow.workspace = true
+glam.workspace = true
