@@ -81,6 +81,7 @@ pub struct FrameStats {
     pub drawn_quads: u32,
     pub draw_groups: u32,
     pub trans_groups: u32,
+    pub model_groups: u32,
 }
 
 pub struct Engine {
@@ -585,7 +586,8 @@ impl Engine {
         let words: Vec<u32> = self.renderer.per_slot[slot].pick_readback.read(0, 2);
         let payload = words[0];
         let depth = f32::from_bits(words[1]);
-        let stats: Vec<u32> = self.renderer.per_slot[slot].stats_readback.read(0, 8);
+        let stats: Vec<u32> = self.renderer.per_slot[slot].stats_readback.read(0, 11);
+        self.stats.model_groups = stats[8];
         self.stats.draw_groups = stats[0];
         self.stats.trans_groups = stats[3];
         self.stats.visible_chunks = stats[6];
@@ -610,7 +612,8 @@ impl Engine {
         let world = fr.cam_pos + rel.as_dvec3();
         let mut normal = IVec3::ZERO;
         normal[(dir >> 1) as usize] = if dir & 1 == 0 { 1 } else { -1 };
-        let inside = world - normal.as_dvec3() * 0.02;
+        let is_model = payload & (1 << 30) != 0;
+        let inside = if is_model { world - DVec3::new(0.0, 0.01, 0.0) } else { world - normal.as_dvec3() * 0.02 };
         self.pick = Some(PickHit {
             block_pos: inside.floor().as_ivec3(),
             normal,

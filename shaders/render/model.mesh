@@ -1,0 +1,92 @@
+#version 460
+// Expands model instances (8 bytes: local xyz + neighbour mask | block + biome) into quads.
+// 6 instances x 10 quad slots per meshlet; unused / culled slots become degenerate triangles.
+#include "render/terrain_common.glsl"
+#include "render/models.glsl"
+
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 240, max_primitives = 120) out;
+
+taskPayloadSharedEXT TaskPayload pl;
+
+layout(location = 0) out vec3 vRel[];
+layout(location = 1) out vec2 vUV[];
+layout(location = 2) perprimitiveEXT flat out uvec4 pData[];   // block | biome<<16, texDir, normal(packed), flags
+
+#define MODELS_PER_MESHLET 6u
+
+uint pack_normal(vec3 n) {
+    uvec3 u = uvec3(clamp(n * 0.5 + 0.5, 0.0, 1.0) * 1023.0);
+    return u.x | (u.y << 10) | (u.z << 20);
+}
+
+vec3 wind_offset(vec3 world, float t, float amount) {
+    float w = sin(t * 1.7 + world.x * 0.35 + world.z * 0.21) + 0.5 * sin(t * 2.9 + world.x * 0.9 - world.z * 0.7);
+    return vec3(w * 0.06, 0.0, w * 0.045) * amount;
+}
+
+void main() {
+    uint meshlet = gl_WorkGroupID.x;
+    uint first = meshlet * MODELS_PER_MESHLET;
+    uint n = min(MODELS_PER_MESHLET, pl.quadCount - first);
+    uint slots = n * MODEL_MAX_QUADS;
+    SetMeshOutputsEXT(slots * 4u, slots * 2u);
+
+    FrameData f = pc.frame.d;
+    ChunkRecord rec = pc.records.c[pl.chunk];
+    uint lod = rec.lodFlags & 15u;
+    float scale = float(1u << lod);
+    vec3 relOrigin = vec3(rec.origin - f.camBlock.xyz) - f.camFrac.xyz;
+
+    for (uint s = gl_LocalInvocationID.x; s < slots; s += 32u) {
+        uint inst = s / MODEL_MAX_QUADS;
+        uint qi = s % MODEL_MAX_QUADS;
+        uvec2 m = pc.quads.v[pl.quadOffset + first + inst];
+        ivec3 lp = ivec3(m.x & 31u, (m.x >> 5) & 31u, (m.x >> 10) & 31u);
+        uint nmask = (m.x >> 15) & 63u;
+        uint block = m.y & 0xFFFFu;
+        uint biome = (m.y >> 24) & 127u;
+        uint model = (pc.blocks.b[block].flags >> 16) & 0xFFFFu;
+        ivec3 wp = rec.origin + lp * int(scale);
+        uint seed = hash_u32(uint(wp.x) * 73856093u ^ uint(wp.y) * 19349663u ^ uint(wp.z) * 83492791u);
+        ModelQuad q;
+        bool ok = model_quad(model, qi, seed, nmask, q);
+        if (ok) {
+            // cull faces lying on the block boundary against opaque neighbours
+            vec3 nrm = normalize(cross(q.U, q.V));
+            vec3 cen = q.o + (q.U + q.V) * 0.5;
+            for (uint d = 0u; d < 6u && !q.twoSided; ++d) {
+                vec3 dn = vec3(dir_normal(d));
+                if (dot(nrm, dn) > 0.99 && (nmask & (1u << d)) != 0u) {
+                    float plane = dot(cen, dn) + ((d & 1u) == 1u ? 1.0 : 0.0);
+                    if (abs(plane - 1.0) < 0.01) ok = false;
+                }
+            }
+        }
+        uint vb = s * 4u;
+        uint pb = s * 2u;
+        if (!ok) {
+            for (uint c = 0u; c < 4u; ++c) gl_MeshVerticesEXT[vb + c].gl_Position = vec4(0.0, 0.0, -1.0, 1.0);
+            gl_PrimitiveTriangleIndicesEXT[pb] = uvec3(vb);
+            gl_PrimitiveTriangleIndicesEXT[pb + 1u] = uvec3(vb);
+            pData[pb] = uvec4(0u);
+            pData[pb + 1u] = uvec4(0u);
+            continue;
+        }
+        vec3 corners[4] = vec3[4](q.o, q.o + q.U, q.o + q.U + q.V, q.o + q.V);
+        vec2 uvs[4] = vec2[4](vec2(q.uv.x, 1.0 - q.uv.y), vec2(q.uv.z, 1.0 - q.uv.y), vec2(q.uv.z, 1.0 - q.uv.w), vec2(q.uv.x, 1.0 - q.uv.w));
+        for (uint c = 0u; c < 4u; ++c) {
+            vec3 local = (vec3(lp) + corners[c]) * scale;
+            vec3 rel = relOrigin + local;
+            if (q.wind && c >= 2u) rel += wind_offset(vec3(wp), f.time, 1.0);
+            vRel[vb + c] = rel;
+            vUV[vb + c] = uvs[c];
+            gl_MeshVerticesEXT[vb + c].gl_Position = f.viewProj * vec4(rel, 1.0);
+        }
+        gl_PrimitiveTriangleIndicesEXT[pb] = uvec3(vb, vb + 1u, vb + 2u);
+        gl_PrimitiveTriangleIndicesEXT[pb + 1u] = uvec3(vb, vb + 2u, vb + 3u);
+        uvec4 data = uvec4(block | (biome << 16), q.texDir | (q.twoSided ? 256u : 0u), pack_normal(normalize(cross(q.U, q.V))), lod);
+        pData[pb] = data;
+        pData[pb + 1u] = data;
+    }
+}

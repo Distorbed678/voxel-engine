@@ -59,6 +59,7 @@ struct CullPush {
     records: u64,
     opaque: u64,
     trans: u64,
+    models: u64,
     args: u64,
     num_records: u32,
     max_draws: u32,
@@ -97,6 +98,7 @@ pub struct Pipelines {
     pub terrain: PipelineHandle,
     pub terrain_wire: PipelineHandle,
     pub terrain_trans: PipelineHandle,
+    pub models: PipelineHandle,
     pub sky: PipelineHandle,
     pub tonemap: PipelineHandle,
     pub apply_edits: PipelineHandle,
@@ -121,6 +123,7 @@ pub struct Renderer {
     pub args: Buffer,
     pub opaque_draws: Buffer,
     pub trans_draws: Buffer,
+    pub model_draws: Buffer,
     pub pipes: Pipelines,
     pub output_format: vk::Format,
 }
@@ -287,6 +290,7 @@ impl Renderer {
             args: Buffer::gpu(ctx, "draw_args", 64)?,
             opaque_draws: Buffer::gpu(ctx, "opaque_draws", MAX_DRAWS as u64 * 16)?,
             trans_draws: Buffer::gpu(ctx, "trans_draws", MAX_DRAWS as u64 * 16)?,
+            model_draws: Buffer::gpu(ctx, "model_draws", MAX_DRAWS as u64 * 16)?,
             pipes,
             output_format,
         })
@@ -339,6 +343,18 @@ impl Renderer {
                         cull: vk::CullModeFlags::NONE,
                         ..opaque_state.clone()
                     },
+                },
+            )?,
+            models: pm.create(
+                ctx,
+                "models",
+                PipelineSource::Graphics {
+                    stages: vec![
+                        ("render/model.task".to_string(), vec![]),
+                        ("render/model.mesh".to_string(), vec![]),
+                        ("render/model.frag".to_string(), vec![]),
+                    ],
+                    state: GraphicsState { cull: vk::CullModeFlags::NONE, ..opaque_state.clone() },
                 },
             )?,
             sky: pm.create(
@@ -409,7 +425,7 @@ impl Renderer {
         unsafe {
             d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, layout, 0, &[bindless.set], &[]);
             d.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::GRAPHICS, layout, 0, &[bindless.set], &[]);
-            let args: [u32; 8] = [0, 1, 1, 0, 1, 1, 0, 0];
+            let args: [u32; 11] = [0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1];
             d.cmd_update_buffer(cb, self.args.raw, 0, bytemuck::cast_slice(&args));
             d.cmd_fill_buffer(cb, self.pick.raw, 0, 16, 0);
         }
@@ -428,6 +444,7 @@ impl Renderer {
                 records: records.address,
                 opaque: self.opaque_draws.address,
                 trans: self.trans_draws.address,
+                models: self.model_draws.address,
                 args: self.args.address,
                 num_records,
                 max_draws: MAX_DRAWS,
@@ -518,6 +535,10 @@ impl Renderer {
             push(bytemuck::bytes_of(&terrain_push(self.opaque_draws.address)));
             ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.args.raw, 0, 1, 12);
 
+            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.models));
+            push(bytemuck::bytes_of(&terrain_push(self.model_draws.address)));
+            ctx.mesh_shader.cmd_draw_mesh_tasks_indirect(cb, self.args.raw, 32, 1, 12);
+
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.sky));
             push(bytemuck::bytes_of(&FramePush { frame: frame_addr }));
             d.cmd_draw(cb, 3, 1, 0, 0);
@@ -562,7 +583,7 @@ impl Renderer {
         );
         unsafe {
             d.cmd_copy_buffer(cb, self.pick.raw, self.per_slot[slot].pick_readback.raw, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: 16 }]);
-            d.cmd_copy_buffer(cb, self.args.raw, self.per_slot[slot].stats_readback.raw, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: 32 }]);
+            d.cmd_copy_buffer(cb, self.args.raw, self.per_slot[slot].stats_readback.raw, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: 44 }]);
         }
         profiler.end(ctx, cb, slot);
     }
@@ -625,5 +646,6 @@ impl Renderer {
         self.args.destroy(ctx);
         self.opaque_draws.destroy(ctx);
         self.trans_draws.destroy(ctx);
+        self.model_draws.destroy(ctx);
     }
 }

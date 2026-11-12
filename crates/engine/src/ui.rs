@@ -182,7 +182,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             if ui.collapsing_header("Draw", TreeNodeFlags::DEFAULT_OPEN) {
                 ui.text(format!("visible chunks {}", c.stats.visible_chunks));
                 ui.text(format!("quads drawn {:.2}M ({:.2}M tris)", c.stats.drawn_quads as f32 / 1e6, c.stats.drawn_quads as f32 * 2.0 / 1e6));
-                ui.text(format!("task groups {} opaque / {} transparent", c.stats.draw_groups, c.stats.trans_groups));
+                ui.text(format!("task groups {} opaque / {} transparent / {} model", c.stats.draw_groups, c.stats.trans_groups, c.stats.model_groups));
             }
             if let Some(p) = c.pick {
                 ui.separator();

@@ -11,7 +11,8 @@ layout(push_constant, scalar) uniform PC {
     ChunkRecordBuf records;
     DrawGroupBuf opaqueDraws;
     DrawGroupBuf transDraws;
-    U32Buf args;            // [0..2] opaque task dispatch, [3..5] transparent, [6] visible chunks, [7] total quads
+    DrawGroupBuf modelDraws;
+    U32Buf args;            // [0..2] opaque task dispatch, [3..5] transparent, [6] visible chunks, [7] total quads, [8..10] models
     uint numRecords;
     uint maxDraws;
     uint shadowPass;        // 1 = no back-face culling per direction, frustum only
@@ -30,11 +31,11 @@ bool faceVisible(uint dir, vec3 mn, vec3 mx) {
     }
 }
 
-void emit(DrawGroupBuf draws, uint argBase, uint chunk, uint offset, uint count, uint dir) {
-    for (uint start = 0u; start < count; start += MAX_DRAW_QUADS) {
+void emit(DrawGroupBuf draws, uint argBase, uint chunk, uint offset, uint count, uint dir, uint maxPer) {
+    for (uint start = 0u; start < count; start += maxPer) {
         uint idx = atomicAdd(pc.args.v[argBase], 1u);
         if (idx < pc.maxDraws) {
-            draws.g[idx] = DrawGroup(chunk, offset + start, min(MAX_DRAW_QUADS, count - start), dir);
+            draws.g[idx] = DrawGroup(chunk, offset + start, min(maxPer, count - start), dir);
         }
     }
 }
@@ -60,7 +61,7 @@ void main() {
     for (uint d = 0u; d < 6u; ++d) {
         uint c = rec.counts[d];
         if (c > 0u && faceVisible(d, mn, mx)) {
-            emit(pc.opaqueDraws, 0u, i, offset, c, d);
+            emit(pc.opaqueDraws, 0u, i, offset, c, d, MAX_DRAW_QUADS);
             quads += c;
         }
         offset += c;
@@ -68,10 +69,12 @@ void main() {
     for (uint d = 0u; d < 6u; ++d) {
         uint c = rec.counts[6u + d];
         if (c > 0u && faceVisible(d, mn, mx)) {
-            emit(pc.transDraws, 3u, i, offset, c, d);
+            emit(pc.transDraws, 3u, i, offset, c, d, MAX_DRAW_QUADS);
             quads += c;
         }
         offset += c;
     }
+    uint nm = rec.counts[STREAM_MODELS];
+    if (nm > 0u && lod <= 1u) emit(pc.modelDraws, 8u, i, offset, nm, 6u, 192u);
     atomicAdd(pc.args.v[7], quads);
 }
