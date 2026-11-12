@@ -81,4 +81,4 @@ assets/worldgen   the world generator graphs (edit in-app or by hand)
 assets/prefabs    saved prefabs
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it works.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it works and [docs/PLAN.md](docs/PLAN.md) for decisions, status and next steps.
