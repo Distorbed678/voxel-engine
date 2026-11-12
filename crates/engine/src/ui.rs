@@ -209,7 +209,7 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
                 ui.text(format!("batch quads {} | overflow {} | busy slots {}", c.batch.0, c.batch.1, c.busy_slots));
                 let used = s.quads_resident as f32 / c.pool_capacity as f32;
                 ui.text(format!("quad pool {:.1}M / {:.1}M", s.quads_resident as f32 / 1.0e6, c.pool_capacity as f32 / 1.0e6));
-                ui.progress_bar(used);
+                ui.progress_bar(used).build();
                 for (lod, (meshed, pending)) in s.per_lod.iter().enumerate().take(c.world.settings.levels as usize) {
                     ui.text(format!("  LOD{lod}: {meshed} meshed, {pending} pending"));
                 }

@@ -1016,7 +1016,7 @@ impl Engine {
         );
         self.profiler.begin(&self.ctx, cb, profiler_slot, "tonemap+ui");
         let draw_ui = self.ui.show_ui;
-        let mut retire_batch = None;
+        let retire_batch;
         {
             let ictx = &mut self.imgui.ctx;
             let ir = self.imgui.renderer.as_mut().unwrap();

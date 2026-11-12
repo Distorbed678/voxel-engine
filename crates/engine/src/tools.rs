@@ -482,7 +482,7 @@ impl Tools {
             Some([(c.x / c.w * 0.5 + 0.5) * ds[0], (c.y / c.w * 0.5 + 0.5) * ds[1]])
         };
         let dl = ui.get_foreground_draw_list();
-        let mut draw_box = |a: IVec3, b: IVec3, col: [f32; 4]| {
+        let draw_box = |a: IVec3, b: IVec3, col: [f32; 4]| {
             let lo = a.as_dvec3();
             let hi = (b + IVec3::ONE).as_dvec3();
             let c = |i: u32| glam::DVec3::new(if i & 1 != 0 { hi.x } else { lo.x }, if i & 2 != 0 { hi.y } else { lo.y }, if i & 4 != 0 { hi.z } else { lo.z });
