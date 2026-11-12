@@ -98,6 +98,19 @@ applies first, and the optimised one replaces it in the background.
 - Region reads (copy, replace, paint, smooth, saving a prefab) queue LOD0 generation jobs
   flagged for readback. Their final voxels are copied to the host and assembled into a box.
 
+## Scripted runs and tests
+
+`--script FILE` runs the engine headless and plays a script one frame at a time
+(`crates/engine/src/engine/script.rs` documents the commands). Synthetic mouse events go through
+the same path as window events, including the ImGui capture check, and ImGui receives them
+directly. Scripts read results back from the GPU: the pick buffer, region reads of the real
+blocks, and screenshots compared against half-resolution golden images. For determinism,
+scripted runs use a fixed 1/60 s time step for everything time-based (animation clock, brush
+repeat, fog blending), fixed generation batch sizes and the default UI layout (`imgui.ini` is
+ignored). `settle` waits until streaming, meshing, region reads and shader builds are all idle.
+The GPU tests in `crates/engine/tests/gpu_scripts.rs` and the README media
+(`docs/media/build.sh`) are both scripts.
+
 ## Performance (RTX 4080, 1080p, `--benchmark`)
 
 - 279 fps average, 102 fps 1% low, while flying at 90 blocks/s and streaming about 2,000

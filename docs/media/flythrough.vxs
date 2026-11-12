@@ -1,0 +1,16 @@
+# README flythrough: 8 s over the oak forest, through the floating isles, down to the glacier.
+ui off
+anim 0
+anim run
+time 0.37
+pos 260 128 -360
+look 90 2
+settle
+wait 120
+record target/media/fly
+waypoint 60 150 -380 92 4
+waypoint -160 185 -430 115 4
+waypoint -300 170 -600 160 -6
+waypoint -340 125 -800 200 -16
+fly_path 480
+record off
