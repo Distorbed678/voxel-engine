@@ -70,3 +70,9 @@ fn render() {
 fn apron() {
     run("apron");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn world_save() {
+    run("world_save");
+}

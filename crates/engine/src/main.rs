@@ -137,6 +137,7 @@ fn parse_args() -> Options {
             "--seed" => o.seed = next(&mut i).parse().ok(),
             "--worldgen" => o.worldgen_dir = Some(next(&mut i).into()),
             "--benchmark" => o.benchmark = true,
+            "--world" => o.world = Some(next(&mut i).into()),
             "--script" => {
                 o.script = Some(next(&mut i).into());
                 o.headless = true;

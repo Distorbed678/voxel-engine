@@ -205,6 +205,8 @@ Covered by the GPU script tests (`cargo test --release -p voxel-engine -- --igno
   camera
 - [x] Generation consistency: apron cells match the neighbouring chunks (cave ceilings and
   plants, flooding, desert layering, spikes, overlapping trees)
+- [x] World files: save, clear, move away, open: edits (with block states) and the camera
+  come back; `--world` opens a file or creates it on the first save
 - [x] UI capture: panels own the mouse after an RMB look-drag (the input fix)
 - [x] Rendering: eleven golden images (daylight, badlands, night, lava, biome view, normals,
   a lamp-lit room before/after removing the lamp, cave, rivers, weather)
@@ -217,7 +219,9 @@ Still needs a hand test (real input devices or complex UI flows):
 - [ ] Node editor: link dragging, drag-to-empty-space create, right-click/Space palette,
   delete, Ctrl+C/V/D, graph undo, group-to-function, inline curve dragging
 - [ ] Prefab node picking up a newly saved prefab
-- [ ] Save/load of world edits, VSync toggle, window resize
+- [ ] The Worlds window in a real window: typing a name, Save as, Open, Ctrl+S (the panel
+  and Ctrl+S opening it are checked in a headless screenshot)
+- [ ] VSync toggle, window resize
 
 ### Known issues (found while capturing media)
 
@@ -259,8 +263,9 @@ Still needs a hand test (real input devices or complex UI flows):
   made neighbouring chunks disagree (see "Generation consistency" in ARCHITECTURE.md).
 - [ ] **Flowing water** for edits: water spreads into dug-out space, with lower levels as it
   spreads (water levels in the block state).
-- [ ] **World save files**: the edit overlay, camera and seed in one file, from the UI and the
-  command line.
+- [x] **World save files**: `saves/NAME.vxw` with the seed, camera, time of day and edits
+  (blocks by name, run-length per chunk; old saves still load). File → Worlds (open, save as,
+  list), Ctrl+S in editor mode, `--world FILE`, script commands.
 
 ## 5. Work order
 
@@ -289,7 +294,7 @@ suggestions; the rest is the earlier roadmap.
 Approved on 2026-11-12, in this order (small fixes first, the largest last):
 
 14. ~~Apron Y-face props~~.
-15. World save files.
+15. ~~World save files~~.
 16. Faster shadow pass.
 17. Isolated zone / biome preview.
 18. Flowing water.

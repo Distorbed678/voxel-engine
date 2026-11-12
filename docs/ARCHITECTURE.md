@@ -255,6 +255,12 @@ applies first, and the optimised one replaces it in the background.
   graph changes, and undo/redo just restores overlay entries.
 - Region reads (copy, replace, paint, smooth, saving a prefab) queue LOD0 generation jobs
   flagged for readback. Their final voxels are copied to the host and assembled into a box.
+- **World files** (`saves/NAME.vxw`, RON): the seed, camera, time of day and the overlay. The
+  world itself is regenerated, so a save only holds what the generator can't reproduce. Blocks
+  are stored by name (`name` or `name:state`) through a palette, so saves survive changes to
+  the block list. Each chunk's edits are runs of consecutive cells with one block, so filled
+  boxes stay small. Writes go to a temporary file first, then replace the old one. Files from
+  before this format (raw block ids) still load.
 
 ## Scripted runs and tests
 

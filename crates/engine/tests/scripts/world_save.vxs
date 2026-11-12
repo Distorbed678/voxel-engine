@@ -1,0 +1,29 @@
+# World files: the seed, camera, time of day and edits (with block states) survive a save and
+# an open.
+ui off
+select -20 380 0 20 420 1
+block stone
+op fill
+select 0 400 0 2 400 0
+block oak_log:1
+op fill
+pos 0.5 400.5 -8
+look 180 0
+settle
+expect_pick oak_log
+save_world target/script-out/world_test.vxw
+
+# lose the edits and move away
+clear_edits
+pos 300 200 300
+look 0 -30
+settle
+expect_block 0 400 0 air
+
+# open it again: the camera looks at the log again
+load_world target/script-out/world_test.vxw
+settle
+expect_block 0 400 0 oak_log:1
+expect_block 2 400 0 oak_log:1
+expect_block 5 400 1 stone
+expect_pick oak_log

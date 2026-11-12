@@ -9,6 +9,7 @@ pub mod alloc;
 pub mod edits;
 pub mod gpu;
 pub mod light;
+pub mod save;
 
 use std::collections::HashMap;
 use std::time::Instant;

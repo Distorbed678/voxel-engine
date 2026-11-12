@@ -31,6 +31,7 @@
 //! | `brush add\|remove\|paint\|smooth [RADIUS] [sphere\|cube\|cylinder]` | brush settings |
 //! | `select X1 Y1 Z1 X2 Y2 Z2` | set the box selection |
 //! | `op fill\|clear\|copy\|paste\|rotate\|replace FROM\|save_prefab NAME` | selection operations |
+//! | `save_world PATH` / `load_world PATH` / `clear_edits` | world files (seed, camera, time, edits) |
 //! | `expect_pick NAME\|none` | block under the cursor (from the GPU pick) |
 //! | `expect_block X Y Z NAME[:STATE]` | actual block at a position (GPU region read: generation + edits) |
 //! | `expect_capture true\|false` | whether the UI owns the mouse |
@@ -98,6 +99,9 @@ enum Cmd {
     Benchmark,
     Profile(u32, String),
     Weather(f32),
+    SaveWorld(PathBuf),
+    LoadWorld(PathBuf),
+    ClearEdits,
     BlockLight(bool),
     Wait(u32),
     Settle(u32),
@@ -300,6 +304,9 @@ fn parse(line: &str) -> Result<Cmd> {
         "benchmark" => Cmd::Benchmark,
         "profile" => Cmd::Profile(num(a.first(), "frames")?, a.get(1..).map(|r| r.join(" ")).unwrap_or_default()),
         "weather" => Cmd::Weather(num(a.first(), "intensity")?),
+        "save_world" => Cmd::SaveWorld(a.first().context("missing path")?.into()),
+        "load_world" => Cmd::LoadWorld(a.first().context("missing path")?.into()),
+        "clear_edits" => Cmd::ClearEdits,
         "block_light" => Cmd::BlockLight(on_off(a.first())?),
         "wait" => Cmd::Wait(num(a.first(), "frames")?),
         "settle" => Cmd::Settle(a.first().map(|f| f.parse()).transpose()?.unwrap_or(3000)),
@@ -940,6 +947,20 @@ impl Engine {
             Cmd::Benchmark => {
                 self.start_benchmark();
                 return Ok(Some(Busy::Bench));
+            }
+            Cmd::SaveWorld(path) => {
+                if let Err(e) = self.save_world(&path) {
+                    s.fail(line, format!("saving {}: {e:#}", path.display()));
+                }
+            }
+            Cmd::LoadWorld(path) => match self.load_world(&path) {
+                Ok(unknown) if unknown.is_empty() => {}
+                Ok(unknown) => s.fail(line, format!("unknown blocks in {}: {}", path.display(), unknown.join(", "))),
+                Err(e) => s.fail(line, format!("loading {}: {e:#}", path.display())),
+            },
+            Cmd::ClearEdits => {
+                let touched = self.world.overlay.clear();
+                self.world.invalidate_blocks(&touched);
             }
             Cmd::Weather(w) => {
                 self.ui.weather_auto = false;

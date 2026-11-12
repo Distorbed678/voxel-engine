@@ -58,6 +58,12 @@ pub struct UiState {
     pub jobs_per_frame: usize,
     pub gen_budget_ms: f32,
     pub force_reload: bool,
+    /// The Worlds window (open / save as).
+    pub show_worlds: bool,
+    /// Re-read `saves/` (after a save).
+    pub refresh_worlds: bool,
+    worlds: Option<Vec<(std::path::PathBuf, std::time::SystemTime, u64)>>,
+    world_name: String,
     toasts: Vec<(String, Instant)>,
     block_filter: String,
 }
@@ -98,6 +104,10 @@ impl UiState {
             jobs_per_frame: 256,
             gen_budget_ms: 6.0,
             force_reload: false,
+            show_worlds: false,
+            refresh_worlds: false,
+            worlds: None,
+            world_name: String::new(),
             toasts: Vec::new(),
             block_filter: String::new(),
         }
@@ -125,8 +135,10 @@ pub struct UiActions {
     pub save_generator: bool,
     pub teleport: Option<(f64, f64)>,
     pub benchmark: bool,
+    /// save to the open world file (or ask for a name)
     pub save_world: bool,
-    pub load_world: bool,
+    pub save_world_as: Option<std::path::PathBuf>,
+    pub open_world: Option<std::path::PathBuf>,
 }
 
 pub struct UiCtx<'a> {
@@ -152,6 +164,78 @@ pub struct UiCtx<'a> {
     pub probes: &'a crate::probe::Probes,
     pub biome_names: &'a [worldgen::BiomeInfo],
     pub zone_names: &'a [worldgen::ZoneInfo],
+    /// the open world file
+    pub world_path: Option<&'a std::path::Path>,
+    /// edits changed since the world was last saved or opened
+    pub unsaved: bool,
+}
+
+/// "3 min ago" etc.
+fn ago(t: std::time::SystemTime) -> String {
+    let s = t.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+    match s {
+        0..60 => "just now".into(),
+        60..3600 => format!("{} min ago", s / 60),
+        3600..86400 => format!("{} h ago", s / 3600),
+        _ => format!("{} days ago", s / 86400),
+    }
+}
+
+/// Open / save as: worlds live in `saves/NAME.vxw`.
+fn draw_worlds(ui: &Ui, c: &mut UiCtx, a: &mut UiActions, ds: [f32; 2]) {
+    use crate::world::save;
+    if std::mem::take(&mut c.state.refresh_worlds) || c.state.worlds.is_none() {
+        c.state.worlds = Some(save::list());
+    }
+    let mut open = true;
+    ui.window("Worlds").size([380.0, 340.0], Condition::FirstUseEver).position([ds[0] * 0.5 - 190.0, 120.0], Condition::FirstUseEver).opened(&mut open).build(|| {
+        match c.world_path {
+            Some(p) => {
+                ui.text(format!("Open: {}", save::name_of(p)));
+                ui.same_line();
+                if ui.button("Save (Ctrl+S)") {
+                    a.save_world_as = Some(p.to_path_buf());
+                }
+            }
+            None => ui.text_disabled("This world hasn't been saved yet"),
+        }
+        if c.unsaved {
+            ui.text_colored([1.0, 0.8, 0.3, 1.0], "Unsaved edits (opening another world discards them)");
+        }
+        ui.separator();
+        ui.text("Save as");
+        ui.set_next_item_width(-70.0);
+        ui.input_text("##world_name", &mut c.state.world_name).hint("name").build();
+        let target = save::path_for(&c.state.world_name);
+        ui.same_line();
+        if ui.button("Save##as")
+            && let Some(p) = &target
+        {
+            a.save_world_as = Some(p.clone());
+        }
+        if let Some(p) = target.as_ref().filter(|p| p.exists() && Some(p.as_path()) != c.world_path) {
+            ui.text_colored([1.0, 0.8, 0.3, 1.0], format!("{} exists and would be replaced", p.display()));
+        }
+        ui.separator();
+        ui.text("Saved worlds");
+        let worlds = c.state.worlds.as_deref().unwrap_or_default();
+        if worlds.is_empty() {
+            ui.text_disabled(format!("none in {}/", save::DIR));
+        }
+        for (p, modified, size) in worlds {
+            if ui.button(format!("Open##{}", p.display())) {
+                a.open_world = Some(p.clone());
+            }
+            ui.same_line();
+            let current = Some(p.as_path()) == c.world_path;
+            let label = format!("{}{}  ({:.1} KB, {})", save::name_of(p), if current { " (open)" } else { "" }, *size as f32 / 1024.0, ago(*modified));
+            ui.text(label);
+        }
+    });
+    if !open {
+        c.state.show_worlds = false;
+        c.state.worlds = None;
+    }
 }
 
 pub fn apply_style(ctx: &mut dear_imgui_rs::Context) {
@@ -171,14 +255,15 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
 
     ui.main_menu_bar(|| {
         ui.menu("File", || {
-            if ui.menu_item("Save world generator") {
-                a.save_generator = true;
+            if ui.menu_item("Worlds (open / save as)") {
+                c.state.show_worlds = true;
             }
-            if ui.menu_item("Save world edits") {
+            if ui.menu_item("Save world (Ctrl+S)") {
                 a.save_world = true;
             }
-            if ui.menu_item("Load world edits") {
-                a.load_world = true;
+            ui.separator();
+            if ui.menu_item("Save world generator") {
+                a.save_generator = true;
             }
             if ui.menu_item("Run benchmark") {
                 a.benchmark = true;
@@ -220,6 +305,9 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
     });
 
     let ds = ui.io().display_size();
+    if c.state.show_worlds {
+        draw_worlds(ui, c, &mut a, ds);
+    }
     if c.state.show_stats {
         let mut open = true;
         ui.window("Stats").size([330.0, 400.0], Condition::FirstUseEver).position([10.0, 30.0], Condition::FirstUseEver).opened(&mut open).build(|| {

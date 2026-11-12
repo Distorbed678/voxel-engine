@@ -48,6 +48,8 @@ pub struct Options {
     pub benchmark: bool,
     /// Scripted input playback (headless): see `engine/script.rs`.
     pub script: Option<PathBuf>,
+    /// World file to open (or to create on the first save if it doesn't exist).
+    pub world: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -134,6 +136,10 @@ pub struct Engine {
     pub ui: UiState,
     pub imgui: ImguiLayer,
     pub seed: u32,
+    /// The open world file: Ctrl+S saves here.
+    pub world_path: Option<PathBuf>,
+    /// Edit overlay revision when the world was last saved or opened.
+    saved_revision: u64,
     last_frame: Instant,
     pub dt: f32,
     pub pick: Option<PickHit>,
@@ -369,7 +375,12 @@ impl Engine {
         ui_state.show_ui = !opts.no_ui;
 
         let seed = opts.seed.unwrap_or(1337);
-        Ok(Self {
+        let world_arg = opts.world.clone();
+        // what the command line sets explicitly wins over the world file
+        let keep = (opts.seed.is_some(), opts.cam_pos.is_some(), opts.cam_angles.is_some(), opts.time_of_day.is_some());
+        let mut engine = Self {
+            world_path: None,
+            saved_revision: 0,
             opts,
             window,
             swapchain,
@@ -424,7 +435,32 @@ impl Engine {
             anim_time: 0.0,
             anim_frozen: false,
             ctx,
-        })
+        };
+        if let Some(path) = world_arg {
+            if path.exists() {
+                let (seed, pos, angles, time) = (engine.seed, engine.camera.pos, (engine.camera.yaw, engine.camera.pitch), engine.atmosphere.time_of_day);
+                let unknown = engine.load_world(&path)?;
+                if !unknown.is_empty() {
+                    log::warn!("{}: unknown blocks left to the generator: {}", path.display(), unknown.join(", "));
+                }
+                if keep.0 {
+                    engine.seed = seed;
+                }
+                if keep.1 {
+                    engine.camera.pos = pos;
+                }
+                if keep.2 {
+                    (engine.camera.yaw, engine.camera.pitch) = angles;
+                }
+                if keep.3 {
+                    engine.atmosphere.time_of_day = time;
+                }
+            } else {
+                log::info!("{} doesn't exist yet: it will be created on the first save", path.display());
+                engine.set_world_path(Some(path));
+            }
+        }
+        Ok(engine)
     }
 
     // ---------------------------------------------------------------------------------------
@@ -554,7 +590,9 @@ impl Engine {
         if inp.key(KeyCode::KeyW) {
             v += f;
         }
-        if inp.key(KeyCode::KeyS) {
+        // (editor mode: Ctrl+S saves rather than moving)
+        let saving = !self.fly_mode && inp.ctrl() && inp.key(KeyCode::KeyS);
+        if inp.key(KeyCode::KeyS) && !saving {
             v -= f;
         }
         if inp.key(KeyCode::KeyD) {
@@ -566,7 +604,7 @@ impl Engine {
         if inp.key(KeyCode::Space) || inp.key(KeyCode::KeyE) {
             v += Vec3::Y;
         }
-        if inp.key(KeyCode::KeyQ) || (inp.key(KeyCode::ControlLeft) && !inp.key(KeyCode::KeyZ) && !inp.key(KeyCode::KeyY)) {
+        if inp.key(KeyCode::KeyQ) || (inp.key(KeyCode::ControlLeft) && !inp.key(KeyCode::KeyZ) && !inp.key(KeyCode::KeyY) && !saving) {
             v -= Vec3::Y;
         }
         if v != Vec3::ZERO {
@@ -600,6 +638,14 @@ impl Engine {
         if inp.pressed(KeyCode::F5) {
             self.ui.force_reload = true;
         }
+        // Ctrl+S only with the cursor free: in fly mode Ctrl and S both move the camera
+        if !self.fly_mode && inp.ctrl() && inp.pressed(KeyCode::KeyS) && !self.imgui.ctx.io().want_text_input() {
+            match self.world_path.clone() {
+                Some(p) => self.save_world_ui(&p),
+                None => self.ui.show_worlds = true,
+            }
+        }
+        let inp = &self.input;
         if inp.ctrl() && inp.pressed(KeyCode::KeyZ)
             && let Some((label, touched)) = self.world.overlay.undo() {
                 self.world.invalidate_blocks(&touched);
@@ -649,34 +695,52 @@ impl Engine {
         self.ui.toast("Benchmark started (24 s)".into());
     }
 
+    /// Save the seed, camera, time of day and edits (see `world/save.rs`); `path` becomes the
+    /// open world.
     pub fn save_world(&mut self, path: &std::path::Path) -> Result<()> {
-        #[derive(serde::Serialize)]
-        struct Save<'a> {
-            seed: u32,
-            camera: [f64; 3],
-            overlay: &'a crate::world::edits::EditOverlay,
-        }
-        if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
-        }
-        let s = ron::ser::to_string(&Save { seed: self.seed, camera: self.camera.pos.to_array(), overlay: &self.world.overlay })?;
-        std::fs::write(path, s)?;
+        use crate::world::save::{CameraState, WorldState};
+        let state = WorldState {
+            seed: self.seed,
+            camera: CameraState { pos: self.camera.pos.to_array(), yaw: self.camera.yaw, pitch: self.camera.pitch },
+            time_of_day: self.atmosphere.time_of_day,
+        };
+        crate::world::save::save(path, &state, &self.world.overlay, &self.blocks)?;
+        self.saved_revision = self.world.overlay.revision;
+        self.set_world_path(Some(path.to_path_buf()));
         Ok(())
     }
 
-    pub fn load_world(&mut self, path: &std::path::Path) -> Result<()> {
-        #[derive(serde::Deserialize)]
-        struct Save {
-            seed: u32,
-            camera: [f64; 3],
-            overlay: crate::world::edits::EditOverlay,
-        }
-        let s: Save = ron::from_str(&std::fs::read_to_string(path)?)?;
-        self.seed = s.seed;
-        self.camera.pos = DVec3::from(s.camera);
-        self.world.overlay = s.overlay;
+    /// Open a world file. Returns the names of blocks this build doesn't know (left to the
+    /// generator).
+    pub fn load_world(&mut self, path: &std::path::Path) -> Result<Vec<String>> {
+        let (st, overlay, unknown) = crate::world::save::load(path, &self.blocks)?;
+        self.seed = st.seed;
+        self.camera.pos = DVec3::from(st.camera.pos);
+        (self.camera.yaw, self.camera.pitch) = (st.camera.yaw, st.camera.pitch);
+        self.atmosphere.time_of_day = st.time_of_day;
+        self.world.overlay = overlay;
+        self.saved_revision = self.world.overlay.revision;
         self.world.invalidate_all();
-        Ok(())
+        self.set_world_path(Some(path.to_path_buf()));
+        Ok(unknown)
+    }
+
+    fn set_world_path(&mut self, path: Option<PathBuf>) {
+        if let Some(w) = &self.window {
+            match &path {
+                Some(p) => w.set_title(&format!("Voxel Engine - {}", crate::world::save::name_of(p))),
+                None => w.set_title("Voxel Engine"),
+            }
+        }
+        self.world_path = path;
+    }
+
+    fn save_world_ui(&mut self, path: &std::path::Path) {
+        match self.save_world(path) {
+            Ok(()) => self.ui.toast(format!("Saved {}", path.display())),
+            Err(e) => self.ui.toast(format!("Save failed: {e:#}")),
+        }
+        self.ui.refresh_worlds = true;
     }
 
     /// Blend fog colour/density toward the biome the camera is in.
@@ -1476,6 +1540,7 @@ impl Engine {
             self.tools.draw_ui(ui, &mut self.world, &self.blocks, &mut self.ui, self.pick);
         }
         self.tools.draw_overlay(ui, &self.camera, self.pick);
+        let unsaved = self.world.overlay.revision != self.saved_revision;
         let actions = ui::draw(
             ui,
             &mut ui::UiCtx {
@@ -1501,6 +1566,8 @@ impl Engine {
                 node_editor_open: &mut self.node_ui.open,
                 tools_open: &mut self.tools.show_tools,
                 bench_report: self.bench.as_ref().and_then(|b| b.report.clone()),
+                world_path: self.world_path.as_deref(),
+                unsaved,
             },
         );
         if let (Some(p), Some(w)) = (&mut self.imgui.platform, &self.window) {
@@ -1554,15 +1621,19 @@ impl Engine {
             self.start_benchmark();
         }
         if a.save_world {
-            match self.save_world(std::path::Path::new("saves/world.ron")) {
-                Ok(()) => self.ui.toast("World edits saved to saves/world.ron".into()),
-                Err(e) => self.ui.toast(format!("Save failed: {e}")),
+            match self.world_path.clone() {
+                Some(p) => self.save_world_ui(&p),
+                None => self.ui.show_worlds = true,
             }
         }
-        if a.load_world {
-            match self.load_world(std::path::Path::new("saves/world.ron")) {
-                Ok(()) => self.ui.toast("World edits loaded".into()),
-                Err(e) => self.ui.toast(format!("Load failed: {e}")),
+        if let Some(p) = &a.save_world_as {
+            self.save_world_ui(p);
+        }
+        if let Some(p) = &a.open_world {
+            match self.load_world(p) {
+                Ok(unknown) if unknown.is_empty() => self.ui.toast(format!("Opened {}", p.display())),
+                Ok(unknown) => self.ui.toast(format!("Opened {} (unknown blocks: {})", p.display(), unknown.join(", "))),
+                Err(e) => self.ui.toast(format!("Open failed: {e:#}")),
             }
         }
         Ok(())
