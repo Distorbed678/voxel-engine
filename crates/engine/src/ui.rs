@@ -52,6 +52,8 @@ pub struct UiState {
     pub bloom_threshold: f32,
     pub clouds: crate::renderer::CloudSettings,
     pub shadow_distance: f32,
+    /// Water runs into dug-out space (see fluid.rs).
+    pub water_flow: bool,
     /// Keep the far shadow cascades until something in them changes.
     pub shadow_cache: bool,
     pub shadow_strength: f32,
@@ -101,6 +103,7 @@ impl UiState {
             clouds: Default::default(),
             shadow_distance: 320.0,
             shadow_cache: true,
+            water_flow: true,
             shadow_strength: 0.85,
             selected_block: blocks.id("stone"),
             mouse_sensitivity: 1.0,
@@ -477,6 +480,10 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             }
             ui.slider("Generation budget (ms/frame)", 1.0f32, 30.0f32, &mut c.state.gen_budget_ms);
             ui.checkbox("Freeze streaming", &mut c.world.frozen);
+            ui.checkbox("Flowing water", &mut c.state.water_flow);
+            if ui.is_item_hovered() {
+                ui.tooltip_text("Water runs into dug-out space and dries up when cut off");
+            }
         });
         c.state.show_world = open;
     }

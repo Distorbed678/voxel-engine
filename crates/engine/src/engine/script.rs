@@ -20,7 +20,7 @@
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
-//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `shadow_cache on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `occlusion on\|off` / `block_light on\|off` | render toggles |
+//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `shadow_cache on\|off` / `water_flow on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `occlusion on\|off` / `block_light on\|off` | render toggles |
 //! | `wait N` / `settle [MAX]` | wait N frames / until streaming, meshing and shader builds are idle |
 //! | `screenshot PATH` / `record DIR\|off` | save this frame / save every frame as `DIR/frame_NNNNN.png` |
 //! | `cursor X Y` | move the mouse to a pixel (picking follows it; waits for the pick) |
@@ -94,6 +94,7 @@ enum Cmd {
     Shadows(bool),
     Taa(bool),
     ShadowCache(bool),
+    WaterFlow(bool),
     /// None = off
     Solo(Option<(worldgen::GraphKind, String)>),
     Bloom(bool),
@@ -302,6 +303,7 @@ fn parse(line: &str) -> Result<Cmd> {
         "shadows" => Cmd::Shadows(on_off(a.first())?),
         "taa" => Cmd::Taa(on_off(a.first())?),
         "shadow_cache" => Cmd::ShadowCache(on_off(a.first())?),
+        "water_flow" => Cmd::WaterFlow(on_off(a.first())?),
         "solo" => Cmd::Solo(match (a.first().copied(), a.get(1)) {
             (Some("off"), _) => None,
             (Some("zone"), Some(n)) => Some((worldgen::GraphKind::Zone, n.to_string())),
@@ -670,6 +672,7 @@ impl Engine {
             && self.world.record_updates.is_empty()
             && self.wgpu.busy_slots() == 0
             && self.tools.pending_ops() == 0
+            && self.fluid.pending() == 0
             && !self.wg.is_building()
             && !self.wg.is_optimizing()
     }
@@ -948,6 +951,7 @@ impl Engine {
             Cmd::Shadows(on) => self.ui.shadows = on,
             Cmd::Taa(on) => self.ui.taa = on,
             Cmd::ShadowCache(on) => self.ui.shadow_cache = on,
+            Cmd::WaterFlow(on) => self.ui.water_flow = on,
             Cmd::Solo(solo) => {
                 if let Some((kind, name)) = &solo {
                     let known = match kind {
@@ -983,6 +987,7 @@ impl Engine {
                 Err(e) => s.fail(line, format!("loading {}: {e:#}", path.display())),
             },
             Cmd::ClearEdits => {
+                self.fluid.reset();
                 let touched = self.world.overlay.clear();
                 self.world.invalidate_blocks(&touched);
             }

@@ -221,6 +221,8 @@ Still needs a hand test (real input devices or complex UI flows):
 - [ ] Prefab node picking up a newly saved prefab
 - [ ] The Worlds window in a real window: typing a name, Save as, Open, Ctrl+S (the panel
   and Ctrl+S opening it are checked in a headless screenshot)
+- [ ] Flowing water at real lakes and rivers (digging a channel, breaking a lake bed), and with
+  big brush edits
 - [ ] VSync toggle, window resize
 
 ### Known issues (found while capturing media)
@@ -265,8 +267,10 @@ Still needs a hand test (real input devices or complex UI flows):
   Shadows).
 - [x] **Apron Y-face props**: the known issue above. Fixed together with everything else that
   made neighbouring chunks disagree (see "Generation consistency" in ARCHITECTURE.md).
-- [ ] **Flowing water** for edits: water spreads into dug-out space, with lower levels as it
-  spreads (water levels in the block state).
+- [x] **Flowing water** for edits: a CPU simulation over read-back chunks spreads water into
+  dug-out space (falling, then levels 1..7 sideways), dries it up when it's cut off, and keeps
+  it as edits outside the undo history (undo makes it recede). World panel toggle; script
+  `water_flow`; GPU test `water.vxs`.
 - [x] **World save files**: `saves/NAME.vxw` with the seed, camera, time of day and edits
   (blocks by name, run-length per chunk; old saves still load). File → Worlds (open, save as,
   list), Ctrl+S in editor mode, `--world FILE`, script commands.
@@ -301,7 +305,7 @@ Approved on 2026-11-12, in this order (small fixes first, the largest last):
 15. ~~World save files~~.
 16. ~~Faster shadow pass~~.
 17. ~~Isolated zone / biome preview~~.
-18. Flowing water.
+18. ~~Flowing water~~.
 
 Still not selected (ask before doing): node preview thumbnails, camera bookmarks / cinematic
 paths.

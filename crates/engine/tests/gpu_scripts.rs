@@ -76,3 +76,9 @@ fn apron() {
 fn world_save() {
     run("world_save");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn water() {
+    run("water");
+}

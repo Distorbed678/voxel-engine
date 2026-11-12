@@ -167,6 +167,7 @@ pub struct Engine {
     shadow_mask: u32,
     /// solo preview (zone, biome) as last sent to the generator
     solo_applied: (Option<u32>, Option<u32>),
+    pub fluid: crate::fluid::FluidSim,
     last_frame: Instant,
     pub dt: f32,
     pub pick: Option<PickHit>,
@@ -411,6 +412,7 @@ impl Engine {
             shadow_cache: Default::default(),
             shadow_mask: 0,
             solo_applied: (None, None),
+            fluid: crate::fluid::FluidSim::new(&blocks),
             opts,
             window,
             swapchain,
@@ -751,6 +753,8 @@ impl Engine {
         self.world.overlay = overlay;
         self.saved_revision = self.world.overlay.revision;
         self.world.invalidate_all();
+        self.world.edited.clear();
+        self.fluid.reset();
         self.set_world_path(Some(path.to_path_buf()));
         Ok(unknown)
     }
@@ -979,6 +983,7 @@ impl Engine {
             self.world.apply_results(s, &jobs, &results, value);
         }
         for region in self.world.take_finished_regions() {
+            let Some(region) = self.fluid.region_ready(region) else { continue };
             let Some(region) = self.script_take_region(region) else { continue };
             self.tools.region_ready(region, &mut self.world, &self.blocks, &mut self.ui);
         }
@@ -1009,6 +1014,13 @@ impl Engine {
             }
         }
         self.handle_editing();
+        // ---- flowing water ----
+        let edited = std::mem::take(&mut self.world.edited);
+        if !edited.is_empty() {
+            self.fluid.edited(&edited, &self.world);
+        }
+        self.fluid.enabled = self.ui.water_flow;
+        self.fluid.update(self.dt, &mut self.world, &self.blocks);
         self.atmosphere.update(self.dt);
         self.world.update_desired(self.camera.pos);
         self.world.process_retirement(value);
@@ -1699,6 +1711,7 @@ impl Engine {
             self.world.reset(value);
         }
         if a.clear_edits {
+            self.fluid.reset();
             let touched = self.world.overlay.clear();
             self.world.invalidate_blocks(&touched);
         }

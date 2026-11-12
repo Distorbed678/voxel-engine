@@ -4,6 +4,7 @@ mod blocks;
 mod bloom;
 mod camera;
 mod engine;
+mod fluid;
 mod input;
 mod light;
 mod renderer;

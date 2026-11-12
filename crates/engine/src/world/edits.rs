@@ -65,6 +65,12 @@ impl EditOverlay {
         }
     }
 
+    /// Write a block outside the undo history (simulated water). `None` = back to generated.
+    pub fn set_untracked(&mut self, p: IVec3, v: Option<u16>) {
+        self.set_raw(p, v);
+        self.revision += 1;
+    }
+
     /// Apply a batch of block writes as one undoable operation. Returns touched positions.
     pub fn apply(&mut self, label: &str, writes: &[(IVec3, u16)]) -> Vec<IVec3> {
         let mut op = EditOp { label: label.to_string(), changes: Vec::with_capacity(writes.len()) };

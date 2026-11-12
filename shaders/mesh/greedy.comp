@@ -28,12 +28,23 @@ uint gJob;
 uint vox(ivec3 p) { return uint(pc.voxels.v[gBase + vidx(p)]); }
 uint kindOf(uint b) { return pc.blocks.b[BLOCK_ID(b)].flags & 15u; }
 
-// Does neighbour block `nb` hide the face of block `b` (kind kb)?
-bool occludes(uint nb, uint b, uint kb) {
+// Water surface height order: falling water is full height, then still water, then flowing
+// levels 1..7, each lower (see fluid.rs).
+uint waterRank(uint v) {
+    uint s = BLOCK_STATE(v);
+    return s == 8u ? 9u : 8u - s;
+}
+
+// Does neighbour block `nb` hide the face of block `b` (kind kb)? `side`: a horizontal face.
+bool occludes(uint nb, uint b, uint kb, bool side) {
     if (nb == 0u) return false;
     uint kn = kindOf(nb);
     if (kn == KIND_OPAQUE) return true;
-    if (nb == b && (kb == KIND_CUTOUT || kb == KIND_TRANSPARENT)) return true;
+    if (BLOCK_ID(nb) == BLOCK_ID(b) && (kb == KIND_CUTOUT || kb == KIND_TRANSPARENT)) {
+        // water steps down: the side of the higher water shows above the lower neighbour
+        if (side && BLOCK_STATE(nb) != BLOCK_STATE(b)) return waterRank(nb) >= waterRank(b);
+        return true;
+    }
     // transparent blocks are hidden by any non-air cube neighbour except other transparents
     if (kb == KIND_TRANSPARENT && kn == KIND_CUTOUT) return true;
     return false;
@@ -129,7 +140,7 @@ void main() {
                 }
                 if (kb == KIND_AIR) continue;
                 uint nb = vox(p + gN);
-                if (!occludes(nb, b, kb)) m |= 1u << uint(u);
+                if (!occludes(nb, b, kb, gAxis != 1u)) m |= 1u << uint(u);
             }
             vis[v] = m;
         }

@@ -66,6 +66,11 @@ impl BlockDef {
         self.kind == BlockKind::Opaque && f[2] == f[3] && f[0] == f[1] && f[0] == f[4] && f[0] == f[5] && f[0] != f[2]
     }
 
+    /// Flowing water replaces it (plants, pebbles, small mushrooms).
+    pub fn washes_away(&self) -> bool {
+        self.kind == BlockKind::Model && matches!(self.model, models::CROSS | models::TALL_CROSS | models::PEBBLES | models::MUSHROOM)
+    }
+
     pub fn rotation(&self) -> Rotation {
         if self.is_column() {
             Rotation::Column

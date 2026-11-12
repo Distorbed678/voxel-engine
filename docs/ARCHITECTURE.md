@@ -273,6 +273,16 @@ applies first, and the optimised one replaces it in the background.
   graph changes, and undo/redo just restores overlay entries.
 - Region reads (copy, replace, paint, smooth, saving a prefab) queue LOD0 generation jobs
   flagged for readback. Their final voxels are copied to the host and assembled into a box.
+- **Flowing water** (`fluid.rs`): generated water is still (every water cell is a source). Edits
+  wake the cells around them, and a CPU simulation steps about 7 times a second. Water above a
+  cell makes it falling water. A cell next to water that rests on something (ground, or still
+  water) gets that water's level + 1, up to 7. Flowing water nothing feeds any more dries up.
+  The simulation reads block values back from the GPU world one LOD0 chunk at a time, and writes
+  water as edits outside the undo history. So water saves with the world, survives
+  regeneration, and recedes when the edit that let it in is undone. When water dries up, a cell
+  gets back what it held before (plants it washed away return). The level is the block state
+  (0 still, 1..7 flowing, 8 falling). The mesh shader lowers the surface 1/8 per level, and the
+  mesher shows a water side face where the neighbouring water's surface is lower.
 - **World files** (`saves/NAME.vxw`, RON): the seed, camera, time of day and the overlay. The
   world itself is regenerated, so a save only holds what the generator can't reproduce. Blocks
   are stored by name (`name` or `name:state`) through a palette, so saves survive changes to

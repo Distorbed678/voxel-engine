@@ -146,6 +146,8 @@ pub struct World {
     /// Chunks that can cast sun shadows (LOD 0 and 1) whose mesh changed: (origin, size). The
     /// engine redraws a cached shadow cascade when one lies inside it.
     pub caster_changes: Vec<(IVec3, i32)>,
+    /// Blocks changed by edits since the water simulation last looked.
+    pub edited: Vec<IVec3>,
     pub copies: Vec<PoolCopy>,
     pub stats: WorldStats,
     jobs_window: (Instant, u32),
@@ -175,6 +177,7 @@ impl World {
             deferred: Vec::new(),
             record_updates: Vec::new(),
             caster_changes: Vec::new(),
+            edited: Vec::new(),
             copies: Vec::new(),
             stats: WorldStats::default(),
             jobs_window: (Instant::now(), 0),
@@ -352,8 +355,15 @@ impl World {
         }
     }
 
-    /// Mark chunks affected by edits at the given block positions.
+    /// Mark chunks affected by edits at the given block positions (and tell the water
+    /// simulation, through `edited`).
     pub fn invalidate_blocks(&mut self, positions: &[IVec3]) {
+        self.edited.extend_from_slice(positions);
+        self.invalidate_blocks_quiet(positions);
+    }
+
+    /// `invalidate_blocks` for the water simulation's own writes.
+    pub fn invalidate_blocks_quiet(&mut self, positions: &[IVec3]) {
         let mut keys = std::collections::HashSet::new();
         for &p in positions {
             for lod in 0..self.settings.levels {

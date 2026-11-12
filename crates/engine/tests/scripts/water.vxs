@@ -1,0 +1,52 @@
+# Flowing water: a source runs out 7 blocks (one level lower per block), falls through a hole
+# and spreads on the floor below, dries up when the source is blocked, and runs again when that
+# edit is undone.
+ui off
+weather 0
+time 0.36
+# a stone basin in the sky (floor y=300, walls up to 302) and a lower floor at y=296
+select -20 296 -20 20 296 20
+block stone
+op fill
+select -10 300 -10 10 302 10
+op fill
+select -9 301 -9 9 302 9
+op clear
+pos 0.5 312 -16
+look 180 -35
+settle
+# a water source in the middle runs out 7 blocks, one level lower per block
+select 0 301 0 0 301 0
+block water
+op fill
+settle
+expect_block 0 301 0 water
+expect_block 1 301 0 water:1
+expect_block 3 301 0 water:3
+expect_block 0 301 -7 water:7
+expect_block 0 301 -8 air
+expect_block 2 301 2 water:4
+# a hole in the floor: water falls onto the lower floor and spreads there
+select 3 300 0 3 300 0
+op clear
+settle
+expect_block 3 300 0 water:8
+expect_block 3 297 0 water:8
+expect_block 4 297 0 water:1
+expect_block 10 297 0 water:7
+expect_block 11 297 0 air
+# block the source: everything dries up
+select 0 301 0 0 301 0
+block stone
+op fill
+settle
+expect_block 1 301 0 air
+expect_block 3 300 0 air
+expect_block 3 297 0 air
+expect_block 6 297 0 air
+# undo the block over the source: the water runs out again
+key ctrl+z
+settle
+expect_block 0 301 0 water
+expect_block 1 301 0 water:1
+expect_block 3 297 0 water:8
