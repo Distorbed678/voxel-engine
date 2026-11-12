@@ -69,6 +69,7 @@ struct FrameData {
     uint pad2;
     uint pad3;
     vec4 grade;           // colour grading: rgb tint, a = saturation (contrast in exposure.w)
+    vec4 shadowTexel;     // shadow texel size of each cascade (receiver offset)
 };
 
 layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer FrameRef {

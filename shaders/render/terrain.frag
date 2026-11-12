@@ -18,7 +18,7 @@ float shadow_lookup(FrameData f, vec3 rel, vec3 N, vec3 L) {
     float z = dot(rel, f.camForward.xyz);
     if (z > f.shadowSplits.w) return 1.0;
     uint c = z < f.shadowSplits.x ? 0u : (z < f.shadowSplits.y ? 1u : (z < f.shadowSplits.z ? 2u : 3u));
-    float texel = (c == 0u ? f.shadowSplits.x : (c == 1u ? f.shadowSplits.y : (c == 2u ? f.shadowSplits.z : f.shadowSplits.w))) * 2.2 / float(f.shadowRes);
+    float texel = f.shadowTexel[c];
     vec3 p = rel + N * texel * 1.5 + L * texel * 0.5;
     vec4 lp = f.shadowVP[c] * vec4(p, 1.0);
     vec2 uv = lp.xy * 0.5 + 0.5;

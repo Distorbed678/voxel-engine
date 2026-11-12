@@ -52,6 +52,8 @@ pub struct UiState {
     pub bloom_threshold: f32,
     pub clouds: crate::renderer::CloudSettings,
     pub shadow_distance: f32,
+    /// Keep the far shadow cascades until something in them changes.
+    pub shadow_cache: bool,
     pub shadow_strength: f32,
     pub selected_block: u16,
     pub mouse_sensitivity: f32,
@@ -98,6 +100,7 @@ impl UiState {
             bloom_threshold: 0.9,
             clouds: Default::default(),
             shadow_distance: 320.0,
+            shadow_cache: true,
             shadow_strength: 0.85,
             selected_block: blocks.id("stone"),
             mouse_sensitivity: 1.0,
@@ -366,6 +369,8 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.checkbox("Fog", &mut c.state.fog);
             ui.same_line();
             ui.checkbox("Shadows", &mut c.state.shadows);
+            ui.same_line();
+            ui.checkbox("Cache far cascades", &mut c.state.shadow_cache);
             ui.same_line();
             ui.checkbox("Block light", &mut c.state.block_light);
             ui.same_line();

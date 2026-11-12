@@ -99,6 +99,68 @@ pub struct Cascades {
     pub view_proj: [Mat4; 4],
     pub planes: [[Vec4; 6]; 4],
     pub splits: [f32; 4],
+    /// radius (half width) of each cascade's window
+    pub radius: [f32; 4],
+}
+
+/// One orthographic light camera, relative to the camera position.
+#[derive(Clone, Copy)]
+pub struct LightOrtho {
+    pub view_proj: Mat4,
+    pub planes: [Vec4; 6],
+}
+
+/// Distance from the camera to the farthest corner of the view frustum cut at view depth `far`:
+/// a window of this radius around the camera covers the slice whichever way the camera turns.
+pub fn slice_reach(cam: &Camera, aspect: f32, far: f32) -> f32 {
+    let th = (cam.fov_y_deg.to_radians() * 0.5).tan();
+    far * (1.0 + th * th + (th * aspect) * (th * aspect)).sqrt()
+}
+
+/// Orthographic light camera looking along `-light`, covering a square window of `radius`
+/// around `center` (world space, snapped to whole shadow texels), relative to `cam_pos`.
+/// The light camera's right and up axes.
+pub fn light_axes(light: Vec3) -> (Vec3, Vec3) {
+    let l = light.normalize();
+    let lup = if l.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let lr = l.cross(lup).normalize();
+    (lr, lr.cross(l))
+}
+
+pub fn light_ortho(cam_pos: DVec3, center: DVec3, radius: f32, light: Vec3, res: u32) -> LightOrtho {
+    let l = light.normalize();
+    let (lr, lu) = light_axes(l);
+    // snap the centre to whole shadow texels along the light's right/up axes (world space)
+    let texel = (2.0 * radius) as f64 / res as f64;
+    let (lrd, lud) = (lr.as_dvec3(), lu.as_dvec3());
+    let a = (center.dot(lrd) / texel).floor() * texel;
+    let b = (center.dot(lud) / texel).floor() * texel;
+    let snapped = center + lrd * (a - center.dot(lrd)) + lud * (b - center.dot(lud));
+    let center_rel = (snapped - cam_pos).as_vec3();
+    let depth_range = radius * 2.0 + 600.0;
+    let eye = center_rel + l * (radius + 500.0);
+    // light camera looks along -l: view-space z = l.(p - eye) (negative in front)
+    let view = Mat4::from_cols(
+        Vec4::new(lr.x, lu.x, l.x, 0.0),
+        Vec4::new(lr.y, lu.y, l.y, 0.0),
+        Vec4::new(lr.z, lu.z, l.z, 0.0),
+        Vec4::new(-lr.dot(eye), -lu.dot(eye), -l.dot(eye), 1.0),
+    );
+    // reversed-Z orthographic: view z in [-depth_range, 0] -> depth [0, 1]
+    let proj = Mat4::from_cols(
+        Vec4::new(1.0 / radius, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, -1.0 / radius, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, 1.0 / depth_range, 0.0),
+        Vec4::new(0.0, 0.0, 1.0, 1.0),
+    );
+    let vp = proj * view;
+    let (r0, r1, r2, r3) = (vp.row(0), vp.row(1), vp.row(2), vp.row(3));
+    let mut planes = [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2];
+    for p in planes.iter_mut() {
+        let len = p.truncate().length().max(1e-6);
+        *p /= len;
+    }
+    LightOrtho { view_proj: vp, planes }
 }
 
 pub fn fit_cascades(cam: &Camera, aspect: f32, light_dir: Vec3, max_dist: f32, res: u32) -> Cascades {
@@ -107,11 +169,7 @@ pub fn fit_cascades(cam: &Camera, aspect: f32, light_dir: Vec3, max_dist: f32, r
     let right = fwd.cross(Vec3::Y).normalize();
     let up = right.cross(fwd);
     let th = (cam.fov_y_deg.to_radians() * 0.5).tan();
-    let l = light_dir.normalize();
-    let lup = if l.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
-    let lr = l.cross(lup).normalize();
-    let lu = lr.cross(l);
-    let mut out = Cascades { view_proj: [Mat4::IDENTITY; 4], planes: [[Vec4::ZERO; 6]; 4], splits };
+    let mut out = Cascades { view_proj: [Mat4::IDENTITY; 4], planes: [[Vec4::ZERO; 6]; 4], splits, radius: [0.0; 4] };
     let mut near = cam.near;
     for (c, &far) in splits.iter().enumerate() {
         let mut corners = Vec::with_capacity(8);
@@ -125,42 +183,10 @@ pub fn fit_cascades(cam: &Camera, aspect: f32, light_dir: Vec3, max_dist: f32, r
         let center = corners.iter().fold(Vec3::ZERO, |a, b| a + *b) / 8.0;
         let mut radius = corners.iter().map(|p| (*p - center).length()).fold(0.0f32, f32::max);
         radius = (radius * 16.0).ceil() / 16.0;
-        // snap the centre to whole shadow texels along the light's right/up axes (world space)
-        let texel = (2.0 * radius) as f64 / res as f64;
-        let wc = cam.pos + center.as_dvec3();
-        let (lrd, lud) = (lr.as_dvec3(), lu.as_dvec3());
-        let a = (wc.dot(lrd) / texel).floor() * texel;
-        let b = (wc.dot(lud) / texel).floor() * texel;
-        let snapped = wc + lrd * (a - wc.dot(lrd)) + lud * (b - wc.dot(lud));
-        let center_rel = (snapped - cam.pos).as_vec3();
-        let depth_range = radius * 2.0 + 600.0;
-        let eye = center_rel + l * (radius + 500.0);
-        // light camera looks along -l: view-space z = l.(p - eye) (negative in front)
-        let view = Mat4::from_cols(
-            Vec4::new(lr.x, lu.x, l.x, 0.0),
-            Vec4::new(lr.y, lu.y, l.y, 0.0),
-            Vec4::new(lr.z, lu.z, l.z, 0.0),
-            Vec4::new(-lr.dot(eye), -lu.dot(eye), -l.dot(eye), 1.0),
-        );
-        // reversed-Z orthographic: view z in [-depth_range, 0] -> depth [0, 1]
-        let proj = Mat4::from_cols(
-            Vec4::new(1.0 / radius, 0.0, 0.0, 0.0),
-            Vec4::new(0.0, -1.0 / radius, 0.0, 0.0),
-            Vec4::new(0.0, 0.0, 1.0 / depth_range, 0.0),
-            Vec4::new(0.0, 0.0, 1.0, 1.0),
-        );
-        let vp = proj * view;
-        out.view_proj[c] = vp;
-        let r0 = vp.row(0);
-        let r1 = vp.row(1);
-        let r2 = vp.row(2);
-        let r3 = vp.row(3);
-        let mut planes = [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2];
-        for p in planes.iter_mut() {
-            let len = p.truncate().length().max(1e-6);
-            *p /= len;
-        }
-        out.planes[c] = planes;
+        let o = light_ortho(cam.pos, cam.pos + center.as_dvec3(), radius, light_dir, res);
+        out.view_proj[c] = o.view_proj;
+        out.planes[c] = o.planes;
+        out.radius[c] = radius;
         near = far;
     }
     out

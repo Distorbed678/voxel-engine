@@ -143,6 +143,9 @@ pub struct World {
     pub max_records: u32,
     deferred: Vec<(u64, Deferred)>,
     pub record_updates: Vec<(u32, GpuChunkRecord)>,
+    /// Chunks that can cast sun shadows (LOD 0 and 1) whose mesh changed: (origin, size). The
+    /// engine redraws a cached shadow cascade when one lies inside it.
+    pub caster_changes: Vec<(IVec3, i32)>,
     pub copies: Vec<PoolCopy>,
     pub stats: WorldStats,
     jobs_window: (Instant, u32),
@@ -171,6 +174,7 @@ impl World {
             max_records,
             deferred: Vec::new(),
             record_updates: Vec::new(),
+            caster_changes: Vec::new(),
             copies: Vec::new(),
             stats: WorldStats::default(),
             jobs_window: (Instant::now(), 0),
@@ -291,16 +295,23 @@ impl World {
         }
         for key in remove {
             if let Some(c) = self.chunks.remove(&key) {
-                self.release_chunk(c, frame_value);
+                self.release_chunk(key, c, frame_value);
             }
         }
     }
 
-    fn release_chunk(&mut self, c: Chunk, frame_value: u64) {
+    fn note_caster_change(&mut self, key: ChunkKey) {
+        if key.lod <= 1 {
+            self.caster_changes.push((key.origin(), key.size()));
+        }
+    }
+
+    fn release_chunk(&mut self, key: ChunkKey, c: Chunk, frame_value: u64) {
         if let Some(m) = c.mesh {
             self.deferred.push((frame_value, Deferred::Mesh(m)));
         }
         if let Some(r) = c.record {
+            self.note_caster_change(key);
             self.record_updates.push((r, GpuChunkRecord::inactive()));
             self.deferred.push((frame_value, Deferred::Record(r)));
         }
@@ -585,6 +596,7 @@ impl World {
             }
             if res.total == 0 {
                 if let Some(r) = old_record {
+                    self.note_caster_change(job.key);
                     self.record_updates.push((r, GpuChunkRecord::inactive()));
                     self.deferred.push((frame_value, Deferred::Record(r)));
                 }
@@ -599,6 +611,9 @@ impl World {
                     self.record_updates.push((r, GpuChunkRecord::inactive()));
                     self.deferred.push((frame_value, Deferred::Record(r)));
                     c.record = None;
+                    if job.key.lod <= 1 {
+                        self.caster_changes.push((job.key.origin(), job.key.size()));
+                    }
                 }
                 continue;
             };
@@ -612,6 +627,7 @@ impl World {
                 continue;
             };
             self.copies.push(PoolCopy { slot, src: res.scratch_base, dst: range.offset, count: res.total });
+            self.note_caster_change(job.key);
             self.record_updates.push((
                 record,
                 GpuChunkRecord {
@@ -660,9 +676,9 @@ impl World {
 
     /// Drop everything (e.g. LOD settings changed drastically). Meshes are freed lazily.
     pub fn reset(&mut self, frame_value: u64) {
-        let chunks: Vec<Chunk> = self.chunks.drain().map(|(_, c)| c).collect();
-        for c in chunks {
-            self.release_chunk(c, frame_value);
+        let chunks: Vec<(ChunkKey, Chunk)> = self.chunks.drain().collect();
+        for (key, c) in chunks {
+            self.release_chunk(key, c, frame_value);
         }
         self.last_center = None;
     }

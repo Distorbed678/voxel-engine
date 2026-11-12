@@ -20,7 +20,7 @@
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
-//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `occlusion on\|off` / `block_light on\|off` | render toggles |
+//! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `shadow_cache on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `occlusion on\|off` / `block_light on\|off` | render toggles |
 //! | `wait N` / `settle [MAX]` | wait N frames / until streaming, meshing and shader builds are idle |
 //! | `screenshot PATH` / `record DIR\|off` | save this frame / save every frame as `DIR/frame_NNNNN.png` |
 //! | `cursor X Y` | move the mouse to a pixel (picking follows it; waits for the pick) |
@@ -92,6 +92,7 @@ enum Cmd {
     Fog(bool),
     Shadows(bool),
     Taa(bool),
+    ShadowCache(bool),
     Bloom(bool),
     Grading(bool),
     Particles(bool),
@@ -297,6 +298,7 @@ fn parse(line: &str) -> Result<Cmd> {
         "fog" => Cmd::Fog(on_off(a.first())?),
         "shadows" => Cmd::Shadows(on_off(a.first())?),
         "taa" => Cmd::Taa(on_off(a.first())?),
+        "shadow_cache" => Cmd::ShadowCache(on_off(a.first())?),
         "bloom" => Cmd::Bloom(on_off(a.first())?),
         "grading" => Cmd::Grading(on_off(a.first())?),
         "particles" => Cmd::Particles(on_off(a.first())?),
@@ -936,6 +938,7 @@ impl Engine {
             Cmd::Fog(on) => self.ui.fog = on,
             Cmd::Shadows(on) => self.ui.shadows = on,
             Cmd::Taa(on) => self.ui.taa = on,
+            Cmd::ShadowCache(on) => self.ui.shadow_cache = on,
             Cmd::Bloom(on) => self.ui.bloom = on,
             Cmd::Grading(on) => self.ui.grading = on,
             Cmd::Particles(on) => self.ui.particles = on,

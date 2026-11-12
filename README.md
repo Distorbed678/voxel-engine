@@ -83,10 +83,11 @@ RTX 4080, 1080p, `--benchmark` (a scripted 24 s flight at 90 blocks/s):
 
 | Metric | Result |
 |---|---|
-| Average frame rate | **279 fps** (1% low: 102 fps) |
+| Average frame rate | **289 fps** (1% low: 102 fps) |
 | Streaming | ~2,000 chunks/s while flying |
 | Regenerating the whole 4 km world | ~0.5 s of GPU time (~9.2k chunks) |
 | Occlusion culling (main pass) | 2.1 → 1.2 ms in a forest, 2.4 → 0.4 ms in a cave |
+| Cached far shadow cascades | 1.3 → 0.2 ms in a forest (shadows, standing still) |
 | Validation layers | 0 errors |
 
 ## Getting started

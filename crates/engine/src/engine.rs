@@ -28,6 +28,28 @@ use crate::wg::WorldgenSystem;
 mod script;
 
 pub const FIF: usize = 2;
+
+/// A cached far shadow cascade. Its window is centred on the camera (wide enough for the frustum
+/// slice in any direction, plus a margin), so turning around doesn't invalidate it. It is redrawn
+/// when the camera leaves the margin, the sun turns by more than 0.1 degrees, or shadow-casting
+/// chunks inside it change (at most every 8 frames while streaming).
+#[derive(Default)]
+struct ShadowCache {
+    valid: bool,
+    /// camera position when drawn: the window centre, and what the matrix is relative to
+    at: DVec3,
+    view_proj: Mat4,
+    light: Vec3,
+    radius: f32,
+    axes: (Vec3, Vec3),
+    drawn: u64,
+    dirty: bool,
+}
+
+/// The cascades that are cached, and how far the camera may move before each is redrawn.
+const CACHED_CASCADES: [usize; 2] = [2, 3];
+const SHADOW_CACHE_MARGIN: [f32; 2] = [16.0, 32.0];
+const SHADOW_CACHE_MIN_FRAMES: u64 = 8;
 pub const OUTPUT_FORMAT_HEADLESS: vk::Format = vk::Format::B8G8R8A8_UNORM;
 
 #[derive(Clone, Debug, Default)]
@@ -140,6 +162,9 @@ pub struct Engine {
     pub world_path: Option<PathBuf>,
     /// Edit overlay revision when the world was last saved or opened.
     saved_revision: u64,
+    shadow_cache: [ShadowCache; 2],
+    /// shadow cascades to redraw this frame (bit c)
+    shadow_mask: u32,
     last_frame: Instant,
     pub dt: f32,
     pub pick: Option<PickHit>,
@@ -381,6 +406,8 @@ impl Engine {
         let mut engine = Self {
             world_path: None,
             saved_revision: 0,
+            shadow_cache: Default::default(),
+            shadow_mask: 0,
             opts,
             window,
             swapchain,
@@ -1177,7 +1204,7 @@ impl Engine {
             self.world.record_count,
             self.ui.wireframe,
             self.wg.biome_table.address,
-            self.ui.shadows,
+            self.shadow_mask,
             {
                 // weather thickens the clouds
                 let mut c = self.ui.clouds;
@@ -1497,6 +1524,7 @@ impl Engine {
             coarse_tex: self.light.coarse_sampled,
             overdraw_img: self.renderer.overdraw_img,
             pad: [0; 2],
+            shadow_texel: [0.0; 4],
             grade: if self.ui.grading {
                 [self.atmosphere.grade_tint.x, self.atmosphere.grade_tint.y, self.atmosphere.grade_tint.z, self.atmosphere.saturation]
             } else {
@@ -1505,12 +1533,73 @@ impl Engine {
         };
         let mut fd = fd;
         let light = if sky.sun_dir.y > -0.05 { sky.sun_dir } else { -sky.sun_dir };
-        let casc = crate::camera::fit_cascades(&self.camera, extent.width as f32 / extent.height.max(1) as f32, light, self.ui.shadow_distance, crate::renderer::SHADOW_RES);
-        for c in 0..4 {
+        let aspect = extent.width as f32 / extent.height.max(1) as f32;
+        let res = crate::renderer::SHADOW_RES;
+        let mut casc = crate::camera::fit_cascades(&self.camera, aspect, light, self.ui.shadow_distance, res);
+        let fitted = casc.radius;
+        self.shadow_mask = if self.ui.shadows { 0b1111 } else { 0 };
+        let changes = std::mem::take(&mut self.world.caster_changes);
+        if self.ui.shadows && self.ui.shadow_cache {
+            // what each cached cascade needs: (radius, forced redraw, optional redraw)
+            let mut need = [(0.0f32, false, false); 2];
+            for (k, &c) in CACHED_CASCADES.iter().enumerate() {
+                let margin = SHADOW_CACHE_MARGIN[k];
+                let reach = crate::camera::slice_reach(&self.camera, aspect, casc.splits[c]);
+                let radius = ((reach + margin) * 16.0).ceil() / 16.0;
+                let sc = &mut self.shadow_cache[k];
+                if sc.valid && !sc.dirty {
+                    // a changed chunk inside the window's footprint (light right/up axes)?
+                    let (ax, ay) = sc.axes;
+                    sc.dirty = changes.iter().any(|&(o, size)| {
+                        let half = size as f32 * 0.5;
+                        let d = (o.as_dvec3() + DVec3::splat(half as f64) - sc.at).as_vec3();
+                        let reach = sc.radius + half * 1.74;
+                        d.dot(ax).abs() <= reach && d.dot(ay).abs() <= reach
+                    });
+                }
+                let moved = (self.camera.pos - sc.at).length() as f32 > margin;
+                let forced = !sc.valid || moved || sc.radius != radius;
+                let turned = sc.light.dot(light.normalize()) < 0.1f32.to_radians().cos();
+                let changed = sc.dirty && self.frame_counter >= sc.drawn + SHADOW_CACHE_MIN_FRAMES;
+                need[k] = (radius, forced, turned || changed);
+            }
+            // at most one optional redraw per frame (the oldest), so costs don't pile up
+            let optional = (0..2).filter(|&k| need[k].2 && !need[k].1).min_by_key(|&k| self.shadow_cache[k].drawn);
+            for (k, &c) in CACHED_CASCADES.iter().enumerate() {
+                let (radius, forced, _) = need[k];
+                let sc = &mut self.shadow_cache[k];
+                if forced || optional == Some(k) {
+                    let o = crate::camera::light_ortho(self.camera.pos, self.camera.pos, radius, light, res);
+                    *sc = ShadowCache {
+                        valid: true,
+                        at: self.camera.pos,
+                        view_proj: o.view_proj,
+                        light: light.normalize(),
+                        radius,
+                        axes: crate::camera::light_axes(light),
+                        drawn: self.frame_counter,
+                        dirty: false,
+                    };
+                    casc.planes[c] = o.planes;
+                } else {
+                    self.shadow_mask &= !(1 << c);
+                }
+                // the matrix is relative to where the camera was when the cascade was drawn
+                casc.view_proj[c] = sc.view_proj * Mat4::from_translation((self.camera.pos - sc.at).as_vec3());
+                casc.radius[c] = radius;
+            }
+        } else {
+            for sc in &mut self.shadow_cache {
+                sc.valid = false;
+            }
+        }
+        for (c, fitted) in fitted.iter().enumerate() {
             fd.shadow_vp[c] = casc.view_proj[c].to_cols_array_2d();
             for p in 0..6 {
                 fd.shadow_planes[c * 6 + p] = casc.planes[c][p].to_array();
             }
+            // receiver offset in texels, scaled like the slice-fitted cascades
+            fd.shadow_texel[c] = casc.splits[c] * 2.2 / res as f32 * casc.radius[c] / fitted;
         }
         fd.shadow_splits = casc.splits;
         let fw = self.camera.forward();

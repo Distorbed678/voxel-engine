@@ -1,0 +1,20 @@
+Voxel engine benchmark on NVIDIA GeForce RTX 4080
+frames 6948, avg 3.46 ms (289 fps), 1% low 102 fps, worst 25.33 ms
+chunks generated+meshed: 48722 (2030 / s), quads resident 0.8M
+GPU passes (avg ms per frame where active):
+  bloom        0.060 ms
+  cull         0.011 ms
+  frame        3.444 ms
+  light        0.237 ms
+  main pass    2.552 ms
+  meshing      1.721 ms
+  particles    0.005 ms
+  props        0.939 ms
+  shadow c0    0.022 ms
+  shadow c1    0.051 ms
+  shadow c2    0.234 ms
+  shadow c3    0.365 ms
+  shadows      0.089 ms
+  taa          0.084 ms
+  tonemap+ui   0.160 ms
+  worldgen     2.188 ms

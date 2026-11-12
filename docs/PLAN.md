@@ -190,7 +190,7 @@ These follow from the choices above.
   prefab files and scripts write `name:state`. Water surfaces sit 1/8 block lower.
 
 **Measured** (RTX 4080, 1080p, `--benchmark`):
-- 279 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
+- 289 fps average, 102 fps 1% low, while streaming about 2,000 chunks/s.
 - Full 4 km world regeneration takes about 0.5 s of GPU time.
 - Validation-layer runs report 0 errors.
 
@@ -257,8 +257,11 @@ Still needs a hand test (real input devices or complex UI flows):
 
 - [ ] **Isolated zone / biome preview**: show one zone or one biome on its own across the whole
   world, to tune it without searching for it.
-- [ ] **Faster shadow pass** (now the most expensive pass): cache the far cascades and redraw
-  them only when the sun or the chunks change; occlusion-cull shadow casters.
+- [x] **Faster shadow pass**: the two far cascades are cached (camera-centred windows, redrawn
+  when the camera leaves a margin, the sun turns or casters inside change). Shadows 1.28 →
+  0.18 ms in a forest at 1080p standing still, 0.61 → 0.09 ms over the benchmark flight. Caster
+  occlusion culling was implemented and measured, then dropped: no gain (see ARCHITECTURE.md,
+  Shadows).
 - [x] **Apron Y-face props**: the known issue above. Fixed together with everything else that
   made neighbouring chunks disagree (see "Generation consistency" in ARCHITECTURE.md).
 - [ ] **Flowing water** for edits: water spreads into dug-out space, with lower levels as it
@@ -295,7 +298,7 @@ Approved on 2026-11-12, in this order (small fixes first, the largest last):
 
 14. ~~Apron Y-face props~~.
 15. ~~World save files~~.
-16. Faster shadow pass.
+16. ~~Faster shadow pass~~.
 17. Isolated zone / biome preview.
 18. Flowing water.
 

@@ -83,8 +83,17 @@ Streams per chunk: 6 opaque directions, 6 transparent directions, and model inst
   128 triangles).
 - **Models** (plants, slabs, stairs, ...): 6 instances × 10 quad slots per meshlet. Boundary
   faces are culled against opaque neighbours.
-- **Shadows**: 4 cascades, fitted to the view frustum slices and texel-snapped in world space
-  (f64). Only faces turned away from the sun are drawn, plus a slope bias.
+- **Shadows**: 4 cascades, texel-snapped in world space (f64). Only faces turned away from the
+  sun are drawn, plus a slope bias. The two near cascades are fitted to their view frustum
+  slices and redrawn every frame. The two far ones (most of the cost) are cached. Each is a
+  window centred on the camera, wide enough for its slice in any direction plus a margin
+  (16 / 32 blocks), so turning around doesn't invalidate it. Each keeps the matrix it was drawn
+  with, shifted by how far the camera has moved since. A far cascade is redrawn when the camera
+  leaves its margin, the sun turns by more than 0.1°, or a LOD 0–1 chunk inside its footprint
+  changes (at most every 8 frames). At most one optional redraw happens per frame.
+  Occlusion-culling shadow casters was tried and doesn't pay: with back faces only, solid
+  ground leaves nothing in the map to hide what is under it, and those casters (cave ceilings)
+  are what keep sunlight out of caves.
 - **Precision**: rendering is camera-relative, with an integer camera block plus a fractional
   offset, so it stays precise anywhere in the i32 world.
 
