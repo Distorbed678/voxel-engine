@@ -1,19 +1,20 @@
 #version 460
 // Sky sources: walk every column of the volume top-down. Cells keep full sky light until the
-// first light-blocking block; water, ice and leaves on the way dim it.
+// first light-blocking block; water, ice and leaves on the way dim it. Above the volume the sky is
+// assumed open, except under the sky floor (origin.w: the top of the underground layers).
 #include "light/light_common.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(push_constant, scalar) uniform PC {
     BlockTable blocks;
-    ivec4 origin;     // world block coordinate of the volume's min corner
+    ivec4 origin;     // world block coordinate of the volume's min corner, w = sky floor
     uint blocksImg;
 } pc;
 
 void main() {
     ivec2 c = ivec2(gl_GlobalInvocationID.xy);
-    int level = 15;
+    int level = pc.origin.y + LIGHT_N > pc.origin.w ? 15 : 0;
     for (int y = LIGHT_N - 1; y >= 0; --y) {
         ivec3 t = (pc.origin.xyz + ivec3(c.x, y, c.y)) & LIGHT_MASK;
         uint id = imageLoad(gLightBlocks[pc.blocksImg], t).r & ID_MASK;

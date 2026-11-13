@@ -62,7 +62,9 @@ pub struct FrameData {
     pub coarse_origin: [i32; 4],
     pub coarse_tex: u32,
     pub overdraw_img: u32,
-    pub pad: [u32; 2],
+    /// below this height there is no sky light (the top of the underground layers)
+    pub sky_floor: f32,
+    pub pad: u32,
     /// colour grading: rgb tint, a = saturation (contrast in exposure.w)
     pub grade: [f32; 4],
     /// size of a shadow texel in each cascade, for the receiver offset

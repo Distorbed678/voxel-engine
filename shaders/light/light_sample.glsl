@@ -39,8 +39,10 @@ vec4 sample_light(FrameData f, vec3 rel, vec3 offset) {
         }
     }
     if (fade >= 1.0) return L;
-    // outside the fine volume: open sky, block light from the coarse volume
-    return mix(vec4(sample_coarse(f, rel, offset), 1.0), L, fade);
+    // outside the fine volume: open sky (none underground), block light from the coarse volume
+    float y = float(f.camBlock.y) + rel.y + f.camFrac.y + offset.y;
+    float sky = smoothstep(f.skyFloor - 8.0, f.skyFloor, y);
+    return mix(vec4(sample_coarse(f, rel, offset), sky), L, fade);
 }
 
 #endif

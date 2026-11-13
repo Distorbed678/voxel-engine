@@ -19,6 +19,9 @@ vec3 sky_color(FrameData f, vec3 dir) {
     vec3 glowCol = mix(vec3(1.0, 0.45, 0.15), f.sunColor.rgb, clamp(sunDir.y * 3.0, 0.0, 1.0));
     col += glowCol * pow(max(mu, 0.0), 12.0) * 0.6 * sunUp;
     col += glowCol * pow(max(mu, 0.0), 2.0) * 0.12 * horizonBlend * sunUp;
+    // underground (the camera below the sky floor) there is no sky: fog and haze fade to dark
+    float camY = float(f.camBlock.y) + f.camFrac.y;
+    col = mix(col, vec3(0.012, 0.014, 0.018), smoothstep(f.skyFloor, f.skyFloor - 48.0, camY));
     return col;
 }
 

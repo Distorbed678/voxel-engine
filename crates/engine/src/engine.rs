@@ -20,7 +20,7 @@ use crate::input::Input;
 use crate::renderer::{FLAG_CROSSHAIR, FLAG_FOG, FrameData, Renderer};
 use crate::shaders::{PipelineHandle, PipelineManager, PipelineSource};
 use crate::ui::{self, UiActions, UiState};
-use crate::world::World;
+use crate::world::{RegionRead, World};
 use crate::world::gpu::{MAX_JOBS, WorldGpu, WorldPipelines};
 use crate::node_editor::NodeEditorUi;
 use crate::wg::WorldgenSystem;
@@ -141,6 +141,8 @@ pub struct Engine {
     pub prop_preview: crate::prop_preview::PropPreview,
     /// the prop graph whose preview the user closed (it stays closed until another one opens)
     prop_preview_closed: Option<String>,
+    /// a layer jump waiting for the ground under the camera
+    jump: Option<JumpState>,
     pub tex_ui: crate::texture_editor::TextureEditorUi,
     /// per generator layer: its terrain, props and probe pipelines (`wg::PASS_NAMES`)
     gen_layers: Vec<[PipelineHandle; 3]>,
@@ -206,6 +208,16 @@ pub struct Engine {
 }
 
 /// Full GLSL sources (terrain pass, props pass, probe pass) around the generated code.
+/// A layer jump in progress (`Engine::start_layer_jump`).
+#[derive(Clone, Copy, Debug)]
+enum JumpState {
+    /// stand on what the probes find, after `wait` frames, above `sea`; with nothing under the
+    /// camera, on the nearest ground of a minimap made after the jump (`map_serial` at the jump)
+    Probe { wait: u32, sea: f32, map_serial: u64 },
+    /// a column read (region read `id`) around `depth`: stand in the nearest open pocket
+    Column { id: u64, depth: f32, tries: u32 },
+}
+
 pub fn compose_source(generated: &str) -> (String, String, String) {
     let wrap = |main: &str, defines: &str| {
         format!("#version 460\n{defines}#include \"worldgen/prelude.glsl\"\n// ---- generated ----\n{generated}\n// ---- main ----\n#include \"{main}\"\n")
@@ -443,6 +455,7 @@ impl Engine {
             block_ui: crate::block_editor::BlockEditorUi::new(),
             prop_preview: crate::prop_preview::PropPreview::new(),
             prop_preview_closed: None,
+            jump: None,
             tex_ui: crate::texture_editor::TextureEditorUi::new(),
             gen_layers,
             probes: crate::probe::Probes::new(&ctx, FIF)?,
@@ -833,6 +846,141 @@ impl Engine {
 
     /// The solo preview as generator indices: a zone alone, or a surface biome with a zone that
     /// uses it, or a cave biome in every zone's caves.
+    /// Jump to another layer: move the camera into it, then find somewhere to stand
+    /// (`update_jump`, `jump_take_region`).
+    pub fn start_layer_jump(&mut self, j: crate::ui::LayerJump) {
+        use worldgen::compile::LayerKind;
+        let c = &self.wg.compiled;
+        let own = c.owned_ranges();
+        let find = |kind: LayerKind, y: Option<f32>| {
+            let of_kind = |i: &usize| c.layers[*i].kind == kind && own[*i].0 < own[*i].1;
+            y.and_then(|y| (0..c.layers.len()).filter(of_kind).find(|&i| y >= own[i].0 && y < own[i].1))
+                .or_else(|| (0..c.layers.len()).find(of_kind))
+        };
+        let (kind, depth) = match j {
+            crate::ui::LayerJump::Surface => (LayerKind::Surface, None),
+            crate::ui::LayerJump::Underground(d) => (LayerKind::Underground, Some(d)),
+            crate::ui::LayerJump::Sky => (LayerKind::Sky, None),
+        };
+        let Some(li) = find(kind, depth) else {
+            self.ui.toast(format!("This world has no {kind:?} layer").to_lowercase());
+            return;
+        };
+        let l = &c.layers[li];
+        let (lo, hi, name, sea) = (c.value(l.y_min), c.value(l.y_max), l.name.clone(), c.value(l.sea));
+        self.fly_mode = true;
+        match j {
+            crate::ui::LayerJump::Underground(d) => {
+                let y = d.clamp(lo + 16.0, hi - 16.0);
+                self.camera.pos.y = y as f64;
+                let id = self.request_jump_column(y);
+                self.jump = Some(JumpState::Column { id, depth: y, tries: 40 });
+            }
+            _ => {
+                // the probes scan the layer from the top down: stand on what they find
+                self.camera.pos.y = if kind == LayerKind::Surface { hi.min(420.0) } else { hi - 64.0 } as f64;
+                self.jump = Some(JumpState::Probe { wait: 2 * FIF as u32 + 2, sea, map_serial: self.probes.map_serial });
+            }
+        }
+        self.ui.toast(format!("Jumped to the {name} layer"));
+    }
+
+    /// Read a column of blocks around height y at the camera (Underground layer jumps).
+    fn request_jump_column(&mut self, y: f32) -> u64 {
+        let (x, z) = (self.camera.pos.x.floor() as i32, self.camera.pos.z.floor() as i32);
+        let y = y as i32;
+        self.world.request_region(glam::IVec3::new(x, y - 96, z), glam::IVec3::new(x, y + 96, z))
+    }
+
+    /// A Surface or Sky layer jump: once the probes have looked at the new layer, stand on the
+    /// highest ground they found (or keep flying where there is none).
+    fn update_jump(&mut self) {
+        let Some(JumpState::Probe { wait, sea, map_serial }) = &mut self.jump else { return };
+        if *wait > 0 {
+            *wait -= 1;
+            return;
+        }
+        let (sea, map_serial) = (*sea, *map_serial);
+        // the scan steps down at least 4 blocks: the ground is within a step above h
+        let step = |cam_y: f64, h: f32| 4.0f32.max((cam_y as f32 - h) / 160.0).ceil();
+        if let Some(h) = self.probes.camera.map(|c| c.height).filter(|h| *h > -1000.0) {
+            self.camera.pos.y = (h + step(self.camera.pos.y, h) + 2.0).max(sea + 2.0) as f64;
+            self.jump = None;
+            log::info!("layer jump: ground at {h:.0} under the camera, standing at {:.0}", self.camera.pos);
+            return;
+        }
+        // nothing under the camera (open sky): the nearest ground on a fresh minimap
+        if self.probes.map_serial < map_serial + 2 {
+            return;
+        }
+        self.jump = None;
+        let Some(((ox, oz, sp), cells)) = &self.probes.map else { return };
+        let n = crate::probe::MAP_N;
+        let (cx, cz) = (self.camera.pos.x, self.camera.pos.z);
+        let best = (0..n * n)
+            .filter(|&i| cells[i].height > -1000.0)
+            .map(|i| (ox + ((i % n) as f64 + 0.5) * sp, oz + ((i / n) as f64 + 0.5) * sp, cells[i].height))
+            .min_by(|a, b| ((a.0 - cx).powi(2) + (a.1 - cz).powi(2)).total_cmp(&((b.0 - cx).powi(2) + (b.1 - cz).powi(2))));
+        match best {
+            Some((x, z, h)) => {
+                let y = (h + step(self.camera.pos.y, h) + 2.0).max(sea + 2.0) as f64;
+                self.camera.pos = glam::DVec3::new(x, y, z);
+                log::info!("layer jump: nearest ground at {h:.0}, standing at {:.0}", self.camera.pos);
+            }
+            None => self.ui.toast("No ground nearby: flying".into()),
+        }
+    }
+
+    /// An Underground layer jump: stand in the open pocket nearest the chosen depth, else try a
+    /// column further along.
+    fn jump_take_region(&mut self, r: RegionRead) -> Option<RegionRead> {
+        let Some(JumpState::Column { id, depth, tries }) = self.jump else { return Some(r) };
+        if r.id != id {
+            return Some(r);
+        }
+        let col: Vec<u16> = (0..r.size.y).map(|y| r.get(r.min + glam::IVec3::new(0, y, 0))).collect();
+        // air runs at least 3 tall standing on a solid block: (floor y, run length)
+        let mut best: Option<(i32, i32)> = None;
+        let mut y = 1;
+        while (y as usize) < col.len() {
+            if col[y as usize] == 0 && col[y as usize - 1] != 0 {
+                let start = y;
+                while (y as usize) < col.len() && col[y as usize] == 0 {
+                    y += 1;
+                }
+                let run = y - start;
+                let floor = r.min.y + start;
+                if run >= 3 && best.is_none_or(|(f, _)| (floor as f32 - depth).abs() < (f as f32 - depth).abs()) {
+                    best = Some((floor, run));
+                }
+            }
+            y += 1;
+        }
+        match best {
+            Some((floor, run)) => {
+                self.camera.pos.y = floor as f64 + (run as f64 / 3.0).clamp(1.6, 4.0);
+                self.jump = None;
+                log::info!("layer jump: cave at {:.1}", self.camera.pos);
+            }
+            None if tries == 0 => {
+                self.ui.toast(format!("No cave found near y {depth:.0}"));
+                self.jump = None;
+            }
+            None => {
+                self.camera.pos.x += 53.0;
+                self.camera.pos.z += 31.0;
+                let id = self.request_jump_column(depth);
+                self.jump = Some(JumpState::Column { id, depth, tries: tries - 1 });
+            }
+        }
+        None
+    }
+
+    /// Whether a layer jump is still looking for somewhere to stand.
+    pub fn jumping(&self) -> bool {
+        self.jump.is_some()
+    }
+
     /// The cloud sea's settings (World Output).
     pub fn cloud_sea(&self) -> crate::renderer::CloudSea {
         let c = &self.wg.compiled;
@@ -1074,6 +1222,16 @@ impl Engine {
             ));
         }
         self.world.layers = self.wg.compiled.owned_ranges();
+        // no sky light under the top of the underground layers
+        let floor = (self.wg.compiled.layers.iter().zip(&self.world.layers))
+            .filter(|(l, own)| l.kind == worldgen::compile::LayerKind::Underground && own.0 < own.1)
+            .map(|(_, own)| own.1 as i32)
+            .max()
+            .unwrap_or(i32::MIN / 2);
+        if floor != self.light.sky_floor {
+            self.light.sky_floor = floor;
+            self.light.mark_dirty();
+        }
         self.world.camera_layer = self.wg.compiled.layer_near(self.camera.pos.y as f32);
 
         // ---- world results ----
@@ -1086,7 +1244,9 @@ impl Engine {
             }
             self.world.apply_results(s, &jobs, &results, value);
         }
+        self.update_jump();
         for region in self.world.take_finished_regions() {
+            let Some(region) = self.jump_take_region(region) else { continue };
             let Some(region) = self.prop_preview.take(region, &self.blocks) else { continue };
             let Some(region) = self.fluid.region_ready(region) else { continue };
             let Some(region) = self.script_take_region(region) else { continue };
@@ -1681,7 +1841,8 @@ impl Engine {
             },
             coarse_tex: self.light.coarse_sampled,
             overdraw_img: self.renderer.overdraw_img,
-            pad: [0; 2],
+            sky_floor: self.light.sky_floor as f32,
+            pad: 0,
             shadow_texel: [0.0; 4],
             grade: if self.ui.grading {
                 [self.atmosphere.grade_tint.x, self.atmosphere.grade_tint.y, self.atmosphere.grade_tint.z, self.atmosphere.saturation]
@@ -1819,6 +1980,9 @@ impl Engine {
         }
         self.tools.draw_overlay(ui, &self.camera, self.pick);
         let unsaved = self.world.overlay.revision != self.saved_revision;
+        let cam_layer = self.wg.compiled.layers.get(self.wg.compiled.layer_near(self.camera.pos.y as f32));
+        let layer_name = cam_layer.map(|l| l.name.clone()).unwrap_or_default();
+        let map_sea = cam_layer.map_or(62.0, |l| self.wg.compiled.value(l.sea));
         let actions = ui::draw(
             ui,
             &mut ui::UiCtx {
@@ -1838,6 +2002,12 @@ impl Engine {
                 batch: self.wgpu.last_batch,
                 busy_slots: self.wgpu.busy_slots(),
                 probes: &self.probes,
+                camera_layer: &layer_name,
+                map_sea,
+                has_layers: (
+                    self.wg.compiled.layers.iter().any(|l| l.kind == worldgen::compile::LayerKind::Underground),
+                    self.wg.compiled.layers.iter().any(|l| l.kind == worldgen::compile::LayerKind::Sky),
+                ),
                 biome_names: &self.wg.compiled.biomes,
                 zone_names: &self.wg.compiled.zones,
                 vsync: self.swapchain.as_ref().map(|s| s.vsync),
@@ -1909,6 +2079,9 @@ impl Engine {
             }
         if a.quit {
             self.quit = true;
+        }
+        if let Some(j) = a.layer_jump {
+            self.start_layer_jump(j);
         }
         if let Some((x, z)) = a.teleport {
             self.camera.pos.x = x;

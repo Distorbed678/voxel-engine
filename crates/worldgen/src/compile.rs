@@ -111,9 +111,10 @@ pub struct CompiledLayer {
     /// its parameters: slots [param_base, param_base + param_count) of `Compiled::params`
     pub param_base: u32,
     pub param_count: u32,
-    /// parameter slots (global) of the layer's range [y_min, y_max)
+    /// parameter slots (global) of the layer's range [y_min, y_max) and of its sea level
     pub y_min: u32,
     pub y_max: u32,
+    pub sea: u32,
     /// its biomes and zones in the global lists: [base, base + count)
     pub biome_base: u32,
     pub biome_count: u32,
@@ -216,6 +217,7 @@ struct UnitOut {
     prop_layers: usize,
     y_min: u32,
     y_max: u32,
+    sea: u32,
 }
 
 #[derive(Default)]
@@ -1356,6 +1358,7 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
     let mut sea = "62.0".to_string();
     let mut river = (String::from("float wg_river(vec2 xz) { return 0.0; }"), "5.0".to_string(), "48.0".to_string(), "B_GRAVEL".to_string());
     let mut range = (u32::MAX, u32::MAX);
+    let mut sea_slot = u32::MAX;
     let mut blend = "0.0".to_string();
     {
         let _ = writeln!(world_code, "void zone_select(vec2 xz, out uint z0, out uint z1, out float w1) {{");
@@ -1367,6 +1370,7 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
                     let (a, b) = (em.p(&o, unit.y_min), em.p(&o, unit.y_max));
                     let slot = |e: &str| e.trim_start_matches("P(").trim_end_matches("u)").parse::<u32>().unwrap_or(u32::MAX);
                     range = (slot(&a), slot(&b));
+                    sea_slot = slot(&sea);
                     blend = em.p(&o, unit.blend);
                     // rivers: a 2D mask (Layer pin 1) carved down to the river bed
                     if unit.rivers {
@@ -1656,7 +1660,7 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0] + BIOME_BASE; }}"#
     }
     let _ = writeln!(s, "        default: return 1.0;\n    }}\n}}");
 
-    UnitOut { source: s, biomes: biome_infos, zones: zone_infos, prop_layers: prop_layers.len(), y_min: range.0, y_max: range.1 }
+    UnitOut { source: s, biomes: biome_infos, zones: zone_infos, prop_layers: prop_layers.len(), y_min: range.0, y_max: range.1, sea: sea_slot }
 }
 
 /// Every name a node of `kind` in graph `g` references through param `param`.
@@ -1786,6 +1790,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             param_count: count,
             y_min: base + out.y_min,
             y_max: base + out.y_max,
+            sea: base + out.sea,
             biome_base: bb,
             biome_count: out.biomes.len() as u32,
             zone_base: zb,

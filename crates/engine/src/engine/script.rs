@@ -19,6 +19,7 @@
 //! | `weather W` | fixed weather intensity 0..1 (turns automatic weather off) |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
+//! | `layer_jump surface\|sky\|underground DEPTH` | the Minimap's layer jump: go to the layer and stand on its ground (in a cave near DEPTH) |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
 //! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `shadow_cache on\|off` / `water_flow on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `occlusion on\|off` / `block_light on\|off` | render toggles |
 //! | `wait N` / `settle [MAX]` | wait N frames / until streaming, meshing and shader builds are idle |
@@ -96,6 +97,7 @@ enum Cmd {
     FlyPath(u32),
     FindBiome { name: String, height: f64 },
     FindCave(i32),
+    LayerJump(crate::ui::LayerJump),
     Anim(Option<f32>),
     Time(f32),
     View(u32),
@@ -229,6 +231,8 @@ enum Busy {
     Ground { id: u64, height: f64, left: u32 },
     /// Waiting for the benchmark flight to finish.
     Bench,
+    /// Waiting for a layer jump to find somewhere to stand.
+    Jump { left: u32 },
     /// Averaging GPU pass times.
     Profile { left: u32, label: String },
     /// Region read for `check_apron`.
@@ -368,6 +372,12 @@ fn parse(line: &str) -> Result<Cmd> {
         ),
         "fly_path" => Cmd::FlyPath(num(a.first(), "frames")?),
         "find_cave" => Cmd::FindCave(a.first().map(|h| h.parse()).transpose()?.unwrap_or(8)),
+        "layer_jump" => Cmd::LayerJump(match a.first().copied() {
+            Some("surface") => crate::ui::LayerJump::Surface,
+            Some("sky") => crate::ui::LayerJump::Sky,
+            Some("underground") => crate::ui::LayerJump::Underground(num(a.get(1), "depth")?),
+            other => bail!("layer_jump: expected surface, sky or underground DEPTH, got {other:?}"),
+        }),
         "find_biome" => Cmd::FindBiome {
             name: a.first().context("missing biome name")?.to_string(),
             height: a.get(1).map(|h| h.parse()).transpose()?.unwrap_or(40.0),
@@ -1087,6 +1097,16 @@ impl Engine {
                 None
             }
             Busy::Bench => (self.bench.as_ref().is_some_and(|b| b.report.is_none())).then_some(Busy::Bench),
+            Busy::Jump { left } => {
+                if !self.jumping() {
+                    None
+                } else if left == 0 {
+                    s.fail(line, "layer jump timed out");
+                    None
+                } else {
+                    Some(Busy::Jump { left: left - 1 })
+                }
+            }
             Busy::Apron { id, chunk, left } => {
                 if left == 0 {
                     s.fail(line, "apron read timed out");
@@ -1167,6 +1187,10 @@ impl Engine {
                     return Ok(None);
                 }
                 return Ok(Some(Busy::Path { keys, i: 0, n: frames }));
+            }
+            Cmd::LayerJump(j) => {
+                self.start_layer_jump(j);
+                return Ok(Some(Busy::Jump { left: 1200 }));
             }
             Cmd::FindCave(min_height) => {
                 let (x, z) = (self.camera.pos.x.floor() as i32, self.camera.pos.z.floor() as i32);

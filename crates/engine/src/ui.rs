@@ -27,6 +27,8 @@ pub struct UiState {
     pub show_demo: bool,
     pub show_map: bool,
     pub map_zones: bool,
+    /// depth of the Underground layer jump
+    pub jump_depth: f32,
     pub fog_scale: f32,
     pub debug_view: u32,
     pub wireframe: bool,
@@ -87,6 +89,7 @@ impl UiState {
             show_demo: false,
             show_map: true,
             map_zones: false,
+            jump_depth: -400.0,
             fog_scale: 1.0,
             debug_view: 0,
             wireframe: false,
@@ -131,6 +134,17 @@ impl UiState {
     }
 }
 
+/// A jump to another layer of the world (Minimap window, `layer_jump` script command).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LayerJump {
+    /// stand on the surface below the camera
+    Surface,
+    /// stand in a cave near this height
+    Underground(f32),
+    /// stand on a sky island (or fly above the cloud sea)
+    Sky,
+}
+
 #[derive(Default)]
 pub struct UiActions {
     pub regenerate: bool,
@@ -143,6 +157,7 @@ pub struct UiActions {
     pub quit: bool,
     pub save_generator: bool,
     pub teleport: Option<(f64, f64)>,
+    pub layer_jump: Option<LayerJump>,
     pub benchmark: bool,
     /// save to the open world file (or ask for a name)
     pub save_world: bool,
@@ -173,6 +188,11 @@ pub struct UiCtx<'a> {
     pub tools_open: &'a mut bool,
     pub bench_report: Option<String>,
     pub probes: &'a crate::probe::Probes,
+    /// the camera's layer (its name and sea level), and whether the world has an underground
+    /// and a sky
+    pub camera_layer: &'a str,
+    pub map_sea: f32,
+    pub has_layers: (bool, bool),
     pub biome_names: &'a [worldgen::BiomeInfo],
     pub zone_names: &'a [worldgen::ZoneInfo],
     /// the open world file
@@ -582,10 +602,30 @@ fn minimap(ui: &Ui, c: &mut UiCtx, a: &mut UiActions) {
     let ds = ui.io().display_size();
     let mut open = c.state.show_map;
     ui.window("Minimap")
-        .size([300.0, 380.0], Condition::FirstUseEver)
-        .position([ds[0] - 310.0, 640.0], Condition::FirstUseEver)
+        .size([340.0, 420.0], Condition::FirstUseEver)
+        .position([ds[0] - 350.0, 600.0], Condition::FirstUseEver)
         .opened(&mut open)
         .build(|| {
+            // the map shows the camera's layer; jump between layers
+            ui.text(format!("Layer: {}", c.camera_layer));
+            if ui.small_button("Surface") {
+                a.layer_jump = Some(LayerJump::Surface);
+            }
+            if c.has_layers.0 {
+                ui.same_line();
+                if ui.small_button("Underground") {
+                    a.layer_jump = Some(LayerJump::Underground(c.state.jump_depth));
+                }
+                ui.same_line();
+                ui.set_next_item_width(90.0);
+                ui.drag_float_config("##depth").range(-6000.0, -140.0).speed(10.0).build(ui, &mut c.state.jump_depth);
+            }
+            if c.has_layers.1 {
+                ui.same_line();
+                if ui.small_button("Sky") {
+                    a.layer_jump = Some(LayerJump::Sky);
+                }
+            }
             if let Some(cam) = c.probes.camera {
                 let b = c.biome_names.get(cam.biome as usize).map(|b| b.name.as_str()).unwrap_or("?");
                 let z = c.zone_names.get(cam.zone as usize).map(|z| z.name.as_str()).unwrap_or("?");
@@ -618,7 +658,7 @@ fn minimap(ui: &Ui, c: &mut UiCtx, a: &mut UiActions) {
                         c.biome_names.get(r.biome as usize).map(|b| b.map_color).unwrap_or([1.0, 0.0, 1.0])
                     };
                     let shade = if r.height > -1000.0 && hmax > hmin { 0.65 + 0.35 * (r.height - hmin) / (hmax - hmin) } else { 0.6 };
-                    let water = r.height > -1000.0 && r.height < 62.0;
+                    let water = r.height > -1000.0 && r.height < c.map_sea;
                     let col = if water { [0.15, 0.3, 0.6] } else { col };
                     let x = p0[0] + i as f32 * cell;
                     let y = p0[1] + j as f32 * cell;

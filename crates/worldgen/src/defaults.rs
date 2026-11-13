@@ -1029,6 +1029,7 @@ mod tests {
         assert!(c.layers[3].source.contains("#define LAYER_BELOW -1.0") && c.layers[1].source.contains("#define LAYER_ABOVE 1.0"));
         let range = |i: usize| (c.value(c.layers[i].y_min), c.value(c.layers[i].y_max));
         assert_eq!([range(0), range(1), range(2), range(3)], [(-128.0, 1024.0), (-1200.0, -128.0), (-6000.0, -1200.0), (4000.0, 6200.0)]);
+        assert_eq!([c.value(c.layers[0].sea), c.value(c.layers[2].sea)], [62.0, -5300.0]);
         assert_eq!(c.layer_at(70.0), Some(0));
         assert_eq!(c.layer_at(-3000.0), Some(2));
         assert_eq!(c.layer_at(2000.0), None);

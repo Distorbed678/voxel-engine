@@ -75,6 +75,8 @@ pub struct LightGpu {
     pub fill: PipelineHandle,
     sky: PipelineHandle,
     propagate: PipelineHandle,
+    /// Below this height the sky above the volume is not open (the top of the underground layers).
+    pub sky_floor: i32,
     active_frames: u32,
     coarse_cells: Image,
     coarse_light: [Image; 2],
@@ -131,6 +133,7 @@ impl LightGpu {
         let coarse_sampled = bindless.add_sampled(ctx, coarse_light[0].view, bindless.samplers.linear_repeat, vk::ImageLayout::GENERAL);
         let compute = |path: &str| PipelineSource::Compute { path: path.into(), defines: vec![] };
         Ok(Self {
+            sky_floor: i32::MIN / 2,
             blocks,
             light,
             blocks_img,
@@ -268,7 +271,7 @@ impl LightGpu {
         }
         self.active_frames -= 1;
         let n = LIGHT_N as u32;
-        let origin = [origin_block.x, origin_block.y, origin_block.z, 0];
+        let origin = [origin_block.x, origin_block.y, origin_block.z, self.sky_floor];
         unsafe {
             d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pm.get(self.sky));
             push(bytemuck::bytes_of(&SkyPush { blocks: block_table, origin, blocks_img: self.blocks_img, pad: 0 }));

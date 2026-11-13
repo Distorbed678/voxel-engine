@@ -1,0 +1,26 @@
+# Layer jumps (the Minimap's Surface / Underground / Sky buttons): each lands somewhere to stand
+# in its layer, and the layers stream around it (the others only nearby).
+ui off
+anim 12
+time 0.4
+pos 144 136 -368
+look 90 -5
+settle
+
+# a cave near y -400 in the upper caves
+layer_jump underground -400
+settle
+wait 60
+expect_image crates/engine/tests/golden/jump_underground.png
+
+# on a sky island above the cloud sea
+layer_jump sky
+settle
+wait 60
+expect_image crates/engine/tests/golden/jump_sky.png
+
+# back on the surface (above the river there)
+layer_jump surface
+settle
+wait 60
+expect_image crates/engine/tests/golden/jump_surface.png

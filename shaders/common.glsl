@@ -66,7 +66,7 @@ struct FrameData {
     ivec4 coarseOrigin;   // coarse light volume min corner relative to camBlock, w = LIGHT_ENABLED
     uint coarseTex;       // bindless sampled index of the coarse light volume
     uint overdrawImg;     // bindless storage index of the overdraw counters
-    uint pad2;
+    float skyFloor;       // no sky light below this height outside the light volume (underground)
     uint pad3;
     vec4 grade;           // colour grading: rgb tint, a = saturation (contrast in exposure.w)
     vec4 shadowTexel;     // shadow texel size of each cascade (receiver offset)

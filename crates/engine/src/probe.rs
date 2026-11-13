@@ -26,6 +26,8 @@ pub struct Probes {
     pub camera: Option<ProbeResult>,
     /// latest minimap: (origin x, origin z, spacing) + cells (row-major, z rows)
     pub map: Option<((f64, f64, f64), Vec<ProbeResult>)>,
+    /// counts the minimaps read (a new one has arrived when it changes)
+    pub map_serial: u64,
     pub spacing: f64,
     /// Survey request (center x, center z, spacing): one wide grid evaluated on the next frame
     /// instead of the minimap (used by scripts to find biomes).
@@ -42,7 +44,7 @@ impl Probes {
             input.push(Buffer::upload(ctx, &format!("probe_in_{i}"), (MAX_PROBES * 8) as u64)?);
             output.push(Buffer::readback(ctx, &format!("probe_out_{i}"), (MAX_PROBES * 16) as u64)?);
         }
-        Ok(Self { input, output, counts: vec![0; frames], grids: vec![None; frames], camera: None, map: None, spacing: 24.0, survey_request: None, survey: None })
+        Ok(Self { input, output, counts: vec![0; frames], grids: vec![None; frames], camera: None, map: None, map_serial: 0, spacing: 24.0, survey_request: None, survey: None })
     }
 
     /// Fill this slot's probe list. Returns the number of probes to dispatch.
@@ -92,6 +94,7 @@ impl Probes {
                     self.survey = cells;
                 } else {
                     self.map = cells;
+                    self.map_serial += 1;
                 }
             }
     }
