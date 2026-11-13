@@ -19,6 +19,7 @@
 //! | `weather W` | fixed weather intensity 0..1 (turns automatic weather off) |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
+//! | `find_connection sinkhole\|pillar [N]` | go to the nearest (or Nth nearest, from 1) sinkhole, looking down into it, or sky pillar, looking at it from the ground |
 //! | `layer_jump surface\|sky\|underground DEPTH` | the Minimap's layer jump: go to the layer and stand on its ground (in a cave near DEPTH) |
 //! | `time T` / `view N` / `ui on\|off` / `fly on\|off` | time of day, debug view, UI, fly mode |
 //! | `clouds on\|off` / `fog on\|off` / `shadows on\|off` / `shadow_cache on\|off` / `water_flow on\|off` / `taa on\|off` / `bloom on\|off` / `grading on\|off` / `particles on\|off` / `occlusion on\|off` / `block_light on\|off` | render toggles |
@@ -98,6 +99,7 @@ enum Cmd {
     FindBiome { name: String, height: f64 },
     FindCave(i32),
     LayerJump(crate::ui::LayerJump),
+    FindConnection(worldgen::connect::ConnectionKind, usize),
     Anim(Option<f32>),
     Time(f32),
     View(u32),
@@ -372,6 +374,11 @@ fn parse(line: &str) -> Result<Cmd> {
         ),
         "fly_path" => Cmd::FlyPath(num(a.first(), "frames")?),
         "find_cave" => Cmd::FindCave(a.first().map(|h| h.parse()).transpose()?.unwrap_or(8)),
+        "find_connection" => Cmd::FindConnection(match a.first().copied() {
+            Some("sinkhole") => worldgen::connect::ConnectionKind::Sinkhole,
+            Some("pillar") => worldgen::connect::ConnectionKind::SkyPillar,
+            other => bail!("find_connection: expected sinkhole or pillar, got {other:?}"),
+        }, a.get(1).map(|n| n.parse::<usize>()).transpose()?.unwrap_or(1).max(1)),
         "layer_jump" => Cmd::LayerJump(match a.first().copied() {
             Some("surface") => crate::ui::LayerJump::Surface,
             Some("sky") => crate::ui::LayerJump::Sky,
@@ -1187,6 +1194,31 @@ impl Engine {
                     return Ok(None);
                 }
                 return Ok(Some(Busy::Path { keys, i: 0, n: frames }));
+            }
+            Cmd::FindConnection(kind, nth) => {
+                let (x, z) = (self.camera.pos.x as f32, self.camera.pos.z as f32);
+                let mut sites: Vec<[f32; 2]> = Vec::new();
+                for c in self.wg.compiled.connections.iter().filter(|c| c.kind == kind) {
+                    let r = c.spacing * 3.0;
+                    sites.extend(c.sites_in(self.seed, [x - r, c.y_min, z - r], [x + r, c.y_max, z + r]));
+                }
+                let d = |c: &[f32; 2]| (c[0] - x).powi(2) + (c[1] - z).powi(2);
+                sites.sort_by(|a, b| d(a).total_cmp(&d(b)));
+                let site = sites.get(nth - 1).copied();
+                let Some(c) = site else {
+                    s.fail(line, format!("fewer than {nth} {kind:?} within 3 grid cells"));
+                    return Ok(None);
+                };
+                // where to stand, and what to look at
+                let (eye, at) = match kind {
+                    worldgen::connect::ConnectionKind::Sinkhole => (DVec3::new(c[0] as f64 + 36.0, 160.0, c[1] as f64 + 14.0), DVec3::new(c[0] as f64, -200.0, c[1] as f64)),
+                    worldgen::connect::ConnectionKind::SkyPillar => (DVec3::new(c[0] as f64 + 700.0, 260.0, c[1] as f64 + 250.0), DVec3::new(c[0] as f64, 900.0, c[1] as f64)),
+                };
+                let d = (at - eye).normalize();
+                self.camera.pos = eye;
+                self.camera.pitch = d.y.asin() as f32;
+                self.camera.yaw = (-d.x).atan2(-d.z) as f32;
+                log::info!("script: {kind:?} at {:.0} {:.0}", c[0], c[1]);
             }
             Cmd::LayerJump(j) => {
                 self.start_layer_jump(j);

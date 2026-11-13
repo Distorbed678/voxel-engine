@@ -24,6 +24,9 @@ pub enum PinType {
     Zone,
     /// A layer of the world (surface, underground band, sky): a vertical range with its zones.
     Layer,
+    /// Rare world-scale features every layer generates, crossing between layers: sinkholes,
+    /// sky pillars.
+    Connection,
 }
 
 impl PinType {
@@ -42,6 +45,7 @@ impl PinType {
             PinType::Biome => [0.85, 0.45, 0.9, 1.0],
             PinType::Zone => [1.0, 0.85, 0.3, 1.0],
             PinType::Layer => [0.45, 0.85, 0.95, 1.0],
+            PinType::Connection => [0.95, 0.5, 0.55, 1.0],
         }
     }
 }
@@ -157,8 +161,8 @@ pub static NODES: &[NodeDef] = &[
         allowed: ALL },
     // ---------------------------------------------------------------- outputs
     NodeDef { kind: "world_output", title: "World Output", category: "Output",
-        help: "Root of the generator: the world's layers (surface, underground, sky), each with its own zones and biomes and its own generator, and the cloud sea that hides the sky layer from the ground.",
-        inputs: &[("Surface", Layer), ("Underground", Layer), ("Sky", Layer)], outputs: &[],
+        help: "Root of the generator: the world's layers (surface, underground, sky), each with its own zones and biomes and its own generator, the connections between them (sinkholes, sky pillars), and the cloud sea that hides the sky layer from the ground.",
+        inputs: &[("Surface", Layer), ("Underground", Layer), ("Sky", Layer), ("Connections", Connection)], outputs: &[],
         params: &[f("cloud_sea_base", 2600.0, 0.0, 8000.0), f("cloud_sea_top", 3400.0, 0.0, 8000.0), f("cloud_sea_density", 1.0, 0.0, 4.0)],
         allowed: WORLD },
     NodeDef { kind: "layer", title: "Layer", category: "Layout",
@@ -175,6 +179,22 @@ pub static NODES: &[NodeDef] = &[
             blk("river_bed", "gravel"),
         ],
         allowed: WORLD },
+    NodeDef { kind: "sinkhole", title: "Sinkholes", category: "Layout",
+        help: "Rare shafts from the surface deep into the underground. One per cell of a grid `spacing` blocks wide, with probability `chance`, placed at random in the cell. A shaft is about `radius` wide and wanders by `wobble` blocks. It runs from `top` (above the ground) down to `bottom`, where it opens into a cavern. Every layer carves it, through the rock between them.",
+        inputs: &[], outputs: &[("Out", Connection)],
+        params: &[f("spacing", 15000.0, 500.0, 100000.0), f("chance", 1.0, 0.0, 1.0), f("radius", 20.0, 4.0, 200.0), f("wobble", 10.0, 0.0, 100.0),
+                  f("top", 600.0, -16384.0, 16384.0), f("bottom", -500.0, -16384.0, 16384.0), i("seed", 1, 0, 9999)],
+        allowed: WORLD },
+    NodeDef { kind: "sky_pillar", title: "Sky Pillars", category: "Layout",
+        help: "Rare colossal pillars rising from the surface up through the cloud sea. One per cell of a grid `spacing` blocks wide, with probability `chance`. A pillar is `radius` wide at `bottom` (under the ground), tapers to `top_radius` at `top`, and is fluted by `flutes` ridges. Every layer generates it, including the open air between layers.",
+        inputs: &[], outputs: &[("Out", Connection)],
+        params: &[f("spacing", 15000.0, 500.0, 100000.0), f("chance", 1.0, 0.0, 1.0), f("radius", 70.0, 8.0, 400.0), f("top_radius", 30.0, 4.0, 400.0),
+                  f("bottom", -64.0, -16384.0, 16384.0), f("top", 4600.0, -16384.0, 16384.0), f("flutes", 7.0, 0.0, 24.0), i("seed", 2, 0, 9999)],
+        allowed: WORLD },
+    NodeDef { kind: "connections", title: "Connections", category: "Layout",
+        help: "Several kinds of connection together (sinkholes, sky pillars, ...).",
+        inputs: &[("A", Connection), ("B", Connection), ("C", Connection), ("D", Connection)], outputs: &[("Out", Connection)],
+        params: &[], allowed: WORLD },
     NodeDef { kind: "depth_bands", title: "Depth Bands", category: "Layout",
         help: "The underground in two bands, each with its own zones: Upper from top down to split, Deep from split down to bottom. Each band has its own sea level (seas of water or lava fill open caves below it; far below the band means none). Caves close within `blend` blocks of a band's edges.",
         inputs: &[("Upper", Zone), ("Deep", Zone)], outputs: &[("Out", Layer)],

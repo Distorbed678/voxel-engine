@@ -989,7 +989,7 @@ impl Engine {
 
     /// The generator layers that have pipelines, as the batch recorder dispatches them.
     fn layer_passes(&self) -> Vec<crate::world::gpu::LayerPass> {
-        let own = self.wg.compiled.owned_ranges();
+        let own = self.wg.compiled.generation_ranges();
         self.wg
             .compiled
             .layers
@@ -1222,6 +1222,7 @@ impl Engine {
             ));
         }
         self.world.layers = self.wg.compiled.owned_ranges();
+        self.world.set_connections(self.seed, &self.wg.compiled.connections);
         // no sky light under the top of the underground layers
         let floor = (self.wg.compiled.layers.iter().zip(&self.world.layers))
             .filter(|(l, own)| l.kind == worldgen::compile::LayerKind::Underground && own.0 < own.1)

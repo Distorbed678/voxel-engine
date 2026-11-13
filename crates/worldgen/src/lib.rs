@@ -2,6 +2,7 @@
 //! compiled to GLSL for the GPU generator.
 
 pub mod compile;
+pub mod connect;
 pub mod defaults;
 pub mod graph;
 pub mod layout;

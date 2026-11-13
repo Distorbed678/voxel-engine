@@ -136,6 +136,8 @@ pub struct Compiled {
     pub warnings: Vec<String>,
     /// the cloud sea (World Output): parameter slots of its base, top and density
     pub cloud_sea: [u32; 3],
+    /// the connections between layers (sinkholes, sky pillars), as the CPU places them
+    pub connections: Vec<crate::connect::ConnectionSpec>,
 }
 
 impl Compiled {
@@ -166,6 +168,26 @@ impl Compiled {
             }
         }
         out
+    }
+    /// `owned_ranges` with the gaps between layers shared out (split halfway) and the top layer
+    /// owning everything above: who generates the open air where a connection (a sky pillar)
+    /// passes. Streaming generates gap chunks only there.
+    pub fn generation_ranges(&self) -> Vec<(f32, f32)> {
+        let mut own = self.owned_ranges();
+        let mut order: Vec<usize> = (0..own.len()).filter(|&i| own[i].0 < own[i].1).collect();
+        order.sort_by(|&a, &b| own[a].0.total_cmp(&own[b].0));
+        for w in order.windows(2) {
+            let (lo, hi) = (w[0], w[1]);
+            if own[lo].1 < own[hi].0 {
+                let mid = 0.5 * (own[lo].1 + own[hi].0);
+                own[lo].1 = mid;
+                own[hi].0 = mid;
+            }
+        }
+        if let Some(&top) = order.last() {
+            own[top].1 = f32::INFINITY;
+        }
+        own
     }
     /// The layer the camera is in at height y (what it sees, streams in full and probes): the
     /// one owning y. Between layers: below the cloud sea the layer underneath, above it the one
@@ -1444,6 +1466,17 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
         let _ = writeln!(world_code, "}}");
     }
 
+    // ---- connections between layers (World Output pin 3): every layer evaluates them ----
+    let mut connect_code = String::from("void wg_connect(vec3 p, out float carve, out float fill) {\n    carve = 0.0; fill = 0.0;\n");
+    if let Some(g) = world {
+        let nodes = connection_nodes(g);
+        let mut em = Em::new(sh, g, format!("c{}_", sanitize(&unit.name)), true);
+        for n in &nodes {
+            connect_code.push_str(&connection_glsl(&mut em, n));
+        }
+    }
+    connect_code.push_str("}\n");
+
     // ---- assemble ----
     let nb = biome_infos.len();
     let nz = zone_infos.len();
@@ -1474,6 +1507,7 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
     s.push_str(&zone_code);
     s.push_str(&world_code);
     let _ = writeln!(s, "{}", river.0);
+    s.push_str(&connect_code);
 
     // dispatchers
     let sw = |name: &str, call: &dyn Fn(usize) -> String, n: usize, default: &str| -> String {
@@ -1547,9 +1581,16 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
         r#"// `carved`: the cell is solid terrain removed by the zone's cave carver (cave air)
 float wg_density_c(vec3 p, in WgColumn c, out bool carved) {{
     carved = false;
-    // outside the layer's range: solid rock or open air (never this layer's terrain)
-    if (p.y < gLayerMin) return LAYER_BELOW;
-    if (p.y >= gLayerMax) return LAYER_ABOVE;
+    // outside the layer's range: solid rock or open air (never this layer's terrain), and the
+    // connections passing through
+    if (p.y < gLayerMin || p.y >= gLayerMax) {{
+        float d = p.y < gLayerMin ? LAYER_BELOW : LAYER_ABOVE;
+        float cv, fl;
+        wg_connect(p, cv, fl);
+        if (fl > 0.0) d = max(d, fl);
+        if (cv < 0.0 && d > 0.0) {{ d = min(d, cv); carved = d <= 0.0; }}
+        return d;
+    }}
     float d = 0.0;
     if (c.nb == 1u) d = biome_density(c.biome[0], p, c.h[0]);
     else for (uint k = 0u; k < c.nb; ++k) d += c.bw[k] * biome_density(c.biome[k], p, c.h[k]);
@@ -1574,6 +1615,11 @@ float wg_density_c(vec3 p, in WgColumn c, out bool carved) {{
         if (ea > 0.0) d = mix(d, LAYER_ABOVE * 16.0, ea);
         carved = carved && d <= 0.0;
     }}
+    // connections cross the layers: pillars fill, sinkholes carve (through the blend bands too)
+    float cv, fl;
+    wg_connect(p, cv, fl);
+    if (fl > 0.0) d = max(d, fl);
+    if (cv < 0.0 && d > 0.0) {{ d = min(d, cv); carved = d <= 0.0; }}
     return d;
 }}
 float wg_density(vec3 p, in WgColumn c) {{
@@ -1608,7 +1654,7 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0] + BIOME_BASE; }}"#
     let _ = writeln!(s, "uint wg_decorate(vec3 p, uint ground, in WgColumn c) {{\n    uint k = wg_pick(p, c);");
     s.push_str(&sw("c.biome[k]", &|i| format!("return b{i}_dec(p, ground, c.h[k]);"), nb, "return 0u;"));
     let _ = writeln!(s, "}}");
-    let _ = writeln!(s, "uint wg_fluid(vec3 p, bool skyOpen, in WgColumn c) {{\n    if (!skyOpen || p.y >= gSeaLevel) return 0u;");
+    let _ = writeln!(s, "uint wg_fluid(vec3 p, bool skyOpen, in WgColumn c) {{\n    if (!skyOpen || p.y >= gSeaLevel) return 0u;\n    // sinkholes are dry shafts, even below sea level\n    float cv, fl;\n    wg_connect(p, cv, fl);\n    if (cv < 0.0) return 0u;");
     s.push_str(&sw(
         "c.biome[0]",
         &|i| match fluids.get(i).copied().unwrap_or(0) {
@@ -1661,6 +1707,118 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0] + BIOME_BASE; }}"#
     let _ = writeln!(s, "        default: return 1.0;\n    }}\n}}");
 
     UnitOut { source: s, biomes: biome_infos, zones: zone_infos, prop_layers: prop_layers.len(), y_min: range.0, y_max: range.1, sea: sea_slot }
+}
+
+/// The connection nodes (Sinkholes, Sky Pillars) feeding the World Output, through Connections
+/// nodes.
+fn connection_nodes(g: &Graph) -> Vec<Node> {
+    let mut out: Vec<Node> = Vec::new();
+    let Some(o) = g.output_node() else { return out };
+    let mut stack: Vec<u32> = g.input_link(o.id, 3).map(|l| l.from_node).into_iter().collect();
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(n) = g.node(id) else { continue };
+        match n.kind.as_str() {
+            "connections" => stack.extend((0..4u8).rev().filter_map(|i| g.input_link(id, i).map(|l| l.from_node))),
+            "sinkhole" | "sky_pillar" => out.push(n.clone()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// GLSL for one connection node inside `wg_connect` (and `ConnectionSpec` mirrors its placement:
+/// keep the margins and seeds in sync).
+fn connection_glsl(em: &mut Em, n: &Node) -> String {
+    let (sp, chance, seed) = (em.p(n, "spacing"), em.p(n, "chance"), em.pu(n, "seed"));
+    match n.kind.as_str() {
+        "sinkhole" => {
+            let (r, wob, top, bot) = (em.p(n, "radius"), em.p(n, "wobble"), em.p(n, "top"), em.p(n, "bottom"));
+            format!(
+                r#"    {{  // sinkholes
+        float sp = {sp}, r = {r}, wob = {wob}, top = {top}, bot = {bot};
+        uint seed = gSeed + {seed} * 7919u + {salt}u;
+        vec2 cf = floor(p.xz / sp); ivec2 cell = ivec2(cf);
+        if (p.y < top && p.y > bot - 3.0 * r && rand2(cell, seed) < {chance}) {{
+            float m = r * 2.5 + wob + 8.0;
+            vec2 q = p.xz - (cf * sp + m + rand2v(cell, seed) * max(sp - 2.0 * m, 0.0));
+            if (dot(q, q) < m * m) {{
+                vec2 off = vec2(simplex2(vec2(p.y / 70.0, 3.1), seed), simplex2(vec2(p.y / 70.0, 7.7), seed)) * wob;
+                float rr = r * (1.0 + 0.25 * simplex2(vec2(p.y / 23.0, 1.3), seed + 1u));
+                float shaft = p.y > bot ? length(q - off) - rr : 1e9;
+                float cavern = length(vec3(q.x, (p.y - bot) * 1.5, q.y)) - r * 2.5;
+                carve = min(carve, min(shaft, cavern));
+            }}
+        }}
+    }}
+"#,
+                salt = crate::connect::ConnectionKind::Sinkhole.salt()
+            )
+        }
+        "sky_pillar" => {
+            let (r, rt, top, bot, flutes) = (em.p(n, "radius"), em.p(n, "top_radius"), em.p(n, "top"), em.p(n, "bottom"), em.p(n, "flutes"));
+            format!(
+                r#"    {{  // sky pillars
+        float sp = {sp}, r = {r}, rt = {rt}, top = {top}, bot = {bot};
+        uint seed = gSeed + {seed} * 7919u + {salt}u;
+        vec2 cf = floor(p.xz / sp); ivec2 cell = ivec2(cf);
+        if (p.y > bot && p.y < top + rt && rand2(cell, seed) < {chance}) {{
+            float m = max(r, rt) * 1.4 + 8.0;
+            vec2 q = p.xz - (cf * sp + m + rand2v(cell, seed) * max(sp - 2.0 * m, 0.0));
+            float reach = max(r, rt) * 1.3;
+            if (dot(q, q) < reach * reach) {{
+                float t = clamp((p.y - bot) / max(top - bot, 1.0), 0.0, 1.0);
+                float rr = mix(r, rt, sqrt(t));
+                // fluted, twisting slowly, with bulges
+                float a = atan(q.y, q.x);
+                rr *= 1.0 + 0.1 * sin(a * floor({flutes} + 0.5) + p.y / 120.0) + 0.12 * simplex2(vec2(p.y / 70.0, 5.3), seed);
+                // the crown: a rounded top
+                float crown = (top - p.y) + rt * 0.6 - length(q) * 0.4;
+                fill = max(fill, min(rr - length(q), crown));
+            }}
+        }}
+    }}
+"#,
+                salt = crate::connect::ConnectionKind::SkyPillar.salt()
+            )
+        }
+        _ => String::new(),
+    }
+}
+
+/// The CPU's copy of the connections (placement only), parameters resolved.
+fn connection_specs(g: &Graph) -> Vec<crate::connect::ConnectionSpec> {
+    use crate::connect::{ConnectionKind, ConnectionSpec};
+    let val = |n: &Node, name: &str| -> f32 {
+        n.params
+            .get(name)
+            .cloned()
+            .or_else(|| nodes::def(&n.kind).and_then(|d| d.params.iter().find(|p| p.name == name)).map(|p| p.kind.default_value()))
+            .map(|v| v.as_f32())
+            .unwrap_or(0.0)
+    };
+    connection_nodes(g)
+        .iter()
+        .filter_map(|n| {
+            let (spacing, chance, seed) = (val(n, "spacing"), val(n, "chance"), val(n, "seed") as u32);
+            Some(match n.kind.as_str() {
+                "sinkhole" => {
+                    let (r, wob) = (val(n, "radius"), val(n, "wobble"));
+                    let m = r * 2.5 + wob + 8.0;
+                    ConnectionSpec { kind: ConnectionKind::Sinkhole, spacing, chance, margin: m, reach: m, y_min: val(n, "bottom") - 3.0 * r, y_max: val(n, "top"), seed }
+                }
+                "sky_pillar" => {
+                    let (r, rt) = (val(n, "radius"), val(n, "top_radius"));
+                    let rmax = r.max(rt);
+                    ConnectionSpec { kind: ConnectionKind::SkyPillar, spacing, chance, margin: rmax * 1.4 + 8.0, reach: rmax * 1.3, y_min: val(n, "bottom"), y_max: val(n, "top") + rt, seed }
+                }
+                _ => return None,
+            })
+        })
+        .collect()
 }
 
 /// Every name a node of `kind` in graph `g` references through param `param`.
@@ -1815,6 +1973,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         }
         let base = take_params(&mut sh, &mut params);
         c.cloud_sea = slots.map(|s| base + s);
+        c.connections = connection_specs(g);
     }
     warnings.append(&mut sh.warnings);
     c.warnings = warnings;

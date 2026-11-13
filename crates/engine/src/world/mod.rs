@@ -55,6 +55,13 @@ impl ChunkKey {
         let (lo, hi) = self.cell_heights();
         layers.iter().any(|&(a, b)| a <= hi && b > lo)
     }
+    /// The box the chunk's cells cover (apron included): min and max corners.
+    pub fn cell_box(&self) -> ([f32; 3], [f32; 3]) {
+        let scale = 1i32 << self.lod;
+        let min = self.origin() - IVec3::splat(scale);
+        let max = self.origin() + IVec3::splat(scale * (CHUNK + 1));
+        (min.as_vec3().to_array(), max.as_vec3().to_array())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -182,6 +189,9 @@ pub struct World {
     pub camera_layer: usize,
     /// what the desired set was last computed for: layers and camera layer
     last_layers: (Vec<(f32, f32)>, usize),
+    /// Connections between layers (sinkholes, sky pillars) and the world seed placing them: gap
+    /// chunks they reach are generated (`set_connections`).
+    connections: (u32, Vec<worldgen::connect::ConnectionSpec>),
 }
 
 /// LOD levels at which chunks of layers other than the camera's are streamed. Coarser chunks are
@@ -217,6 +227,7 @@ impl World {
             layers: Vec::new(),
             camera_layer: 0,
             last_layers: (Vec::new(), 0),
+            connections: (0, Vec::new()),
         }
     }
 
@@ -226,6 +237,20 @@ impl World {
         let c = cc.div_euclid(IVec3::splat(2)) * 2;
         let r = IVec3::new(self.settings.radius, self.settings.radius_v, self.settings.radius);
         (c - r, c + r)
+    }
+
+    /// The connections between layers and the world seed (a change re-picks the desired chunks).
+    pub fn set_connections(&mut self, seed: u32, specs: &[worldgen::connect::ConnectionSpec]) {
+        if self.connections.0 != seed || self.connections.1 != specs {
+            self.connections = (seed, specs.to_vec());
+            self.last_center = None;
+        }
+    }
+
+    /// Whether a connection (a sky pillar, a sinkhole) reaches the chunk.
+    fn connected(&self, key: &ChunkKey) -> bool {
+        let (min, max) = key.cell_box();
+        worldgen::connect::any_in(&self.connections.1, self.connections.0, min, max)
     }
 
     /// Recompute the desired chunk set when the camera crosses a chunk boundary.
@@ -255,12 +280,18 @@ impl World {
         }
         self.last_layers = layers_key;
         // the camera's layer streams everywhere, the others only near the camera
+        // (and, in the open air between layers, the chunks a connection passes through)
         let own = self.layers.get(self.camera_layer).copied();
+        let (layers, conn) = (self.layers.clone(), self.connections.clone());
         let wanted = |key: &ChunkKey| {
             key.lod < OTHER_LAYER_LODS
                 || own.is_none_or(|(lo, hi)| {
                     let (a, b) = key.cell_heights();
                     lo <= b && hi > a
+                })
+                || (!key.in_layers(&layers) && {
+                    let (min, max) = key.cell_box();
+                    worldgen::connect::any_in(&conn.1, conn.0, min, max)
                 })
         };
         for c in self.chunks.values_mut() {
@@ -660,7 +691,7 @@ impl World {
         let void: Vec<ChunkKey> = self
             .chunks
             .iter()
-            .filter(|(k, c)| c.desired && !c.in_flight && (!c.has_result || c.applied != c.dirty) && !k.in_layers(&self.layers))
+            .filter(|(k, c)| c.desired && !c.in_flight && (!c.has_result || c.applied != c.dirty) && !k.in_layers(&self.layers) && !self.connected(k))
             .map(|(k, _)| *k)
             .collect();
         for key in void {

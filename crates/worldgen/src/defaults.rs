@@ -665,6 +665,13 @@ fn world() -> Graph {
     let sky = b.n("layer", 520.0, 800.0, &[("kind", ev("Sky")), ("y_min", fv(4000.0)), ("y_max", fv(6200.0)), ("sea_level", fv(-100000.0))]);
     b.l(sky_z, sky, 0);
     b.l(sky, o, 2);
+    // very rare connections between the layers (about one of each per 15 km)
+    let sink = b.n("sinkhole", 0.0, 1000.0, &[]);
+    let pillar = b.n("sky_pillar", 0.0, 1160.0, &[]);
+    let conn = b.n("connections", 260.0, 1060.0, &[]);
+    b.l(sink, conn, 0);
+    b.l(pillar, conn, 1);
+    b.l(conn, o, 3);
     b.g
 }
 
@@ -1026,6 +1033,11 @@ mod tests {
         }
         assert!(c.cloud_sea.iter().all(|&s| s as usize >= c.layers.iter().map(|l| l.param_count as usize).sum::<usize>()));
         assert_eq!(c.value(c.cloud_sea[0]), 2600.0);
+        // connections: every layer evaluates them, the CPU knows where they are
+        assert!(c.layers.iter().all(|l| l.source.contains("// sinkholes") && l.source.contains("// sky pillars")));
+        let kinds: Vec<_> = c.connections.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, [crate::connect::ConnectionKind::Sinkhole, crate::connect::ConnectionKind::SkyPillar]);
+        assert!(c.connections.iter().all(|s| s.spacing == 15000.0));
         assert!(c.layers[3].source.contains("#define LAYER_BELOW -1.0") && c.layers[1].source.contains("#define LAYER_ABOVE 1.0"));
         let range = |i: usize| (c.value(c.layers[i].y_min), c.value(c.layers[i].y_max));
         assert_eq!([range(0), range(1), range(2), range(3)], [(-128.0, 1024.0), (-1200.0, -128.0), (-6000.0, -1200.0), (4000.0, 6200.0)]);
@@ -1036,6 +1048,7 @@ mod tests {
         // who generates what: the sky, the surface, the upper caves, and the deep all the way down
         let own = c.owned_ranges();
         assert_eq!(own, [(-128.0, 1024.0), (-1200.0, -128.0), (f32::NEG_INFINITY, -1200.0), (4000.0, 6200.0)]);
+        assert_eq!(c.generation_ranges(), [(-128.0, 2512.0), (-1200.0, -128.0), (f32::NEG_INFINITY, -1200.0), (2512.0, f32::INFINITY)]);
         // between layers the cloud sea (2600..3400) decides which one the camera sees
         assert_eq!([c.layer_near(70.0), c.layer_near(2550.0), c.layer_near(3000.0), c.layer_near(3500.0), c.layer_near(-9000.0)], [0, 0, 3, 3, 2]);
         // only the first layer builds every prop graph (the previews run there)
