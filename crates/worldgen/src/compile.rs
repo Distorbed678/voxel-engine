@@ -49,12 +49,14 @@ pub struct ZoneInfo {
     pub cave_biomes: Vec<u32>,
 }
 
-/// Solo preview (editor): two fixed slots at the end of the parameter buffer (whatever the
-/// graph's parameter count, which changes while a rebuild is pending) hold the zone and the biome
-/// shown everywhere (-1 = off). Surface biomes come with a zone that uses them; a cave biome
-/// replaces every cave biome. See `wg_column` / `wg_cave_biome`.
+/// Size of the GPU parameter buffer (floats). Each layer's parameters are a block of it: the
+/// layer's shaders read `P(i)` relative to their block (the push constant's parameter address
+/// points at it), so an edit that adds parameters to one layer leaves the others' code unchanged.
+///
+/// Solo preview (editor): the zone and the biome shown everywhere (global ids, -1 = off) come in
+/// the push constants (`pc.soloZone`, `pc.soloBiome`). Surface biomes come with a zone that uses
+/// them; a cave biome replaces every cave biome. See `wg_column` / `wg_cave_biome`.
 pub const PARAM_CAPACITY: usize = 64 * 1024;
-pub const SOLO_PARAM: usize = PARAM_CAPACITY - 2;
 
 /// Biomes referenced by Biome nodes upstream of input `pin` of `node`.
 fn upstream_biomes(g: &Graph, node: u32, pin: u8, ids: &HashMap<String, u32>) -> Vec<u32> {
@@ -87,15 +89,133 @@ pub struct ParamKey {
     pub param: String,
 }
 
+/// What kind of layer a generator unit is: which side of its range is solid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LayerKind {
+    /// air above, solid below
+    #[default]
+    Surface,
+    /// solid above and below
+    Underground,
+    /// air above and below
+    Sky,
+}
+
+/// One layer of the world, compiled to its own generator source.
+#[derive(Clone, Debug, Default)]
+pub struct CompiledLayer {
+    pub name: String,
+    pub kind: LayerKind,
+    /// the generated GLSL of this layer
+    pub source: String,
+    /// its parameters: slots [param_base, param_base + param_count) of `Compiled::params`
+    pub param_base: u32,
+    pub param_count: u32,
+    /// parameter slots (global) of the layer's range [y_min, y_max)
+    pub y_min: u32,
+    pub y_max: u32,
+    /// its biomes and zones in the global lists: [base, base + count)
+    pub biome_base: u32,
+    pub biome_count: u32,
+    pub zone_base: u32,
+    pub zone_count: u32,
+    pub prop_layers: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Compiled {
+    /// every layer's source, one after the other (changes to any of them)
     pub source: String,
+    pub layers: Vec<CompiledLayer>,
     pub params: Vec<f32>,
     pub param_index: BTreeMap<ParamKey, u32>,
     pub biomes: Vec<BiomeInfo>,
     pub zones: Vec<ZoneInfo>,
     pub prop_layers: usize,
     pub warnings: Vec<String>,
+    /// the cloud sea (World Output): parameter slots of its base, top and density
+    pub cloud_sea: [u32; 3],
+}
+
+impl Compiled {
+    /// Current value of a parameter slot.
+    pub fn value(&self, i: u32) -> f32 {
+        self.params.get(i as usize).copied().unwrap_or(0.0)
+    }
+    /// The layer whose range holds y (prefer the first).
+    pub fn layer_at(&self, y: f32) -> Option<usize> {
+        self.layers.iter().position(|l| y >= self.value(l.y_min) && y < self.value(l.y_max))
+    }
+    /// The heights each layer generates, [lo, hi): its range, minus what higher layers already
+    /// own where ranges overlap (the higher layer wins). The lowest layer also owns everything
+    /// below it (bedrock all the way down); nothing owns gaps between layers or what lies above
+    /// the top one (air). Empty when a layer is covered entirely.
+    pub fn owned_ranges(&self) -> Vec<(f32, f32)> {
+        let mut order: Vec<usize> = (0..self.layers.len()).collect();
+        order.sort_by(|&a, &b| self.value(self.layers[b].y_max).total_cmp(&self.value(self.layers[a].y_max)));
+        let mut out = vec![(0.0, 0.0); self.layers.len()];
+        let mut ceiling = f32::INFINITY;
+        for (k, &i) in order.iter().enumerate() {
+            let l = &self.layers[i];
+            let hi = self.value(l.y_max).min(ceiling);
+            let lo = if k + 1 == order.len() { f32::NEG_INFINITY } else { self.value(l.y_min) };
+            if lo < hi {
+                out[i] = (lo, hi);
+                ceiling = ceiling.min(lo);
+            }
+        }
+        out
+    }
+    /// The layer the camera is in at height y (what it sees, streams in full and probes): the
+    /// one owning y. Between layers: below the cloud sea the layer underneath, above it the one
+    /// overhead (the cloud deck hides the other), else the nearest one.
+    pub fn layer_near(&self, y: f32) -> usize {
+        let own = self.owned_ranges();
+        let live = |i: &usize| own[*i].0 < own[*i].1;
+        if let Some(i) = (0..own.len()).filter(live).find(|&i| y >= own[i].0 && y < own[i].1) {
+            return i;
+        }
+        let (base, top, density) = (self.value(self.cloud_sea[0]), self.value(self.cloud_sea[1]), self.value(self.cloud_sea[2]));
+        if density > 0.0 && base < top {
+            let below = (0..own.len()).filter(live).filter(|&i| own[i].1 <= y).max_by(|&a, &b| own[a].1.total_cmp(&own[b].1));
+            let above = (0..own.len()).filter(live).filter(|&i| own[i].0 > y).min_by(|&a, &b| own[a].0.total_cmp(&own[b].0));
+            let pick = if y < base { below.or(above) } else if y >= top { above.or(below) } else { None };
+            if let Some(i) = pick {
+                return i;
+            }
+        }
+        let dist = |&(lo, hi): &(f32, f32)| if lo >= hi { f32::INFINITY } else if y < lo { lo - y } else if y >= hi { y - hi } else { 0.0 };
+        (0..own.len()).min_by(|&a, &b| dist(&own[a]).total_cmp(&dist(&own[b]))).unwrap_or(0)
+    }
+}
+
+/// A layer to compile: its zone layout node in the world graph, its range and settings.
+struct Unit {
+    name: String,
+    kind: LayerKind,
+    /// the world graph node holding the settings (a Layer or Depth Bands node)
+    node: u32,
+    /// the zone layout node (Zone or Zone Voronoi) feeding it
+    layout: Option<u32>,
+    /// parameter names on `node` for the range, its blend bands and the sea level
+    y_min: &'static str,
+    y_max: &'static str,
+    blend: &'static str,
+    sea: &'static str,
+    /// rivers (Layer pin 1)
+    rivers: bool,
+    zones: Vec<String>,
+    biomes: Vec<String>,
+    props: Vec<String>,
+}
+
+struct UnitOut {
+    source: String,
+    biomes: Vec<BiomeInfo>,
+    zones: Vec<ZoneInfo>,
+    prop_layers: usize,
+    y_min: u32,
+    y_max: u32,
 }
 
 #[derive(Default)]
@@ -783,29 +903,16 @@ fn color_param(g: &Graph, n: &Node, name: &str) -> [f32; 3] {
 
 /// Compile the whole project. `blocks` maps block names to ids, `prefabs` prefab names to
 /// (GPU index, size).
-pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashMap<String, (u32, [i32; 3])>) -> Result<Compiled> {
-    let mut sh = Shared {
-        proj: project,
-        blocks,
-        prefabs,
-        params: Params::default(),
-        warnings: Vec::new(),
-        biome_ids: HashMap::new(),
-        zone_ids: HashMap::new(),
-        depth_terms: Vec::new(),
-        depth_biome: None,
-    };
-    let biome_names = project.names(GraphKind::Biome);
-    let zone_names = project.names(GraphKind::Zone);
-    for (i, n) in biome_names.iter().enumerate() {
-        sh.biome_ids.insert(n.clone(), i as u32);
-    }
-    for (i, n) in zone_names.iter().enumerate() {
-        sh.zone_ids.insert(n.clone(), i as u32);
-    }
-    if biome_names.is_empty() || zone_names.is_empty() {
-        anyhow::bail!("the project needs at least one zone and one biome");
-    }
+/// Compile one layer: its zones, biomes and props with local ids (the generated code adds
+/// BIOME_BASE / ZONE_BASE where ids leave it).
+fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -> UnitOut {
+    let project = sh.proj;
+    let biome_names = unit.biomes.clone();
+    let zone_names = unit.zones.clone();
+    sh.biome_ids = biome_names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
+    sh.zone_ids = zone_names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
+    sh.depth_terms.clear();
+    sh.depth_biome = None;
     let mut out = String::new();
     let mut fns = String::new();
 
@@ -816,7 +923,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     }
     for name in &fn_names {
         let g = project.get(GraphKind::Function, name).unwrap();
-        let mut em = Em::new(&mut sh, g, format!("f{}_", sanitize(name)), true);
+        let mut em = Em::new(sh, g, format!("f{}_", sanitize(name)), true);
         let res = g
             .output_node()
             .and_then(|o| g.input_link(o.id, 0).copied())
@@ -826,11 +933,11 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         let _ = writeln!(fns, "float fn_{}(vec3 p, float a0, float a1, float a2, float a3) {{\n{body}\n    return {res};\n}}\n", sanitize(name));
     }
 
-    // ---- prop graphs (build functions, props pass only) ----
+    // ---- prop graphs (build functions, props pass only): global indices, this layer's props ----
     let prop_names = project.names(GraphKind::Prop);
     let prop_ids = props::prop_ids(&prop_names);
     let mut prop_code = String::new();
-    props::compile_props(&mut sh, &prop_names, &mut prop_code);
+    props::compile_props(sh, &prop_names, &unit.props, &mut prop_code);
 
     // ---- biomes used as cave biomes (Zone Output "Cave Biomes"): they also get flat
     // material / decoration functions, evaluated per voxel on cave floors and ceilings ----
@@ -884,7 +991,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             cave: false,
         });
         sh.depth_biome = Some(bi as u32);
-        let mut em = Em::new(&mut sh, g, pfx.clone(), false);
+        let mut em = Em::new(sh, g, pfx.clone(), false);
         fluids.push(em.enum_idx(&outn, "fluid"));
         if let Some(info) = biome_infos.last_mut() {
             info.ambient = em.enum_idx(&outn, "ambient") as u32;
@@ -1037,7 +1144,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         }
         sh.depth_biome = None;
         if cave_biome_ids.contains(&(bi as u32)) {
-            let mut cem = Em::new(&mut sh, g, format!("b{bi}c_"), true);
+            let mut cem = Em::new(sh, g, format!("b{bi}c_"), true);
             let cmat = g.input_link(outn.id, 1).copied().map(|l| cem.material(l.from_node)).unwrap_or_else(|| "B_STONE".into());
             let cmat_body = cem.take_body().join("\n");
             let cdec = g.input_link(outn.id, 2).copied().map(|l| cem.decor(l.from_node)).unwrap_or_else(|| "0u".into());
@@ -1062,7 +1169,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             biomes: upstream_biomes(g, outn.id, 0, &sh.biome_ids),
             cave_biomes: upstream_biomes(g, outn.id, 2, &sh.biome_ids),
         });
-        let mut em = Em::new(&mut sh, g, format!("z{zi}_"), true);
+        let mut em = Em::new(sh, g, format!("z{zi}_"), true);
         // carver
         let carve = g.input_link(outn.id, 1).copied().map(|l| em.density(l.from_node, l.from_pin, 0).e).unwrap_or_else(|| "0.0".into());
         let body = em.take_body().join("\n");
@@ -1243,30 +1350,37 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         b.cave = cave_biome_ids.contains(&i) && !zone_infos.iter().any(|z| z.biomes.contains(&i));
     }
 
-    // ---- world: zone layout ----
+    // ---- world: this layer's zone layout, range, sea level and rivers ----
     let mut world_code = String::new();
     let world = project.graphs.iter().find(|g| g.kind == GraphKind::World);
     let mut sea = "62.0".to_string();
     let mut river = (String::from("float wg_river(vec2 xz) { return 0.0; }"), "5.0".to_string(), "48.0".to_string(), "B_GRAVEL".to_string());
+    let mut range = (u32::MAX, u32::MAX);
+    let mut blend = "0.0".to_string();
     {
         let _ = writeln!(world_code, "void zone_select(vec2 xz, out uint z0, out uint z1, out float w1) {{");
         match world {
             Some(g) => {
-                let mut em = Em::new(&mut sh, g, "w_".into(), true);
-                let outn = g.output_node().cloned();
-                if let Some(o) = &outn {
-                    sea = em.p(o, "sea_level");
-                    // rivers: a 2D mask (World Output pin 1) carved down to the river bed
-                    if let Some(l) = g.input_link(o.id, 1).copied() {
-                        let m = em.density(l.from_node, l.from_pin, 0).e;
-                        let body = em.take_body().join("\n");
-                        river.0 = format!("float wg_river(vec2 xz) {{\n    vec3 p = vec3(xz.x, 0.0, xz.y);\n{body}\n    return clamp({m}, 0.0, 1.0);\n}}");
+                let mut em = Em::new(sh, g, format!("w{}_", sanitize(&unit.name)), true);
+                if let Some(o) = g.node(unit.node).cloned() {
+                    sea = em.p(&o, unit.sea);
+                    let (a, b) = (em.p(&o, unit.y_min), em.p(&o, unit.y_max));
+                    let slot = |e: &str| e.trim_start_matches("P(").trim_end_matches("u)").parse::<u32>().unwrap_or(u32::MAX);
+                    range = (slot(&a), slot(&b));
+                    blend = em.p(&o, unit.blend);
+                    // rivers: a 2D mask (Layer pin 1) carved down to the river bed
+                    if unit.rivers {
+                        if let Some(l) = g.input_link(o.id, 1).copied() {
+                            let m = em.density(l.from_node, l.from_pin, 0).e;
+                            let body = em.take_body().join("\n");
+                            river.0 = format!("float wg_river(vec2 xz) {{\n    vec3 p = vec3(xz.x, 0.0, xz.y);\n{body}\n    return clamp({m}, 0.0, 1.0);\n}}");
+                        }
+                        river.1 = em.p(&o, "river_depth");
+                        river.2 = em.p(&o, "river_carve");
+                        river.3 = em.block(&o, "river_bed");
                     }
-                    river.1 = em.p(o, "river_depth");
-                    river.2 = em.p(o, "river_carve");
-                    river.3 = em.block(o, "river_bed");
                 }
-                let sel = outn.as_ref().and_then(|o| g.input_link(o.id, 0).copied()).and_then(|l| g.node(l.from_node).cloned());
+                let sel = unit.layout.and_then(|id| g.node(id).cloned());
                 match sel {
                     Some(n) if n.kind == "zone" => {
                         let id = match em.value(&n, "zone") {
@@ -1330,15 +1444,24 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
     let nb = biome_infos.len();
     let nz = zone_infos.len();
     let mut s = String::new();
+    let _ = writeln!(s, "// ==== layer {}: {} ====", unit.name, ["surface", "underground", "sky"][unit.kind as usize]);
     let _ = writeln!(s, "#define MAXH {maxh}\n#define NUM_BIOMES {nb}u\n#define NUM_ZONES {nz}u\n#define NUM_PROP_LAYERS {}u", prop_layers.len());
-    let _ = writeln!(s, "#define WG_SOLO_PARAM {SOLO_PARAM}u");
+    // ids leave the layer as global ids: biomes and zones of all layers in one list
+    let _ = writeln!(s, "#define BIOME_BASE {biome_base}u\n#define ZONE_BASE {zone_base}u");
+    // outside its range a layer is solid or open air: neighbouring layers meet in rock or sky
+    let (below, above) = match unit.kind {
+        LayerKind::Surface => (1.0, -1.0),
+        LayerKind::Underground => (1.0, 1.0),
+        LayerKind::Sky => (-1.0, -1.0),
+    };
+    let _ = writeln!(s, "#define LAYER_BELOW {below:.1}\n#define LAYER_ABOVE {above:.1}");
     let cave: Vec<String> = biome_infos.iter().map(|b| b.cave.to_string()).collect();
     let _ = writeln!(s, "const bool BIOME_IS_CAVE[{}] = bool[]({});", nb.max(1), if cave.is_empty() { "false".into() } else { cave.join(", ") });
     let _ = writeln!(s, "struct WgColumn {{\n    uint zone0; uint zone1; float zw1;\n    uint nb;\n    uint biome[3];\n    float bw[3];\n    float h[3][MAXH];\n    float river;\n}};");
     let _ = writeln!(
         s,
-        "float gSeaLevel; float gRiverDepth; float gRiverCarve; uint gRiverBed;\nvoid wg_init() {{ gSeaLevel = {sea}; gRiverDepth = {}; gRiverCarve = {}; gRiverBed = {}; }}",
-        river.1, river.2, river.3
+        "float gSeaLevel; float gRiverDepth; float gRiverCarve; uint gRiverBed; float gLayerMin; float gLayerMax; float gLayerBlend;\nvoid wg_init() {{ gSeaLevel = {sea}; gRiverDepth = {}; gRiverCarve = {}; gRiverBed = {}; gLayerMin = P({}u); gLayerMax = P({}u); gLayerBlend = {blend}; }}",
+        river.1, river.2, river.3, range.0, range.1
     );
     s.push_str(&out);
     s.push_str(&fns);
@@ -1369,8 +1492,10 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         r#"void wg_column(vec2 xz, out WgColumn c) {{
     uint z0, z1; float zw1;
     zone_select(xz, z0, z1, zw1);
-    // solo preview: one zone (and one surface biome) everywhere
-    float soloZone = P(WG_SOLO_PARAM), soloBiome = P(WG_SOLO_PARAM + 1u);
+    // solo preview: one zone (and one surface biome) everywhere (global ids: this layer's only)
+    float soloZone = pc.soloZone - float(ZONE_BASE), soloBiome = pc.soloBiome - float(BIOME_BASE);
+    if (soloZone < 0.0 || soloZone >= float(NUM_ZONES)) soloZone = -1.0;
+    if (soloBiome < 0.0 || soloBiome >= float(NUM_BIOMES)) soloBiome = -1.0;
     if (soloZone >= 0.0) {{ z0 = uint(soloZone); z1 = z0; zw1 = 0.0; }}
     c.zone0 = z0; c.zone1 = z1; c.zw1 = zw1;
     c.river = wg_river(xz);
@@ -1418,6 +1543,9 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         r#"// `carved`: the cell is solid terrain removed by the zone's cave carver (cave air)
 float wg_density_c(vec3 p, in WgColumn c, out bool carved) {{
     carved = false;
+    // outside the layer's range: solid rock or open air (never this layer's terrain)
+    if (p.y < gLayerMin) return LAYER_BELOW;
+    if (p.y >= gLayerMax) return LAYER_ABOVE;
     float d = 0.0;
     if (c.nb == 1u) d = biome_density(c.biome[0], p, c.h[0]);
     else for (uint k = 0u; k < c.nb; ++k) d += c.bw[k] * biome_density(c.biome[k], p, c.h[k]);
@@ -1433,6 +1561,15 @@ float wg_density_c(vec3 p, in WgColumn c, out bool carved) {{
         float cv = wg_carve(p, c);
         if (cv > 0.0) {{ d = min(d, -cv * 4.0); carved = d <= 0.0; }}
     }}
+    // blend bands: near the range's edges the terrain fades into what lies beyond, so caves
+    // close and peaks end before a neighbouring layer begins
+    if (gLayerBlend > 0.0) {{
+        float eb = 1.0 - smoothstep(0.0, gLayerBlend, p.y - gLayerMin);
+        float ea = 1.0 - smoothstep(0.0, gLayerBlend, gLayerMax - p.y);
+        if (eb > 0.0) d = mix(d, LAYER_BELOW * 16.0, eb);
+        if (ea > 0.0) d = mix(d, LAYER_ABOVE * 16.0, ea);
+        carved = carved && d <= 0.0;
+    }}
     return d;
 }}
 float wg_density(vec3 p, in WgColumn c) {{
@@ -1446,7 +1583,7 @@ uint wg_pick(vec3 p, in WgColumn c) {{
     for (uint k = 0u; k < c.nb; ++k) {{ acc += c.bw[k]; if (r < acc) return k; }}
     return 0u;
 }}
-uint wg_main_biome(in WgColumn c) {{ return c.biome[0]; }}"#
+uint wg_main_biome(in WgColumn c) {{ return c.biome[0] + BIOME_BASE; }}"#
     );
     // the deepest material threshold in a column (2.5: the river bed; cave materials count
     // everywhere), read live so slider edits stay exact
@@ -1484,7 +1621,7 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0]; }}"#
     // ---- cave biomes ----
     let _ = writeln!(
         s,
-        "uint wg_cave_biome(vec3 p, in WgColumn c) {{\n    float solo = P(WG_SOLO_PARAM + 1u);\n    uint z = c.zw1 > 0.5 ? c.zone1 : c.zone0;"
+        "uint wg_cave_biome(vec3 p, in WgColumn c) {{\n    float solo = pc.soloBiome - float(BIOME_BASE);\n    if (solo < 0.0 || solo >= float(NUM_BIOMES)) solo = -1.0;\n    uint z = c.zw1 > 0.5 ? c.zone1 : c.zone0;"
     );
     // a soloed cave biome replaces the zone's choice wherever the zone has cave biomes
     let _ = writeln!(s, "    if (solo >= 0.0 && BIOME_IS_CAVE[uint(solo)]) {{ uint b; switch (z) {{");
@@ -1519,13 +1656,164 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0]; }}"#
     }
     let _ = writeln!(s, "        default: return 1.0;\n    }}\n}}");
 
-    Ok(Compiled {
-        source: s,
-        params: sh.params.values,
-        param_index: sh.params.index,
-        biomes: biome_infos,
-        zones: zone_infos,
-        prop_layers: prop_layers.len(),
-        warnings: sh.warnings,
-    })
+    UnitOut { source: s, biomes: biome_infos, zones: zone_infos, prop_layers: prop_layers.len(), y_min: range.0, y_max: range.1 }
+}
+
+/// Every name a node of `kind` in graph `g` references through param `param`.
+fn refs(g: &Graph, kind: &str, param: &str, out: &mut Vec<String>) {
+    for n in g.nodes.iter().filter(|n| n.kind == kind) {
+        if let Some(Value::Ref(r)) = n.params.get(param)
+            && !r.is_empty()
+            && !out.contains(r)
+        {
+            out.push(r.clone());
+        }
+    }
+}
+
+/// The layers of the World Output: Surface, Underground (a Layer, or Depth Bands' two bands)
+/// and Sky, with the zones, biomes and props each one uses.
+fn layer_units(project: &Project, warnings: &mut Vec<String>) -> Vec<Unit> {
+    let mut units = Vec::new();
+    let Some(g) = project.graphs.iter().find(|g| g.kind == GraphKind::World) else { return units };
+    let Some(o) = g.output_node() else { return units };
+    let layout = |n: u32, pin: u8| g.input_link(n, pin).map(|l| l.from_node);
+    for (slot, name) in ["surface", "underground", "sky"].iter().enumerate() {
+        let Some(l) = g.input_link(o.id, slot as u8) else { continue };
+        let Some(n) = g.node(l.from_node) else { continue };
+        match n.kind.as_str() {
+            "layer" => {
+                let kind = match n.params.get("kind") {
+                    Some(Value::E(e)) if e == "Underground" => LayerKind::Underground,
+                    Some(Value::E(e)) if e == "Sky" => LayerKind::Sky,
+                    _ => LayerKind::Surface,
+                };
+                units.push(Unit { name: name.to_string(), kind, node: n.id, layout: layout(n.id, 0), y_min: "y_min", y_max: "y_max", blend: "blend", sea: "sea_level", rivers: true, zones: vec![], biomes: vec![], props: vec![] });
+            }
+            "depth_bands" => {
+                units.push(Unit { name: "upper".into(), kind: LayerKind::Underground, node: n.id, layout: layout(n.id, 0), y_min: "split", y_max: "top", blend: "blend", sea: "sea_level_upper", rivers: false, zones: vec![], biomes: vec![], props: vec![] });
+                units.push(Unit { name: "deep".into(), kind: LayerKind::Underground, node: n.id, layout: layout(n.id, 1), y_min: "bottom", y_max: "split", blend: "blend", sea: "sea_level_deep", rivers: false, zones: vec![], biomes: vec![], props: vec![] });
+            }
+            other => warnings.push(format!("World Output: '{other}' is not a layer (use a Layer or Depth Bands node)")),
+        }
+    }
+    for u in &mut units {
+        // zones: the layout's Zone nodes
+        if let Some(n) = u.layout.and_then(|id| g.node(id)) {
+            match n.kind.as_str() {
+                "zone" => {
+                    if let Some(Value::Ref(r)) = n.params.get("zone") {
+                        u.zones.push(r.clone());
+                    }
+                }
+                "zone_voronoi" => {
+                    for i in 0..8u8 {
+                        if let Some(z) = g.input_link(n.id, i).and_then(|l| g.node(l.from_node))
+                            && let Some(Value::Ref(r)) = z.params.get("zone")
+                            && !u.zones.contains(r)
+                        {
+                            u.zones.push(r.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        u.zones.retain(|z| project.get(GraphKind::Zone, z).is_some());
+        if u.zones.is_empty() {
+            warnings.push(format!("layer '{}' has no zones", u.name));
+        }
+        // biomes: every Biome node in those zones; props: every Prop node in those biomes
+        for z in &u.zones {
+            refs(project.get(GraphKind::Zone, z).unwrap(), "biome", "biome", &mut u.biomes);
+        }
+        u.biomes.retain(|b| project.get(GraphKind::Biome, b).is_some());
+        u.biomes.sort();
+        for b in &u.biomes {
+            refs(project.get(GraphKind::Biome, b).unwrap(), "prop", "prop", &mut u.props);
+        }
+    }
+    units.retain(|u| !u.zones.is_empty() && !u.biomes.is_empty());
+    // the first layer builds every prop graph: the prop editor's previews run there
+    if let Some(u) = units.first_mut() {
+        u.props = project.names(GraphKind::Prop);
+    }
+    units
+}
+
+/// Compile the whole project: one generator unit per layer. `blocks` maps block names to ids,
+/// `prefabs` prefab names to (GPU index, size).
+pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashMap<String, (u32, [i32; 3])>) -> Result<Compiled> {
+    let mut sh = Shared {
+        proj: project,
+        blocks,
+        prefabs,
+        params: Params::default(),
+        warnings: Vec::new(),
+        biome_ids: HashMap::new(),
+        zone_ids: HashMap::new(),
+        depth_terms: Vec::new(),
+        depth_biome: None,
+    };
+    let mut warnings = Vec::new();
+    let units = layer_units(project, &mut warnings);
+    if units.is_empty() {
+        anyhow::bail!("the world has no layers: the World Output needs a Layer (or Depth Bands) with zones and biomes");
+    }
+    let mut c = Compiled::default();
+    let mut params = Params::default();
+    // each layer's parameters are a block of their own (P(i) is relative to it in its shaders)
+    let take_params = |sh: &mut Shared, params: &mut Params| -> u32 {
+        let base = params.values.len() as u32;
+        let p = std::mem::take(&mut sh.params);
+        params.values.extend(p.values);
+        for (k, i) in p.index {
+            params.index.insert(k, base + i);
+        }
+        base
+    };
+    for u in &units {
+        let (bb, zb) = (c.biomes.len() as u32, c.zones.len() as u32);
+        let out = compile_unit(&mut sh, u, bb, zb);
+        let count = sh.params.values.len() as u32;
+        let base = take_params(&mut sh, &mut params);
+        c.source.push_str(&out.source);
+        c.layers.push(CompiledLayer {
+            name: u.name.clone(),
+            kind: u.kind,
+            source: out.source,
+            param_base: base,
+            param_count: count,
+            y_min: base + out.y_min,
+            y_max: base + out.y_max,
+            biome_base: bb,
+            biome_count: out.biomes.len() as u32,
+            zone_base: zb,
+            zone_count: out.zones.len() as u32,
+            prop_layers: out.prop_layers,
+        });
+        c.prop_layers += out.prop_layers;
+        c.biomes.extend(out.biomes);
+        c.zones.extend(out.zones.into_iter().map(|mut z| {
+            z.biomes.iter_mut().chain(z.cave_biomes.iter_mut()).for_each(|b| *b += bb);
+            z
+        }));
+    }
+    // the cloud sea's settings (read on the CPU only: a block after the layers')
+    if let Some(g) = project.graphs.iter().find(|g| g.kind == GraphKind::World)
+        && let Some(o) = g.output_node()
+    {
+        let mut slots = [0u32; 3];
+        for (i, k) in ["cloud_sea_base", "cloud_sea_top", "cloud_sea_density"].iter().enumerate() {
+            let e = props::live_param(&mut sh, g, o, k);
+            slots[i] = e.trim_start_matches("P(").trim_end_matches("u)").parse().unwrap_or(0);
+        }
+        let base = take_params(&mut sh, &mut params);
+        c.cloud_sea = slots.map(|s| base + s);
+    }
+    warnings.append(&mut sh.warnings);
+    c.warnings = warnings;
+    c.params = params.values;
+    c.param_index = params.index;
+    Ok(c)
 }

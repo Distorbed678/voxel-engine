@@ -23,7 +23,10 @@
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 void main() {
-    uint jobIdx = gl_WorkGroupID.z;
+    // this layer's jobs (prelude.glsl): it writes the cells it owns, and maybe the column biomes
+    uint entry = pc.jobList.j[gl_WorkGroupID.z];
+    uint jobIdx = entry & ~JOBLIST_COLUMNS;
+    bool writeColumns = (entry & JOBLIST_COLUMNS) != 0u;
     GenJob job = pc.jobs.j[jobIdx];
     gSeed = pc.seed;
     gLod = job.lod;
@@ -51,7 +54,7 @@ void main() {
         vec2 xz = vec2(job.origin.xz + (lc - 1) * scale + half_) + 0.5;
         WgColumn col;
         wg_column(xz, col);
-        pc.columns.c[jobIdx * uint(CA * CA) + uint(lc.y * CA + lc.x)] = uint16_t(wg_main_biome(col));
+        if (writeColumns) pc.columns.c[jobIdx * uint(CA * CA) + uint(lc.y * CA + lc.x)] = uint16_t(wg_main_biome(col));
 
         uint base = jobIdx * SLOT_U16;
         // A cell must come out the same whichever chunk generates it (chunks also generate their
@@ -67,9 +70,15 @@ void main() {
         // is the cell below the slot, evaluated only for what it does to the bottom apron cell
         // (cave ceiling material, ground cover on it).
         // Single loop: one wg_density call site keeps the generated shader small.
-        int top = CA - 1 + WG_LOOKAHEAD;
+        // Only the cells this layer owns are written. The loop spans them (one cell of margin
+        // either way; the writes test ownership exactly) with the look-ahead above and the cell
+        // below: every window is measured relative to its cell, so where the loop starts doesn't
+        // change a result.
         float fs = float(scale);
         float cellY0 = float(job.origin.y - scale + half_) + 0.5;  // centre of cell ly = 0
+        int lyLo = int(clamp(ceil((pc.ownMin - cellY0) / fs) - 1.0, 0.0, float(CA)));
+        int lyHi = int(clamp(ceil((pc.ownMax - cellY0) / fs), -1.0, float(CA - 1)));
+        int top = lyHi + WG_LOOKAHEAD;
         float skyReach = float(WG_LOOKAHEAD) * fs;
         float seaReach = gSeaLevel + skyReach;
         int needCells = min(int(ceil(wg_depth_max(col) / fs)), WG_LOOKAHEAD + 32);
@@ -86,7 +95,7 @@ void main() {
         int prevLy = -1;
         bool prevCarved = false;
         bool prevSolid = false;
-        for (int ly = top; ly >= -1;) {
+        for (int ly = top; ly >= lyLo - 1 && lyHi >= lyLo;) {
             vec3 p = vec3(xz.x, cellY0 + float(probe > 0 ? probe : ly) * fs, xz.y);
             bool carved;
             float d = wg_density_c(p, col, carved);
@@ -119,7 +128,7 @@ void main() {
                     uint cb = wg_cave_biome(p, col);
                     if (cb != NO_CAVE_BIOME) {
                         b = wg_cave_material(cb, p, 0.0, airAbove);
-                        if (prevLy >= 0 && prevBlock == 0u && job.lod == 0u) {
+                        if (prevLy >= 0 && prevBlock == 0u && job.lod == 0u && wg_owns(p.y + fs)) {
                             uint deco = wg_cave_decorate(cb, p + vec3(0.0, float(scale), 0.0), b);
                             if (deco != 0u) {
                                 pc.voxels.v[base + uint(prevLy * CA * CA + lc.y * CA + lc.x)] = uint16_t(deco);
@@ -129,7 +138,7 @@ void main() {
                         decorated = true;
                     }
                 }
-                if (!solid && carved && prevSolid && prevLy >= 0 && prevBlock != 0u) {
+                if (!solid && carved && prevSolid && prevLy >= 0 && prevBlock != 0u && wg_owns(p.y + fs)) {
                     // cave ceiling: re-material the solid cell above
                     vec3 q = p + vec3(0.0, float(scale), 0.0);
                     uint cb = wg_cave_biome(q, col);
@@ -137,14 +146,14 @@ void main() {
                         pc.voxels.v[base + uint(prevLy * CA * CA + lc.y * CA + lc.x)] = uint16_t(wg_cave_material(cb, q, max(depth, 1.0), 0.0));
                     }
                 }
-                if (!decorated && solid && depth == 0.0 && prevLy >= 0 && prevBlock == 0u && job.lod == 0u) {
+                if (!decorated && solid && depth == 0.0 && prevLy >= 0 && prevBlock == 0u && job.lod == 0u && wg_owns(p.y + fs)) {
                     uint deco = wg_decorate(p + vec3(0.0, 1.0, 0.0), b, col);
                     if (deco != 0u) {
                         pc.voxels.v[base + uint(prevLy * CA * CA + lc.y * CA + lc.x)] = uint16_t(deco);
                         nonAir += 1u;
                     }
                 }
-                if (!below) {
+                if (!below && wg_owns(p.y)) {
                     pc.voxels.v[base + uint(ly * CA * CA + lc.y * CA + lc.x)] = uint16_t(b);
                     if (b != 0u) nonAir += 1u;
                     if (solid && b != 0u) opaque += 1u;

@@ -228,6 +228,14 @@ impl PipelineManager {
         Ok(handles)
     }
 
+    /// Register a pipeline built elsewhere (the world generator's build thread), so it hot
+    /// reloads and is destroyed with the others.
+    pub fn insert(&mut self, name: &str, source: PipelineSource, pipeline: vk::Pipeline, deps: Vec<PathBuf>) -> PipelineHandle {
+        let deps = deps.into_iter().map(|p| p.canonicalize().unwrap_or(p)).collect();
+        self.entries.push(Entry { name: name.to_string(), source, pipeline, deps });
+        PipelineHandle(self.entries.len() - 1)
+    }
+
     /// Replace the source of an existing pipeline (e.g. new worldgen code) with an already-built
     /// pipeline object.
     pub fn replace(&mut self, h: PipelineHandle, source: PipelineSource, pipeline: vk::Pipeline, deps: Vec<PathBuf>, retire_after: u64) {

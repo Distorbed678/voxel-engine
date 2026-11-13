@@ -1,5 +1,6 @@
-// Probe pass: evaluates the zone/biome layout at arbitrary X/Z positions (camera environment,
-// minimap). Reuses the generator push constants: jobs -> vec2 positions, results -> uvec4 out.
+// Probe pass: evaluates the zone/biome layout of one layer at arbitrary X/Z positions (camera
+// environment, minimap). Reuses the generator push constants: jobs -> vec2 positions, results ->
+// uvec4 out (global biome and zone ids), [ownMin, ownMax] -> the heights scanned for the surface.
 layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer ProbeIn { vec2 p[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 16) buffer ProbeOut { uvec4 r[]; };
 
@@ -17,12 +18,12 @@ void main() {
     vec2 xz = pin.p[i];
     WgColumn c;
     wg_column(xz, c);
-    // approximate surface height: scan down from 400 in 4-block steps (minimap shading)
+    // approximate surface height: scan down from ownMax to ownMin, at most 160 steps of at least
+    // 4 blocks (minimap shading)
     float h = -1e4;
-    if (i < 8192u) {
-        for (int y = 400; y > -128; y -= 4) {
-            if (wg_density(vec3(xz.x, float(y), xz.y), c) > 0.0) { h = float(y); break; }
-        }
+    float step = max(4.0, ceil((pc.ownMax - pc.ownMin) / 160.0));
+    for (float y = pc.ownMax; y > pc.ownMin; y -= step) {
+        if (wg_density(vec3(xz.x, y, xz.y), c) > 0.0) { h = y; break; }
     }
-    pout.r[i] = uvec4(c.biome[0] | (c.zone0 << 16), floatBitsToUint(c.bw[0]), c.zone1, floatBitsToUint(h));
+    pout.r[i] = uvec4((c.biome[0] + BIOME_BASE) | ((c.zone0 + ZONE_BASE) << 16), floatBitsToUint(c.bw[0]), c.zone1 + ZONE_BASE, floatBitsToUint(h));
 }

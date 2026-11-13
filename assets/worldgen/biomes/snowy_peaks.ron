@@ -354,7 +354,7 @@
                 "spacing": F(96.0),
                 "surface": Block("grass"),
                 "y_max": F(60.0),
-                "y_min": F(-200.0),
+                "y_min": F(-100.0),
             },
             comment: "",
         ),

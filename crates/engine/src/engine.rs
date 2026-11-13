@@ -142,9 +142,8 @@ pub struct Engine {
     /// the prop graph whose preview the user closed (it stays closed until another one opens)
     prop_preview_closed: Option<String>,
     pub tex_ui: crate::texture_editor::TextureEditorUi,
-    gen_pipeline: PipelineHandle,
-    props_pipeline: PipelineHandle,
-    probe_pipeline: PipelineHandle,
+    /// per generator layer: its terrain, props and probe pipelines (`wg::PASS_NAMES`)
+    gen_layers: Vec<[PipelineHandle; 3]>,
     pub probes: crate::probe::Probes,
     pub light: crate::light::LightGpu,
     taa: crate::taa::Taa,
@@ -278,36 +277,34 @@ impl Engine {
         let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
         prefabs.upload(&ctx)?;
         let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, blocks.glsl_header(), prefabs.compile_info(), opts.worldgen_dir.clone().unwrap_or_else(|| PathBuf::from("assets/worldgen")))?;
-        // Build the generator synchronously at startup (fall back to the built-in one on error).
-        let (terrain_src, props_src, probe_src) = wg.sources();
+        // Build the generator synchronously at startup (fall back to the built-in one on error):
+        // every layer's passes at once.
         let t0 = Instant::now();
-        let src = |n: &str, s: String| PipelineSource::ComputeSource { name: format!("{n}.comp"), source: s, defines: vec![] };
-        let build = |pm: &mut PipelineManager, t: String, p: String, q: String| {
-            pm.create_sources_parallel(
-                &ctx,
-                vec![
-                    ("worldgen_terrain", src("worldgen_terrain", t)),
-                    ("worldgen_props", src("worldgen_props", p)),
-                    ("worldgen_probe", src("worldgen_probe", q)),
-                ],
-            )
+        let build = |pm: &mut PipelineManager, layers: Vec<[String; 3]>| -> Result<Vec<[PipelineHandle; 3]>> {
+            let items = layers
+                .into_iter()
+                .flat_map(|srcs| {
+                    crate::wg::PASS_NAMES.into_iter().zip(srcs).map(|(n, s)| (n, PipelineSource::ComputeSource { name: format!("{n}.comp"), source: s, defines: vec![] }))
+                })
+                .collect();
+            let h = pm.create_sources_parallel(&ctx, items)?;
+            Ok(h.as_chunks::<3>().0.to_vec())
         };
-        let handles = match build(&mut pm, terrain_src, props_src, probe_src) {
+        let gen_layers = match build(&mut pm, wg.sources()) {
             Ok(h) => h,
             Err(e) => {
                 log::error!("world generator failed to build, using defaults: {e:#}");
                 wg.reset_to_defaults();
                 wg.update();
-                let (t, p, q) = wg.sources();
-                build(&mut pm, t, p, q)?
+                build(&mut pm, wg.sources())?
             }
         };
-        let (gen_pipeline, props_pipeline, probe_pipeline) = (handles[0], handles[1], handles[2]);
-        wg.active_source = wg.compiled.source.clone();
+        wg.active = wg.layer_sources();
         wg.dirty = false;
         wg.request_optimized();
         log::info!(
-            "world generator: {} biomes, {} zones, {} prop layers, {} params, shaders built in {:.0} ms",
+            "world generator: {} layers, {} biomes, {} zones, {} prop layers, {} params, shaders built in {:.0} ms",
+            wg.compiled.layers.len(),
             wg.compiled.biomes.len(),
             wg.compiled.zones.len(),
             wg.compiled.prop_layers,
@@ -447,9 +444,7 @@ impl Engine {
             prop_preview: crate::prop_preview::PropPreview::new(),
             prop_preview_closed: None,
             tex_ui: crate::texture_editor::TextureEditorUi::new(),
-            gen_pipeline,
-            props_pipeline,
-            probe_pipeline,
+            gen_layers,
             probes: crate::probe::Probes::new(&ctx, FIF)?,
             light,
             taa,
@@ -838,6 +833,32 @@ impl Engine {
 
     /// The solo preview as generator indices: a zone alone, or a surface biome with a zone that
     /// uses it, or a cave biome in every zone's caves.
+    /// The generator layers that have pipelines, as the batch recorder dispatches them.
+    fn layer_passes(&self) -> Vec<crate::world::gpu::LayerPass> {
+        let own = self.wg.compiled.owned_ranges();
+        self.wg
+            .compiled
+            .layers
+            .iter()
+            .zip(&self.gen_layers)
+            .zip(own)
+            .map(|((l, h), own)| crate::world::gpu::LayerPass { terrain: self.pm.get(h[0]), props: self.pm.get(h[1]), param_base: l.param_base, own })
+            .collect()
+    }
+
+    /// Heights the probes scan for the minimap's surface in layer `li` (bottom, top): the
+    /// surface's usual terrain heights, the whole sky, underground the floor below the camera.
+    fn probe_scan(&self, li: usize, cam_y: f32) -> (f32, f32) {
+        let c = &self.wg.compiled;
+        let Some(l) = c.layers.get(li) else { return (-128.0, 400.0) };
+        let (lo, hi) = (c.value(l.y_min), c.value(l.y_max));
+        match l.kind {
+            worldgen::compile::LayerKind::Surface => (lo.max(-128.0), hi.min(400.0)),
+            worldgen::compile::LayerKind::Sky => (lo, hi),
+            worldgen::compile::LayerKind::Underground => ((cam_y - 256.0).max(lo), (cam_y + 32.0).min(hi)),
+        }
+    }
+
     fn resolve_solo(&self) -> (Option<u32>, Option<u32>) {
         let c = &self.wg.compiled;
         match &self.node_ui.solo {
@@ -987,11 +1008,12 @@ impl Engine {
 
         // shader hot reload
         let force = std::mem::take(&mut self.ui.force_reload);
-        let gen_before = (self.pm.get(self.gen_pipeline), self.pm.get(self.props_pipeline));
+        let gen_pipes = |s: &Self| s.gen_layers.iter().map(|h| (s.pm.get(h[0]), s.pm.get(h[1]))).collect::<Vec<_>>();
+        let gen_before = gen_pipes(self);
         let n = self.pm.hot_reload(&self.ctx, self.frame_counter, force);
         if n > 0 {
             self.ui.toast(format!("Reloaded {n} pipeline(s)"));
-            if (self.pm.get(self.gen_pipeline), self.pm.get(self.props_pipeline)) != gen_before {
+            if gen_pipes(self) != gen_before {
                 self.world.invalidate_all();
             }
         }
@@ -1011,49 +1033,42 @@ impl Engine {
         }
         if params_changed {
             self.wgpu.set_params(&self.wg.compiled.params);
-            if self.wg.compiled.source == self.wg.active_source {
+            if self.wg.is_current() {
                 self.world.invalidate_all();
             }
         }
         for (current, b) in built {
-            if current {
-                let (t, p) = (b.terrain_source.clone(), b.props_source.clone());
-                self.pm.replace(
-                    self.probe_pipeline,
-                    PipelineSource::ComputeSource { name: "worldgen_probe.comp".into(), source: b.probe_source.clone(), defines: vec![] },
-                    b.probe,
-                    b.deps.clone(),
-                    self.frame_counter,
-                );
-                self.pm.replace(
-                    self.gen_pipeline,
-                    PipelineSource::ComputeSource { name: "worldgen_terrain.comp".into(), source: t, defines: vec![] },
-                    b.terrain,
-                    b.deps.clone(),
-                    self.frame_counter,
-                );
-                self.pm.replace(
-                    self.props_pipeline,
-                    PipelineSource::ComputeSource { name: "worldgen_props.comp".into(), source: p, defines: vec![] },
-                    b.props,
-                    b.deps,
-                    self.frame_counter,
-                );
-                self.wgpu.set_params(&self.wg.compiled.params);
-                self.world.invalidate_all();
-                self.ui.toast(format!(
-                    "{} generator ready in {:.0} ms",
-                    if b.optimized { "Optimised" } else { "Quick" },
-                    b.ms
-                ));
-            } else {
-                unsafe {
-                    self.ctx.device.destroy_pipeline(b.terrain, None);
-                    self.ctx.device.destroy_pipeline(b.props, None);
-                    self.ctx.device.destroy_pipeline(b.probe, None);
+            if !current {
+                b.destroy(&self.ctx.device);
+                continue;
+            }
+            let n = b.layers.len();
+            for l in b.layers {
+                let existing = self.gen_layers.get(l.index).copied();
+                let mut handles = Vec::with_capacity(3);
+                for (k, ((pipeline, source), name)) in l.pipelines.into_iter().zip(l.sources).zip(crate::wg::PASS_NAMES).enumerate() {
+                    let src = PipelineSource::ComputeSource { name: format!("{name}.comp"), source, defines: vec![] };
+                    match existing {
+                        Some(h) => self.pm.replace(h[k], src, pipeline, b.deps.clone(), self.frame_counter),
+                        None => handles.push(self.pm.insert(name, src, pipeline, b.deps.clone())),
+                    }
+                }
+                // a new layer (new layers come in order, after the existing ones)
+                if existing.is_none() {
+                    self.gen_layers.push([handles[0], handles[1], handles[2]]);
                 }
             }
+            self.wgpu.set_params(&self.wg.compiled.params);
+            self.world.invalidate_all();
+            self.ui.toast(format!(
+                "{} generator ready in {:.0} ms ({n} layer{})",
+                if b.optimized { "Optimised" } else { "Quick" },
+                b.ms,
+                if n == 1 { "" } else { "s" }
+            ));
         }
+        self.world.layers = self.wg.compiled.owned_ranges();
+        self.world.camera_layer = self.wg.compiled.layer_near(self.camera.pos.y as f32);
 
         // ---- world results ----
         for (s, jobs, results) in self.wgpu.poll(completed) {
@@ -1172,7 +1187,7 @@ impl Engine {
                 // fixed batch sizes keep scripted runs deterministic
                 max_jobs = self.ui.jobs_per_frame.min(MAX_JOBS);
             }
-            let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), max_jobs);
+            let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), max_jobs, value);
             self.batch_sizes[slot] = jobs.len();
             if jobs.iter().any(|j| j.light & crate::world::gpu::GENJOB_LIGHT != 0) {
                 self.light.mark_dirty();
@@ -1182,8 +1197,7 @@ impl Engine {
             }
             if !jobs.is_empty() {
                 let pipes = WorldPipelines {
-                    generate: self.pm.get(self.gen_pipeline),
-                    props: self.pm.get(self.props_pipeline),
+                    layers: self.layer_passes(),
                     apply_edits: self.pm.get(self.renderer.pipes.apply_edits),
                     mesh_count: self.pm.get(self.renderer.pipes.mesh_count),
                     mesh_write: self.pm.get(self.renderer.pipes.mesh_write),
@@ -1247,12 +1261,14 @@ impl Engine {
             None
         };
 
-        // biome probes (camera environment + minimap)
-        {
+        // biome probes (camera environment + minimap), in the camera's layer
+        if !self.gen_layers.is_empty() {
             let pos = self.camera.pos;
             let n = self.probes.prepare(slot, pos, self.frame_counter);
+            let li = self.wg.compiled.layer_near(pos.y as f32).min(self.gen_layers.len() - 1);
+            let scan = self.probe_scan(li, pos.y as f32);
             unsafe {
-                self.ctx.device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, self.pm.get(self.probe_pipeline));
+                self.ctx.device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, self.pm.get(self.gen_layers[li][2]));
                 self.ctx.device.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, self.pm.layout, 0, &[self.bindless.set], &[]);
             }
             let push = crate::world::gpu::GenPush {
@@ -1260,7 +1276,7 @@ impl Engine {
                 voxels: self.wgpu.voxels.address,
                 results: self.probes.output[slot].address,
                 edits: self.probes.input[slot].address,
-                params: self.wgpu.params.address,
+                params: self.wgpu.params.address + self.wg.compiled.layers.get(li).map_or(0, |l| l.param_base as u64 * 4),
                 columns: self.wgpu.columns.address,
                 prefab_table: self.wgpu.prefab_addrs.0,
                 prefab_data: self.wgpu.prefab_addrs.1,
@@ -1271,6 +1287,11 @@ impl Engine {
                 blocks: self.blockgpu.table_address(slot),
                 prop_prims: 0,
                 prop_segs: 0,
+                job_list: 0,
+                own_min: scan.0,
+                own_max: scan.1,
+                solo_zone: self.wgpu.solo[0],
+                solo_biome: self.wgpu.solo[1],
             };
             unsafe {
                 self.ctx.device.cmd_push_constants(cb, self.pm.layout, vk::ShaderStageFlags::ALL, 0, bytemuck::bytes_of(&push));

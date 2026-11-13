@@ -1,5 +1,7 @@
-//! The built-in example world: 4 zones (temperate, arid, frozen, volcanic) with 12 biomes, and
-//! the Prop graphs its biomes scatter (trees, rocks, spikes, geodes).
+//! The built-in example world in three layers: the surface (4 zones: temperate, arid, frozen,
+//! volcanic, with 11 biomes and 4 cave biomes), the underground in two depth bands (placeholder
+//! caverns, magma depths with a lava sea) and the sky (floating isles above the cloud sea), and
+//! the Prop graphs the biomes scatter (trees, rocks, spikes, geodes).
 //! Everything here is ordinary node graphs - open them in the node editor and change anything.
 
 use crate::graph::{Graph, GraphKind, Project, Value};
@@ -204,15 +206,12 @@ fn birch_hills() -> Graph {
     b.g
 }
 
+/// Sky layer: islands of 3D noise in a band around y = 4800, open air above and below.
 fn floating_isles() -> Graph {
     let mut b = B::new("floating_isles", GraphKind::Biome);
-    let h = b.noise("simplex2d", 0.0, 0.0, 300.0, 4, 10.0, 6);
-    let t = b.terrain(h, 70.0, 240.0, 0.0);
-    // islands: 3D blobs in a band around y=190
     let blob = b.noise("simplex3d", 0.0, 160.0, 70.0, 3, 40.0, 12);
-    let band = b.n("y_gradient", 0.0, 300.0, &[("y_low", fv(150.0)), ("y_high", fv(230.0)), ("value_low", fv(-60.0)), ("value_high", fv(-60.0))]);
     let center = b.n("coord", 0.0, 400.0, &[("axis", ev("Y"))]);
-    let dist = b.n("scale_bias", 200.0, 400.0, &[("scale", fv(1.0)), ("bias", fv(-195.0))]);
+    let dist = b.n("scale_bias", 200.0, 400.0, &[("scale", fv(1.0)), ("bias", fv(-4800.0))]);
     b.l(center, dist, 0);
     let ad = b.n("abs", 380.0, 400.0, &[]);
     b.l(dist, ad, 0);
@@ -221,21 +220,67 @@ fn floating_isles() -> Graph {
     let isl = b.n("add", 720.0, 250.0, &[]);
     b.l(blob, isl, 0);
     b.l(falloff, isl, 1);
-    let _ = band;
-    let both = b.n("max", 900.0, 100.0, &[]);
-    b.l(t, both, 0);
-    b.l(isl, both, 1);
     let o = b.out();
-    b.l(both, o, 0);
-    let st = b.deep(0.0, 560.0);
-    let s = surface(&mut b, "grass", "dirt", "sand", 3.0, 300.0, 560.0, st);
+    b.l(isl, o, 0);
+    let stone = b.n("block", 0.0, 560.0, &[("block", bk("stone"))]);
+    let s = surface(&mut b, "grass", "dirt", "dirt", 3.0, 300.0, 560.0, stone);
     // islands are "open to sky" at their tops; their undersides get the base material
     b.l(s, o, 1);
     let gc = b.n("ground_cover", 260.0, 700.0, &[("chance", fv(0.5)), ("plant2", bk("flower_white")), ("weight2", fv(2.0))]);
     b.l(gc, o, 2);
     let tree = b.prop("willow", 0.0, 840.0);
-    b.scatter(tree, 260.0, 840.0, &[("spacing", fv(16.0)), ("chance", fv(0.5))], 3, None);
-    b.out_params(&[("grass_tint", Value::Color([0.42, 0.85, 0.45])), ("fog_color", Value::Color([0.8, 0.85, 1.0])), ("map_color", Value::Color([0.4, 0.85, 0.6]))]);
+    b.scatter(tree, 260.0, 840.0, &[("spacing", fv(16.0)), ("chance", fv(0.5)), ("y_min", fv(4000.0)), ("y_max", fv(6200.0))], 3, None);
+    b.out_params(&[("fluid", ev("None")), ("grass_tint", Value::Color([0.42, 0.85, 0.45])), ("fog_color", Value::Color([0.8, 0.85, 1.0])), ("map_color", Value::Color([0.4, 0.85, 0.6]))]);
+    b.g
+}
+
+/// An underground placeholder biome: solid rock with big caverns and tunnels between y_min and
+/// y_max, floors of `floor`, walls of `base`, ground cover on the floors. Phase G replaces these.
+fn underground_biome(name: &str, base: &str, floor: &str, plants: &[(&str, f32)], fluid: &str, y: (f32, f32), map: [f32; 3]) -> Graph {
+    let mut b = B::new(name, GraphKind::Biome);
+    let solid = b.n("constant", 0.0, 0.0, &[("value", fv(1.0))]);
+    // caverns at every LOD: they are what the underground is
+    let ch = b.n("cheese_caves", 0.0, 120.0, &[("size", fv(110.0)), ("y_min", fv(y.0)), ("y_max", fv(y.1)), ("max_lod", iv(8))]);
+    let sp = b.n("spaghetti_caves", 0.0, 260.0, &[("y_min", fv(y.0)), ("y_max", fv(y.1)), ("max_lod", iv(8))]);
+    let caves = b.n("max", 220.0, 180.0, &[]);
+    b.l(ch, caves, 0);
+    b.l(sp, caves, 1);
+    let k = b.n("scale_bias", 400.0, 180.0, &[("scale", fv(4.0)), ("bias", fv(0.0))]);
+    b.l(caves, k, 0);
+    let d = b.n("subtract", 580.0, 60.0, &[]);
+    b.l(solid, d, 0);
+    b.l(k, d, 1);
+    let o = b.out();
+    b.l(d, o, 0);
+    let base_n = b.n("block", 0.0, 420.0, &[("block", bk(base))]);
+    let s = b.n("surface_layers", 220.0, 420.0, &[("top", bk(floor)), ("under", bk(base)), ("underwater", bk(base)), ("under_depth", fv(1.0)), ("cave_floor", bk(floor))]);
+    b.l(base_n, s, 0);
+    b.l(s, o, 1);
+    let mut gc_params = vec![("on", bk(floor)), ("chance", fv(0.35))];
+    let names = ["plant1", "plant2", "plant3", "plant4"];
+    let weights = ["weight1", "weight2", "weight3", "weight4"];
+    for i in 0..4 {
+        match plants.get(i) {
+            Some((pl, w)) => {
+                gc_params.push((names[i], bk(pl)));
+                gc_params.push((weights[i], fv(*w)));
+            }
+            None => gc_params.push((weights[i], fv(0.0))),
+        }
+    }
+    let gc = b.n("ground_cover", 220.0, 560.0, &gc_params);
+    b.l(gc, o, 2);
+    b.out_params(&[("fluid", ev(fluid)), ("fog_color", Value::Color([0.08, 0.08, 0.1])), ("map_color", Value::Color(map))]);
+    b.g
+}
+
+/// A zone with a single biome and no cave carver (sky and underground layers).
+fn single_zone(name: &str, biome: &str, color: [f32; 3]) -> Graph {
+    let mut b = B::new(name, GraphKind::Zone);
+    let n = b.n("biome", 0.0, 0.0, &[("biome", rv(biome))]);
+    let o = b.out();
+    b.l(n, o, 0);
+    b.out_params(&[("map_color", Value::Color(color))]);
     b.g
 }
 
@@ -341,7 +386,7 @@ fn taiga() -> Graph {
     let spruce = b.prop("spruce", 0.0, 820.0);
     b.scatter(spruce, 260.0, 820.0, &[("spacing", fv(7.0)), ("chance", fv(0.6)), ("any_surface", Value::B(true))], 3, None);
     let geode = b.prop("geode", 0.0, 980.0);
-    b.scatter(geode, 260.0, 980.0, &[("spacing", fv(96.0)), ("chance", fv(0.5)), ("jitter", fv(0.8)), ("y_min", fv(-200.0)), ("y_max", fv(20.0)), ("placement", ev("Buried"))], 4, None);
+    b.scatter(geode, 260.0, 980.0, &[("spacing", fv(96.0)), ("chance", fv(0.5)), ("jitter", fv(0.8)), ("y_min", fv(-100.0)), ("y_max", fv(20.0)), ("placement", ev("Buried"))], 4, None);
     b.out_params(&[("grass_tint", Value::Color([0.45, 0.62, 0.45])), ("foliage_tint", Value::Color([0.3, 0.5, 0.35])), ("fog_color", Value::Color([0.75, 0.82, 0.9])), ("map_color", Value::Color([0.3, 0.5, 0.4]))]);
     b.g
 }
@@ -405,7 +450,7 @@ fn snowy_peaks() -> Graph {
     let spruce = b.prop("spruce", 0.0, 1080.0);
     b.scatter(spruce, 260.0, 1080.0, &[("spacing", fv(11.0)), ("chance", fv(0.5)), ("surface", bk("snowy_grass")), ("y_max", fv(140.0))], 3, None);
     let geode = b.prop("geode", 0.0, 1220.0);
-    b.scatter(geode, 260.0, 1220.0, &[("spacing", fv(96.0)), ("chance", fv(0.5)), ("jitter", fv(0.8)), ("y_min", fv(-200.0)), ("y_max", fv(60.0)), ("placement", ev("Buried"))], 4, None);
+    b.scatter(geode, 260.0, 1220.0, &[("spacing", fv(96.0)), ("chance", fv(0.5)), ("jitter", fv(0.8)), ("y_min", fv(-100.0)), ("y_max", fv(60.0)), ("placement", ev("Buried"))], 4, None);
     b.out_params(&[("grass_tint", Value::Color([0.5, 0.65, 0.5])), ("fog_color", Value::Color([0.8, 0.86, 0.95])), ("map_color", Value::Color([0.95, 0.95, 0.98]))]);
     b.g
 }
@@ -593,6 +638,7 @@ fn zone(name: &str, biomes: &[(&str, f32)], caves: &[(&str, f32)], cell: f32, co
 
 fn world() -> Graph {
     let mut b = B::new("world", GraphKind::World);
+    // surface: y -128..1024, the four surface zones, rivers at sea level
     let vor = b.n("zone_voronoi", 300.0, 0.0, &[]);
     for (i, z) in ["temperate", "arid", "frozen", "volcanic"].iter().enumerate() {
         let n = b.n("zone", 0.0, i as f32 * 90.0, &[("zone", rv(z))]);
@@ -600,10 +646,24 @@ fn world() -> Graph {
     }
     b.g.set(vor, "weight1", fv(1.6));
     b.g.set(vor, "weight4", fv(0.7));
-    let o = b.out();
-    b.l(vor, o, 0);
+    let surface = b.n("layer", 520.0, 0.0, &[("kind", ev("Surface")), ("y_min", fv(-128.0)), ("y_max", fv(1024.0)), ("sea_level", fv(62.0))]);
+    b.l(vor, surface, 0);
     let river = b.n("river", 0.0, 420.0, &[]);
-    b.l(river, o, 1);
+    b.l(river, surface, 1);
+    let o = b.out();
+    b.l(surface, o, 0);
+    // underground: upper caves -128..-1200, the deep -1200..-6000 with a lava sea
+    let upper = b.n("zone", 0.0, 560.0, &[("zone", rv("upper_caves"))]);
+    let deep = b.n("zone", 0.0, 650.0, &[("zone", rv("deep"))]);
+    let bands = b.n("depth_bands", 520.0, 560.0, &[("sea_level_deep", fv(-5300.0))]);
+    b.l(upper, bands, 0);
+    b.l(deep, bands, 1);
+    b.l(bands, o, 1);
+    // sky: y 4000..6200, above the cloud sea
+    let sky_z = b.n("zone", 0.0, 800.0, &[("zone", rv("sky"))]);
+    let sky = b.n("layer", 520.0, 800.0, &[("kind", ev("Sky")), ("y_min", fv(4000.0)), ("y_max", fv(6200.0)), ("sea_level", fv(-100000.0))]);
+    b.l(sky_z, sky, 0);
+    b.l(sky, o, 2);
     b.g
 }
 
@@ -822,7 +882,7 @@ pub fn default_project() -> Project {
             world(),
             zone(
                 "temperate",
-                &[("meadow", 1.0), ("oak_forest", 1.4), ("birch_hills", 1.0), ("floating_isles", 0.35)],
+                &[("meadow", 1.0), ("oak_forest", 1.4), ("birch_hills", 1.0)],
                 &[("lush_caves", 1.2), ("crystal_caves", 0.5)],
                 420.0,
                 [0.35, 0.7, 0.3],
@@ -852,6 +912,11 @@ pub fn default_project() -> Project {
             crystal_caves(),
             magma_caves(),
             frost_caves(),
+            single_zone("sky", "floating_isles", [0.55, 0.85, 1.0]),
+            single_zone("upper_caves", "caverns", [0.35, 0.55, 0.3]),
+            single_zone("deep", "magma_depths", [0.55, 0.15, 0.1]),
+            underground_biome("caverns", "stone", "moss", &[("mushroom_glow", 1.0), ("fern", 2.0), ("mushroom_red", 0.5)], "Water", (-1200.0, -128.0), [0.3, 0.5, 0.3]),
+            underground_biome("magma_depths", "basalt", "magma", &[("ember_weed", 1.0)], "Lava", (-6000.0, -1200.0), [0.5, 0.15, 0.1]),
             ridge_function(),
         ],
     };
@@ -945,26 +1010,54 @@ mod tests {
         let p = default_project();
         let c = compile::compile(&p, &blocks(), &prefabs()).unwrap();
         assert!(c.warnings.is_empty(), "warnings: {:#?}", c.warnings);
-        assert_eq!(c.biomes.len(), 16);
-        assert_eq!(c.zones.len(), 4);
+        // four generator units: the surface, the two underground bands and the sky
+        let layers: Vec<(&str, u32, u32)> = c.layers.iter().map(|l| (l.name.as_str(), l.biome_count, l.zone_count)).collect();
+        assert_eq!(layers, [("surface", 15, 4), ("upper", 1, 1), ("deep", 1, 1), ("sky", 1, 1)]);
+        assert_eq!((c.biomes.len(), c.zones.len()), (18, 7));
+        assert_eq!(c.layers[3].biome_base, 17, "biome ids are global: the sky's come last");
+        assert!(c.layers.iter().all(|l| l.source.contains("void wg_column(") && l.source.contains("float gLayerBlend;")));
+        // each layer reads its own block of parameters (P(i) is relative to it), so its code
+        // doesn't depend on how many parameters the layers before it have
+        for (i, l) in c.layers.iter().enumerate() {
+            let max = l.source.split("P(").skip(1).filter_map(|t| t[..t.find('u').unwrap_or(0)].parse::<u32>().ok()).max().unwrap();
+            assert!(max < l.param_count, "layer {i} reads P({max}) beyond its {} parameters", l.param_count);
+            assert_eq!(l.param_base, c.layers[..i].iter().map(|l| l.param_count).sum::<u32>());
+        }
+        assert!(c.cloud_sea.iter().all(|&s| s as usize >= c.layers.iter().map(|l| l.param_count as usize).sum::<usize>()));
+        assert_eq!(c.value(c.cloud_sea[0]), 2600.0);
+        assert!(c.layers[3].source.contains("#define LAYER_BELOW -1.0") && c.layers[1].source.contains("#define LAYER_ABOVE 1.0"));
+        let range = |i: usize| (c.value(c.layers[i].y_min), c.value(c.layers[i].y_max));
+        assert_eq!([range(0), range(1), range(2), range(3)], [(-128.0, 1024.0), (-1200.0, -128.0), (-6000.0, -1200.0), (4000.0, 6200.0)]);
+        assert_eq!(c.layer_at(70.0), Some(0));
+        assert_eq!(c.layer_at(-3000.0), Some(2));
+        assert_eq!(c.layer_at(2000.0), None);
+        // who generates what: the sky, the surface, the upper caves, and the deep all the way down
+        let own = c.owned_ranges();
+        assert_eq!(own, [(-128.0, 1024.0), (-1200.0, -128.0), (f32::NEG_INFINITY, -1200.0), (4000.0, 6200.0)]);
+        // between layers the cloud sea (2600..3400) decides which one the camera sees
+        assert_eq!([c.layer_near(70.0), c.layer_near(2550.0), c.layer_near(3000.0), c.layer_near(3500.0), c.layer_near(-9000.0)], [0, 0, 3, 3, 2]);
+        // only the first layer builds every prop graph (the previews run there)
+        assert!(c.layers[3].source.matches("_build() {").count() < c.layers[0].source.matches("_build() {").count());
+        let c0 = c.clone();
+        let c = &c0.layers[0];
         assert!(c.source.contains("wg_column"));
         // cave biomes get flat per-voxel functions, every zone selects them, rivers are wired
         for b in ["lush_caves", "crystal_caves", "magma_caves", "frost_caves"] {
-            let id = c.biomes.iter().position(|i| i.name == b).unwrap();
+            let id = c0.biomes.iter().position(|i| i.name == b).unwrap();
             assert!(c.source.contains(&format!("uint b{id}_cmat(")), "{b} has no cave material");
         }
         assert!(c.source.contains("return NO_CAVE_BIOME;") && c.source.matches("_cave(vec3 p)").count() == 4);
         assert!(c.source.contains("river_mask("));
         assert!(c.source.contains("float th[2] = float[2]("), "arid zone uses humidity bands");
-        assert!(c.prop_layers > 10);
+        assert!(c0.prop_layers > 10);
         // the terrain pass looks as deep as the column's biomes need: 12 blocks of sandstone
         // under the desert, 1 + 3 blocks of grass and dirt in the meadow
         let fun = &c.source[c.source.find("float wg_depth_max(").unwrap()..];
         let fun = &fun[..fun.find("\n}").unwrap()];
         let case = |b: &str| {
-            let id = c.biomes.iter().position(|i| i.name == b).unwrap();
+            let id = c0.biomes.iter().position(|i| i.name == b).unwrap();
             let line = fun.lines().find(|l| l.trim_start().starts_with(&format!("case {id}u:"))).unwrap().to_string();
-            line.split("P(").skip(1).map(|t| c.params[t[..t.find('u').unwrap()].parse::<usize>().unwrap()]).collect::<Vec<f32>>()
+            line.split("P(").skip(1).map(|t| c0.params[t[..t.find('u').unwrap()].parse::<usize>().unwrap()]).collect::<Vec<f32>>()
         };
         assert!(case("desert").contains(&12.0), "{fun}");
         assert_eq!(case("meadow"), [1.0, 3.0], "{fun}");

@@ -22,6 +22,8 @@ pub enum PinType {
     PropLayer,
     Biome,
     Zone,
+    /// A layer of the world (surface, underground band, sky): a vertical range with its zones.
+    Layer,
 }
 
 impl PinType {
@@ -39,6 +41,7 @@ impl PinType {
             PinType::PropLayer => [0.2, 0.65, 0.35, 1.0],
             PinType::Biome => [0.85, 0.45, 0.9, 1.0],
             PinType::Zone => [1.0, 0.85, 0.3, 1.0],
+            PinType::Layer => [0.45, 0.85, 0.95, 1.0],
         }
     }
 }
@@ -153,14 +156,30 @@ pub static NODES: &[NodeDef] = &[
         params: &[f("width", 420.0, 60.0, 8000.0), f("height", 260.0, 40.0, 8000.0)],
         allowed: ALL },
     // ---------------------------------------------------------------- outputs
-    NodeDef { kind: "world_output", title: "World Output", category: "Output", help: "Root of the generator: lays out zones across the infinite world.",
-        inputs: &[("Zones", Zone), ("Rivers", Density)], outputs: &[],
+    NodeDef { kind: "world_output", title: "World Output", category: "Output",
+        help: "Root of the generator: the world's layers (surface, underground, sky), each with its own zones and biomes and its own generator, and the cloud sea that hides the sky layer from the ground.",
+        inputs: &[("Surface", Layer), ("Underground", Layer), ("Sky", Layer)], outputs: &[],
+        params: &[f("cloud_sea_base", 2600.0, 0.0, 8000.0), f("cloud_sea_top", 3400.0, 0.0, 8000.0), f("cloud_sea_density", 1.0, 0.0, 4.0)],
+        allowed: WORLD },
+    NodeDef { kind: "layer", title: "Layer", category: "Layout",
+        help: "A layer of the world between y_min and y_max: its zone layout, sea level and rivers. Surface: air above, solid below; Underground: solid on both sides; Sky: air on both sides. A layer only generates its own range; within `blend` blocks of its edges the terrain fades into what lies beyond (rock or air), so neighbouring layers meet without a seam.",
+        inputs: &[("Zones", Zone), ("Rivers", Density)], outputs: &[("Out", Layer)],
         params: &[
-            f("sea_level", 62.0, -256.0, 512.0),
+            en("kind", &["Surface", "Underground", "Sky"], 0),
+            f("y_min", -128.0, -16384.0, 16384.0),
+            f("y_max", 1024.0, -16384.0, 16384.0),
+            f("blend", 24.0, 0.0, 512.0),
+            f("sea_level", 62.0, -16384.0, 16384.0),
             f("river_depth", 5.0, 0.0, 64.0),
             f("river_carve", 48.0, 0.0, 512.0),
             blk("river_bed", "gravel"),
         ],
+        allowed: WORLD },
+    NodeDef { kind: "depth_bands", title: "Depth Bands", category: "Layout",
+        help: "The underground in two bands, each with its own zones: Upper from top down to split, Deep from split down to bottom. Each band has its own sea level (seas of water or lava fill open caves below it; far below the band means none). Caves close within `blend` blocks of a band's edges.",
+        inputs: &[("Upper", Zone), ("Deep", Zone)], outputs: &[("Out", Layer)],
+        params: &[f("top", -128.0, -16384.0, 16384.0), f("split", -1200.0, -16384.0, 16384.0), f("bottom", -6000.0, -16384.0, 16384.0),
+                  f("blend", 24.0, 0.0, 512.0), f("sea_level_upper", -100000.0, -100000.0, 16384.0), f("sea_level_deep", -100000.0, -100000.0, 16384.0)],
         allowed: WORLD },
     NodeDef { kind: "zone_output", title: "Zone Output", category: "Output", help: "A zone: which biomes appear inside it and how caves are carved.",
         inputs: &[("Biomes", Biome), ("Caves", Density), ("Cave Biomes", Biome)], outputs: &[], params: &[col("map_color", [0.4, 0.7, 0.3])], allowed: ZONE },
@@ -264,11 +283,11 @@ pub static NODES: &[NodeDef] = &[
 
     // ---------------------------------------------------------------- carvers
     NodeDef { kind: "spaghetti_caves", title: "Spaghetti Caves", category: "Caves", help: "Long winding tunnels (positive = carve).", inputs: &[], outputs: D,
-        params: &[f("size", 80.0, 8.0, 1024.0), f("thickness", 0.1, 0.01, 0.5), f("y_min", -256.0, -4096.0, 4096.0), f("y_max", 70.0, -4096.0, 4096.0), i("max_lod", 1, 0, 8), i("seed", 0, 0, 1000)], allowed: BIOME_ZONE_FN },
+        params: &[f("size", 80.0, 8.0, 1024.0), f("thickness", 0.1, 0.01, 0.5), f("y_min", -256.0, -16384.0, 16384.0), f("y_max", 70.0, -16384.0, 16384.0), i("max_lod", 1, 0, 8), i("seed", 0, 0, 1000)], allowed: BIOME_ZONE_FN },
     NodeDef { kind: "cheese_caves", title: "Cheese Caves", category: "Caves", help: "Large open caverns with pillars.", inputs: &[], outputs: D,
-        params: &[f("size", 110.0, 8.0, 1024.0), f("threshold", 0.6, 0.0, 1.0), f("y_min", -256.0, -4096.0, 4096.0), f("y_max", 40.0, -4096.0, 4096.0), i("max_lod", 1, 0, 8), i("seed", 0, 0, 1000)], allowed: BIOME_ZONE_FN },
+        params: &[f("size", 110.0, 8.0, 1024.0), f("threshold", 0.6, 0.0, 1.0), f("y_min", -256.0, -16384.0, 16384.0), f("y_max", 40.0, -16384.0, 16384.0), i("max_lod", 1, 0, 8), i("seed", 0, 0, 1000)], allowed: BIOME_ZONE_FN },
     NodeDef { kind: "noodle_caves", title: "Noodle Caves", category: "Caves", help: "Thin squiggly tunnels.", inputs: &[], outputs: D,
-        params: &[f("size", 32.0, 4.0, 512.0), f("thickness", 0.06, 0.01, 0.3), f("y_min", -256.0, -4096.0, 4096.0), f("y_max", 30.0, -4096.0, 4096.0), i("max_lod", 0, 0, 8), i("seed", 0, 0, 1000)], allowed: BIOME_ZONE_FN },
+        params: &[f("size", 32.0, 4.0, 512.0), f("thickness", 0.06, 0.01, 0.3), f("y_min", -256.0, -16384.0, 16384.0), f("y_max", 30.0, -16384.0, 16384.0), i("max_lod", 0, 0, 8), i("seed", 0, 0, 1000)], allowed: BIOME_ZONE_FN },
     NodeDef { kind: "ravines", title: "Ravines", category: "Caves", help: "Deep narrow canyons cut from the surface.", inputs: &[], outputs: D,
         params: &[f("size", 700.0, 64.0, 8192.0), f("width", 0.035, 0.005, 0.2), f("y_top", 140.0, -1024.0, 1024.0), f("depth", 70.0, 4.0, 512.0), i("max_lod", 2, 0, 8), i("seed", 0, 0, 1000)], allowed: BIOME_ZONE_FN },
 
@@ -286,7 +305,7 @@ pub static NODES: &[NodeDef] = &[
         inputs: &[("A", Material), ("B", Material), ("Selector", Density)], outputs: &[("Out", Material)], params: &[f("threshold", 0.3, -10.0, 10.0)], allowed: BIOME },
     NodeDef { kind: "ore", title: "Ore Veins", category: "Material", help: "Sprinkle ore blobs into the Base material.",
         inputs: &[("Base", Material)], outputs: &[("Out", Material)],
-        params: &[blk("ore", "coal_ore"), f("size", 6.0, 1.0, 64.0), f("rarity", 0.8, 0.0, 1.0), f("y_min", -256.0, -4096.0, 4096.0), f("y_max", 128.0, -4096.0, 4096.0), blk("replace", "stone"), i("seed", 0, 0, 1000)], allowed: BIOME },
+        params: &[blk("ore", "coal_ore"), f("size", 6.0, 1.0, 64.0), f("rarity", 0.8, 0.0, 1.0), f("y_min", -256.0, -16384.0, 16384.0), f("y_max", 128.0, -16384.0, 16384.0), blk("replace", "stone"), i("seed", 0, 0, 1000)], allowed: BIOME },
     NodeDef { kind: "strata", title: "Strata", category: "Material", help: "Horizontal coloured bands (badlands / mesas).",
         inputs: &[("Base", Material)], outputs: &[("Out", Material)],
         params: &[blk("band1", "terracotta"), blk("band2", "terracotta_orange"), blk("band3", "terracotta_white"), blk("band4", "terracotta_red"), blk("band5", "terracotta_yellow"), blk("band6", "terracotta_brown"),
@@ -310,7 +329,7 @@ pub static NODES: &[NodeDef] = &[
         help: "Place a prop on a jittered grid. Surface: on open ground (of the surface block, or any). Buried: inside the ground between y_min and y_max (geodes, fossils). Mask (0..1) modulates density, e.g. noise -> forests and clearings.",
         inputs: &[("Prop", Prop), ("Mask", Density)], outputs: &[("Out", PropLayer)],
         params: &[f("spacing", 9.0, 2.0, 256.0), f("chance", 0.6, 0.0, 1.0), f("jitter", 0.9, 0.0, 1.0), blk("surface", "grass"), b("any_surface", false),
-                  f("y_min", -512.0, -4096.0, 4096.0), f("y_max", 512.0, -4096.0, 4096.0), i("seed", 0, 0, 1000), en("placement", &["Surface", "Buried"], 0)], allowed: BIOME },
+                  f("y_min", -512.0, -16384.0, 16384.0), f("y_max", 512.0, -16384.0, 16384.0), i("seed", 0, 0, 1000), en("placement", &["Surface", "Buried"], 0)], allowed: BIOME },
 
     // ---------------------------------------------------------------- prop graphs: shapes
     NodeDef { kind: "sphere", title: "Sphere", category: "Shape", help: "A ball. Var: random size variation per instance (0.2 = +-20%).", inputs: &[], outputs: SH,

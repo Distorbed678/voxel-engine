@@ -47,7 +47,8 @@ bool anchor_before(ivec4 a, ivec4 b) {
 }
 
 void main() {
-    uint jobIdx = gl_WorkGroupID.x;
+    // this layer's jobs (prelude.glsl): it draws into the cells it owns
+    uint jobIdx = pc.jobList.j[gl_WorkGroupID.x] & ~JOBLIST_COLUMNS;
     GenJob job = pc.jobs.j[jobIdx];
     gSeed = pc.seed;
     gLod = job.lod;
@@ -229,6 +230,7 @@ void main() {
             for (uint t = lid; t < n; t += 256u) {
                 ivec3 c = cmin + ivec3(int(t) % cn.x, (int(t) / cn.x) % cn.y, int(t) / (cn.x * cn.y));
                 ivec3 q = rmin + c * scale + half_;
+                if (!preview && !wg_owns(float(q.y) + 0.5)) continue;
                 uint vi = base + uint((c.y * CA + c.z) * CA + c.x);
                 uint cur = uint(pc.voxels.v[vi]);
                 if (!graph) {

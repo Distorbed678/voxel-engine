@@ -313,11 +313,14 @@ impl Em<'_, '_> {
     }
 }
 
-/// The build function of every prop graph and the dispatcher, for the props pass only.
-pub(super) fn compile_props(sh: &mut Shared, names: &[String], out: &mut String) {
+/// The build functions of the prop graphs a layer uses (by their global index) and the
+/// dispatcher, for the props pass only.
+pub(super) fn compile_props(sh: &mut Shared, names: &[String], used: &[String], out: &mut String) {
     use std::fmt::Write as _;
     let _ = writeln!(out, "#define NUM_PROP_GRAPHS {}u\n#ifdef PROPS_PASS", names.len());
-    for (k, name) in names.iter().enumerate() {
+    let built: Vec<usize> = (0..names.len()).filter(|&k| used.contains(&names[k])).collect();
+    for &k in &built {
+        let name = &names[k];
         let g = sh.proj.get(crate::graph::GraphKind::Prop, name).unwrap();
         let mut em = Em::new(sh, g, format!("p{k}_"), true);
         if let Some(o) = g.output_node()
@@ -331,7 +334,7 @@ pub(super) fn compile_props(sh: &mut Shared, names: &[String], out: &mut String)
         let _ = writeln!(out, "void prop{k}_build() {{\n    vec3 p = gAnchorP;\n{body}\n}}\n");
     }
     let _ = writeln!(out, "void prop_build(uint g) {{\n    switch (g) {{");
-    for k in 0..names.len() {
+    for &k in &built {
         let _ = writeln!(out, "        case {k}u: prop{k}_build(); break;");
     }
     let _ = writeln!(out, "        default: break;\n    }}\n}}\n#endif");

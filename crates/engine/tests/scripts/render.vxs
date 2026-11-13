@@ -3,13 +3,13 @@
 ui off
 anim 12
 
-# daylight, shadows, clouds, floating isles, water
+# daylight, shadows, clouds, water
 time 0.36
 pos 144 136 -368
 look 90 4
 settle
 wait 240
-expect_image crates/engine/tests/golden/islands.png
+expect_image crates/engine/tests/golden/daylight.png
 
 # solo preview: the same view with one biome everywhere (the images after this one check that
 # turning it off brings the world back)
@@ -120,3 +120,22 @@ look 35 -5
 settle
 wait 120
 expect_image crates/engine/tests/golden/weather.png
+
+# the layers: the sky's floating isles, the upper caves and the Deep (each its own generator)
+weather 0
+time 0.4
+pos 0 4800 0
+look 30 0
+settle
+wait 240
+expect_image crates/engine/tests/golden/sky_islands.png
+pos 0 -500 0
+look 30 -10
+settle
+wait 240
+expect_image crates/engine/tests/golden/upper_caves.png
+pos 0 -3000 0
+look 30 -10
+settle
+wait 240
+expect_image crates/engine/tests/golden/deep.png

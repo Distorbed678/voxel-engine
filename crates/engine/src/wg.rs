@@ -1,11 +1,14 @@
 //! World-generation system: owns the node graph project, compiles it to GLSL, builds the GPU
 //! pipelines on a background thread and keeps live parameters / biome tables in sync.
 //!
+//! Every layer of the world (surface, underground bands, sky) has its own generated code and its
+//! own pipelines (terrain, props, probe), so an edit rebuilds only the layers whose code changed.
+//!
 //! Change flow:
 //!   graph edited -> `mark_dirty()` -> next frame `update()` runs the (fast, CPU) graph compiler
 //!     * same GLSL as running   -> only the parameter buffer changes -> regenerate chunks now
-//!     * different GLSL         -> background thread: shaderc + vkCreateComputePipelines
-//!                                 -> swap pipelines -> regenerate chunks
+//!     * different GLSL         -> background thread: shaderc + vkCreateComputePipelines for the
+//!                                 changed layers -> swap pipelines -> regenerate chunks
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,36 +37,51 @@ pub struct GpuBiome {
 /// Biome ids are 12 bits (quads, model instances, the column buffer).
 pub const MAX_BIOMES: usize = 4096;
 
+/// The generator passes of a layer, in this order everywhere: terrain, props, probe.
+pub const PASS_NAMES: [&str; 3] = ["worldgen_terrain", "worldgen_props", "worldgen_probe"];
+
 struct Job {
     id: u64,
-    terrain: String,
-    props: String,
-    probe: String,
+    /// the layers to build: (layer index, sources of its passes)
+    layers: Vec<(usize, [String; 3])>,
     /// skip the quick tier and go straight to the optimised build
     optimized_only: bool,
+}
+
+/// A layer's built passes (terrain, props, probe) and their sources.
+pub struct BuiltLayer {
+    pub index: usize,
+    pub pipelines: [vk::Pipeline; 3],
+    pub sources: [String; 3],
 }
 
 pub struct BuiltPipelines {
     pub id: u64,
     /// fully inlined (fast generation) build; quick builds are followed by an optimised one
     pub optimized: bool,
-    pub terrain: vk::Pipeline,
-    pub props: vk::Pipeline,
-    pub probe: vk::Pipeline,
-    pub terrain_source: String,
-    pub props_source: String,
-    pub probe_source: String,
+    pub layers: Vec<BuiltLayer>,
     pub deps: Vec<PathBuf>,
     pub ms: f32,
+}
+
+impl BuiltPipelines {
+    pub fn destroy(self, device: &ash::Device) {
+        for l in self.layers {
+            for p in l.pipelines {
+                unsafe { device.destroy_pipeline(p, None) };
+            }
+        }
+    }
 }
 
 pub struct WorldgenSystem {
     pub project: Project,
     pub dir: PathBuf,
     pub compiled: Compiled,
-    /// generated code the running pipelines were built from
-    pub active_source: String,
-    pending_source: Option<String>,
+    /// per layer, the generated code its running pipelines were built from
+    pub active: Vec<String>,
+    /// per layer, the code being built (all layers, built or not)
+    pending: Option<Vec<String>>,
     next_id: u64,
     pending_id: Option<u64>,
     optimizing_id: Option<u64>,
@@ -149,75 +167,52 @@ impl WorldgenSystem {
                         }
                         let t0 = Instant::now();
                         let build = || -> Result<BuiltPipelines> {
-                            let mut a = compiler.compile_source("worldgen_terrain.comp", &job.terrain, ShaderKind::Compute, &[])?;
-                            let mut b = compiler.compile_source("worldgen_props.comp", &job.props, ShaderKind::Compute, &[])?;
-                            let mut c = compiler.compile_source("worldgen_probe.comp", &job.probe, ShaderKind::Compute, &[])?;
-                            let t_glsl = t0.elapsed().as_secs_f32() * 1000.0;
-                            if !optimized {
-                                vkcore::shader::spirv_dont_inline(&mut a.spirv, crate::shaders::worldgen_noinline);
-                                vkcore::shader::spirv_dont_inline(&mut b.spirv, crate::shaders::worldgen_noinline);
-                                vkcore::shader::spirv_dont_inline(&mut c.spirv, crate::shaders::worldgen_noinline);
+                            let mut spirv = Vec::new();
+                            let mut deps = Vec::new();
+                            for (_, sources) in &job.layers {
+                                for (name, src) in PASS_NAMES.iter().zip(sources) {
+                                    let mut out = compiler.compile_source(&format!("{name}.comp"), src, ShaderKind::Compute, &[])?;
+                                    if !optimized {
+                                        vkcore::shader::spirv_dont_inline(&mut out.spirv, crate::shaders::worldgen_noinline);
+                                    }
+                                    deps.extend(out.deps);
+                                    spirv.push(out.spirv);
+                                }
                             }
+                            let t_glsl = t0.elapsed().as_secs_f32() * 1000.0;
                             // the driver compile dominates: build the pipelines in parallel
-                            let (terrain, props, probe) = std::thread::scope(|sc| {
-                                let h = sc.spawn(|| create_compute(&device, layout, &b.spirv));
-                                let hp = sc.spawn(|| create_compute(&device, layout, &c.spirv));
-                                let t = create_compute(&device, layout, &a.spirv);
-                                (
-                                    t,
-                                    h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("props build thread panicked"))),
-                                    hp.join().unwrap_or_else(|_| Err(anyhow::anyhow!("probe build thread panicked"))),
-                                )
+                            let built: Vec<Result<vk::Pipeline>> = std::thread::scope(|sc| {
+                                let hs: Vec<_> = spirv.iter().map(|code| sc.spawn(|| create_compute(&device, layout, code))).collect();
+                                hs.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("pipeline build thread panicked")))).collect()
                             });
-                            let probe = match probe {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    for p in [&terrain, &props].into_iter().flatten() {
-                                        unsafe { device.destroy_pipeline(*p, None) };
-                                    }
-                                    return Err(e);
+                            if let Some(i) = built.iter().position(|b| b.is_err()) {
+                                let mut built = built;
+                                let err = built.remove(i).unwrap_err();
+                                for p in built.into_iter().flatten() {
+                                    unsafe { device.destroy_pipeline(p, None) };
                                 }
-                            };
-                            let terrain = match terrain {
-                                Ok(t) => t,
-                                Err(e) => {
-                                    if let Ok(p) = props {
-                                        unsafe { device.destroy_pipeline(p, None) };
-                                    }
-                                    unsafe { device.destroy_pipeline(probe, None) };
-                                    return Err(e);
-                                }
-                            };
-                            let props = match props {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    unsafe {
-                                        device.destroy_pipeline(terrain, None);
-                                        device.destroy_pipeline(probe, None);
-                                    }
-                                    return Err(e);
-                                }
-                            };
+                                return Err(err);
+                            }
+                            let mut built = built.into_iter().map(|b| b.unwrap());
+                            let layers = job
+                                .layers
+                                .iter()
+                                .map(|(index, sources)| BuiltLayer {
+                                    index: *index,
+                                    pipelines: [built.next().unwrap(), built.next().unwrap(), built.next().unwrap()],
+                                    sources: sources.clone(),
+                                })
+                                .collect();
                             log::info!(
-                                "{} generator: GLSL -> SPIR-V {:.0} ms, driver {:.0} ms",
+                                "{} generator ({} layer(s)): GLSL -> SPIR-V {:.0} ms, driver {:.0} ms",
                                 if optimized { "optimised" } else { "quick" },
+                                job.layers.len(),
                                 t_glsl,
                                 t0.elapsed().as_secs_f32() * 1000.0 - t_glsl
                             );
-                            let mut deps = a.deps;
-                            deps.extend(b.deps);
-                            Ok(BuiltPipelines {
-                                id: job.id,
-                                optimized,
-                                terrain,
-                                props,
-                                probe,
-                                terrain_source: job.terrain.clone(),
-                                props_source: job.props.clone(),
-                                probe_source: job.probe.clone(),
-                                deps,
-                                ms: t0.elapsed().as_secs_f32() * 1000.0,
-                            })
+                            deps.sort();
+                            deps.dedup();
+                            Ok(BuiltPipelines { id: job.id, optimized, layers, deps, ms: t0.elapsed().as_secs_f32() * 1000.0 })
                         };
                         let msg = build().map_err(|e| (job.id, format!("{e:#}")));
                         let failed = msg.is_err();
@@ -240,8 +235,8 @@ impl WorldgenSystem {
             project,
             dir,
             compiled: Compiled::default(),
-            active_source: String::new(),
-            pending_source: None,
+            active: Vec::new(),
+            pending: None,
             next_id: 1,
             pending_id: None,
             optimizing_id: None,
@@ -267,7 +262,12 @@ impl WorldgenSystem {
             autosave: true,
             revision: 0,
         };
-        s.recompile_cpu()?;
+        if let Err(e) = s.recompile_cpu() {
+            // e.g. a generator saved before layers existed
+            log::error!("world generator in {} does not compile ({e:#}); using the built-in one", s.dir.display());
+            s.project = worldgen::defaults::default_project();
+            s.recompile_cpu()?;
+        }
         Ok(s)
     }
 
@@ -291,7 +291,10 @@ impl WorldgenSystem {
     fn recompile_cpu(&mut self) -> Result<()> {
         let t0 = Instant::now();
         let mut c = worldgen::compile(&self.project, &self.block_ids, &self.prefab_info)?;
-        c.source = format!("{}\n{}", self.blocks_header, c.source);
+        for l in &mut c.layers {
+            l.source = format!("{}\n{}", self.blocks_header, l.source);
+        }
+        c.source = c.layers.iter().map(|l| l.source.as_str()).collect();
         self.last_compile_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.compiled = c;
         self.write_biome_table();
@@ -325,8 +328,19 @@ impl WorldgenSystem {
         self.biome_table.write(0, &t);
     }
 
-    pub fn sources(&self) -> (String, String, String) {
-        compose_source(&self.compiled.source)
+    /// Each layer's generated code (the blocks header included).
+    pub fn layer_sources(&self) -> Vec<String> {
+        self.compiled.layers.iter().map(|l| l.source.clone()).collect()
+    }
+
+    /// The pass sources (terrain, props, probe) of every layer.
+    pub fn sources(&self) -> Vec<[String; 3]> {
+        self.compiled.layers.iter().map(|l| compose_source(&l.source).into()).collect()
+    }
+
+    /// Whether the running pipelines were built from the current code.
+    pub fn is_current(&self) -> bool {
+        self.pending.is_none() && self.active == self.layer_sources()
     }
 
     /// Call once per frame. Returns (params_changed, finished builds as (is_current, pipelines)).
@@ -340,16 +354,30 @@ impl WorldgenSystem {
                     // a recompile that changes nothing (e.g. a new block no graph names yet)
                     // must not regenerate the world
                     params_changed = self.compiled.params != old_params || self.compiled.source != old_source;
-                    let src = self.compiled.source.clone();
-                    let already = self.pending_source.as_ref() == Some(&src) || (self.pending_source.is_none() && self.active_source == src);
-                    if !already {
-                        let (terrain, props, probe) = self.sources();
+                    let target = self.layer_sources();
+                    // what the running pipelines (plus the build under way) will be
+                    let base = self.pending.clone().unwrap_or_else(|| self.active.clone());
+                    if target != base {
+                        // build the layers whose code differs from what's running
+                        let changed: Vec<(usize, [String; 3])> = target
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, src)| self.active.get(*i) != Some(*src))
+                            .map(|(i, src)| (i, compose_source(src).into()))
+                            .collect();
                         let id = self.next_id;
                         self.next_id += 1;
-                        self.pending_id = Some(id);
-                        self.pending_source = Some(src);
                         self.optimizing_id = None;
-                        let _ = self.tx.send(Job { id, terrain, props, probe, optimized_only: false });
+                        if changed.is_empty() {
+                            // back to what's running (an edit undone, or layers removed)
+                            self.pending_id = None;
+                            self.pending = None;
+                            self.active = target;
+                        } else {
+                            self.pending_id = Some(id);
+                            self.pending = Some(target);
+                            let _ = self.tx.send(Job { id, layers: changed, optimized_only: false });
+                        }
                     }
                     self.last_error = None;
                 }
@@ -364,7 +392,7 @@ impl WorldgenSystem {
                     if current {
                         if Some(b.id) == self.pending_id {
                             self.pending_id = None;
-                            self.active_source = self.pending_source.take().unwrap_or_default();
+                            self.active = self.pending.take().unwrap_or_default();
                             self.optimizing_id = if b.optimized { None } else { Some(b.id) };
                         } else if b.optimized {
                             self.optimizing_id = None;
@@ -377,7 +405,7 @@ impl WorldgenSystem {
                 Err((id, e)) => {
                     if Some(id) == self.pending_id {
                         self.pending_id = None;
-                        self.pending_source = None;
+                        self.pending = None;
                     }
                     if Some(id) == self.optimizing_id {
                         self.optimizing_id = None;
@@ -404,11 +432,11 @@ impl WorldgenSystem {
     /// Build the fully optimised pipelines for the currently active source (used at startup,
     /// which boots with the quick build).
     pub fn request_optimized(&mut self) {
-        let (terrain, props, probe) = self.sources();
+        let layers = self.sources().into_iter().enumerate().collect();
         let id = self.next_id;
         self.next_id += 1;
         self.optimizing_id = Some(id);
-        let _ = self.tx.send(Job { id, terrain, props, probe, optimized_only: true });
+        let _ = self.tx.send(Job { id, layers, optimized_only: true });
     }
 
     pub fn save(&mut self) {
@@ -440,11 +468,7 @@ impl WorldgenSystem {
         }
         while let Ok(msg) = self.rx.try_recv() {
             if let Ok(b) = msg {
-                unsafe {
-                    ctx.device.destroy_pipeline(b.terrain, None);
-                    ctx.device.destroy_pipeline(b.props, None);
-                    ctx.device.destroy_pipeline(b.probe, None);
-                }
+                b.destroy(&ctx.device);
             }
         }
         self.biome_table.destroy(ctx);

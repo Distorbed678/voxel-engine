@@ -7,13 +7,16 @@
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer EditBuf { uvec2 e[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer ParamBuf { float p[]; };
 layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer PrefabTable { uvec4 t[]; };
+// a layer's jobs: job index | JOBLIST_COLUMNS when this layer writes the job's column biomes
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer JobListBuf { uint j[]; };
+#define JOBLIST_COLUMNS 0x80000000u
 
 layout(push_constant, scalar) uniform GenPC {
     GenJobBuf jobs;
     VoxelBuf voxels;
     JobResultBuf results;
     EditBuf edits;
-    ParamBuf params;     // live-tweakable node parameters (no recompile needed)
+    ParamBuf params;     // live-tweakable node parameters (no recompile needed): this layer's block
     ColumnBuf columns;   // per job, per column: biome id (written by the terrain pass)
     PrefabTable prefabTable;
     ColumnBuf prefabData;
@@ -24,7 +27,17 @@ layout(push_constant, scalar) uniform GenPC {
     BlockTable blocks;   // kinds and rotations (BlockInfo.flags), so block edits never recompile
     uint64_t propPrims;  // props pass: scratch for building prop instances (props_lib.glsl)
     uint64_t propSegs;
+    // Layers: each layer's passes run on its own jobs (jobList, numJobs entries) and write only
+    // the cells whose centre height is in [ownMin, ownMax) (Compiled::owned_ranges).
+    JobListBuf jobList;
+    float ownMin;
+    float ownMax;
+    // solo preview: zone and biome (global ids) shown everywhere, -1 = off
+    float soloZone;
+    float soloBiome;
 } pc;
+
+bool wg_owns(float y) { return y >= pc.ownMin && y < pc.ownMax; }
 
 // Globals set by the main template before calling into generated code.
 uint gSeed;

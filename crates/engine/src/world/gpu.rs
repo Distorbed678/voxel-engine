@@ -12,6 +12,14 @@ pub const MAX_JOBS: usize = 256;
 pub const SLOT_U16: u64 = 39424;
 pub const NUM_STREAMS: usize = 13;
 pub const BATCH_SLOTS: usize = 4;
+/// Job lists per batch slot: two per generator layer (the cells it owns, and sole-layer jobs),
+/// so at most 8 layers.
+pub const MAX_LAYERS: usize = 16;
+/// Job list entry flag: this layer writes the job's column biomes (`JOBLIST_COLUMNS`).
+const JOBLIST_COLUMNS: u32 = 0x8000_0000;
+/// Voxels in a slot (34³) and column entries (34²).
+const SLOT_CELLS: u64 = 34 * 34 * 34;
+const SLOT_COLUMNS: u64 = 34 * 34;
 /// Props pass scratch (`shaders/worldgen/props_lib.glsl`, `props_main.glsl`): per job, 16 prop
 /// instances are built at a time, each with up to 192 primitives (80 bytes) and 96 skeleton
 /// segments (36 bytes).
@@ -79,6 +87,9 @@ pub struct JobDesc {
     pub edits: Vec<(u32, u16)>,
     /// A prop preview: (prop graph index, seed). Implies `readback`.
     pub preview: Option<(u32, u32)>,
+    /// Generate every cell with this layer (the camera's), not each with the layer owning it:
+    /// far chunks across a layer boundary, whose other side the camera can't see.
+    pub sole_layer: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +106,8 @@ struct BatchSlot {
     readback: Buffer,
     voxel_readback: Option<Buffer>,
     jobs_buf: Buffer,
+    /// every layer's job list, one after the other
+    job_lists: Buffer,
     edits_buf: Buffer,
     state: SlotState,
     jobs: Vec<JobDesc>,
@@ -120,6 +133,31 @@ pub struct GenPush {
     /// scratch for building prop instances (props pass)
     pub prop_prims: u64,
     pub prop_segs: u64,
+    /// the layer's jobs (indices into `jobs`), and the cell heights it owns
+    pub job_list: u64,
+    pub own_min: f32,
+    pub own_max: f32,
+    /// solo preview zone and biome (global ids, -1 = off)
+    pub solo_zone: f32,
+    pub solo_biome: f32,
+}
+
+/// One generator layer: its passes, its block of parameters and the cell heights it owns,
+/// [own.0, own.1) (`worldgen::Compiled::owned_ranges`).
+#[derive(Clone, Copy, Debug)]
+pub struct LayerPass {
+    pub terrain: vk::Pipeline,
+    pub props: vk::Pipeline,
+    pub param_base: u32,
+    pub own: (f32, f32),
+}
+
+impl LayerPass {
+    /// Whether the layer owns any of a job's cells, and all of them.
+    fn covers(&self, key: &ChunkKey) -> (bool, bool) {
+        let (lo, hi) = key.cell_heights();
+        (self.own.0 <= hi && self.own.1 > lo, self.own.0 <= lo && hi < self.own.1)
+    }
 }
 
 #[repr(C)]
@@ -175,8 +213,8 @@ struct PrefixPush {
 }
 
 pub struct WorldPipelines {
-    pub generate: vk::Pipeline,
-    pub props: vk::Pipeline,
+    /// the generator layers (the first one also draws prop previews)
+    pub layers: Vec<LayerPass>,
     pub apply_edits: vk::Pipeline,
     pub mesh_count: vk::Pipeline,
     pub mesh_write: vk::Pipeline,
@@ -210,8 +248,8 @@ pub struct WorldGpu {
     params_staging: Buffer,
     params_dirty: bool,
     pub param_values: Vec<f32>,
-    /// solo preview zone and biome (-1 = off)
-    solo: [f32; 2],
+    /// solo preview zone and biome (global ids, -1 = off), passed in the push constants
+    pub solo: [f32; 2],
     pub prefab_addrs: (u64, u64),
 }
 
@@ -227,6 +265,7 @@ impl WorldGpu {
                 readback: Buffer::readback(ctx, &format!("batch_readback_{i}"), RESULTS_BYTES + 64)?,
                 voxel_readback: None,
                 jobs_buf: Buffer::upload(ctx, &format!("jobs_{i}"), (MAX_JOBS * 32) as u64)?,
+                job_lists: Buffer::upload(ctx, &format!("job_lists_{i}"), (MAX_JOBS * MAX_LAYERS * 4) as u64)?,
                 edits_buf: Buffer::upload(ctx, &format!("edits_{i}"), 1 << 20)?,
                 state: SlotState::Free,
                 jobs: Vec::new(),
@@ -264,14 +303,9 @@ impl WorldGpu {
         self.params_dirty = true;
     }
 
-    /// Solo preview: zone and biome indices shown everywhere (None = off); see
-    /// `worldgen::compile::SOLO_PARAM`.
+    /// Solo preview: zone and biome (global ids) shown everywhere (None = off).
     pub fn set_solo(&mut self, zone: Option<u32>, biome: Option<u32>) {
-        let v = [zone.map_or(-1.0, |z| z as f32), biome.map_or(-1.0, |b| b as f32)];
-        if v != self.solo {
-            self.solo = v;
-            self.params_dirty = true;
-        }
+        self.solo = [zone.map_or(-1.0, |z| z as f32), biome.map_or(-1.0, |b| b as f32)];
     }
 
     pub fn has_free_slot(&self) -> bool {
@@ -321,16 +355,13 @@ impl WorldGpu {
         let d = &ctx.device;
         let mut any = false;
         if self.params_dirty {
-            use worldgen::compile::SOLO_PARAM;
-            let n = self.param_values.len().min(SOLO_PARAM);
-            self.params_staging.write(0, &self.param_values[..n]);
-            self.params_staging.write(SOLO_PARAM as u64 * 4, &self.solo);
-            let mut regions = vec![vk::BufferCopy { src_offset: SOLO_PARAM as u64 * 4, dst_offset: SOLO_PARAM as u64 * 4, size: 8 }];
+            let n = self.param_values.len().min(worldgen::compile::PARAM_CAPACITY);
             if n > 0 {
-                regions.push(vk::BufferCopy { src_offset: 0, dst_offset: 0, size: (n * 4) as u64 });
+                self.params_staging.write(0, &self.param_values[..n]);
+                let region = vk::BufferCopy { src_offset: 0, dst_offset: 0, size: (n * 4) as u64 };
+                unsafe { d.cmd_copy_buffer(cb, self.params_staging.raw, self.params.raw, &[region]) };
+                any = true;
             }
-            unsafe { d.cmd_copy_buffer(cb, self.params_staging.raw, self.params.raw, &regions) };
-            any = true;
             self.params_dirty = false;
         }
         for slot in 0..self.slots.len() {
@@ -450,6 +481,62 @@ impl WorldGpu {
                 slot.edits_buf.write(0, &edits);
             }
         }
+        // ---- which layers generate which jobs ----
+        // Every layer owning some of a job's cells runs on it; one of them (the owner of the
+        // chunk's middle, else the first) writes its column biomes. Jobs no single layer covers
+        // start from air: cells no layer owns stay empty. A job with a sole layer is generated by
+        // that layer alone, owning every cell (a second dispatch of the layer: groups
+        // `layers.len()..`).
+        let layers = &pipes.layers[..pipes.layers.len().min(MAX_LAYERS / 2)];
+        let nl = layers.len();
+        let mut lists: Vec<Vec<u32>> = vec![Vec::new(); nl * 2];
+        let mut clear: Vec<(u32, bool)> = Vec::new();
+        for (i, j) in jobs.iter().take(n).enumerate() {
+            if j.preview.is_some() {
+                if nl > 0 {
+                    lists[0].push(i as u32 | JOBLIST_COLUMNS);
+                }
+                continue;
+            }
+            if let Some(li) = j.sole_layer.map(|l| l as usize).filter(|&l| l < nl) {
+                lists[nl + li].push(i as u32 | JOBLIST_COLUMNS);
+                continue;
+            }
+            let mid = j.key.origin().y as f32 + (16i32 << j.key.lod) as f32;
+            let mut col: Option<usize> = None;
+            let mut full = false;
+            let mut hits = Vec::new();
+            for (li, l) in layers.iter().enumerate() {
+                let (any, all) = l.covers(&j.key);
+                if !any {
+                    continue;
+                }
+                full |= all;
+                hits.push(li);
+                if mid >= l.own.0 && mid < l.own.1 {
+                    col = Some(li);
+                }
+            }
+            let col = col.or(hits.first().copied());
+            for &li in &hits {
+                lists[li].push(i as u32 | if Some(li) == col { JOBLIST_COLUMNS } else { 0 });
+            }
+            if !full {
+                clear.push((i as u32, col.is_none()));
+            }
+        }
+        let mut list_offsets = Vec::with_capacity(lists.len());
+        {
+            let flat: Vec<u32> = lists.iter().flatten().copied().collect();
+            let mut at = 0u64;
+            for l in &lists {
+                list_offsets.push(at);
+                at += l.len() as u64 * 4;
+            }
+            if !flat.is_empty() {
+                self.slots[slot_idx].job_lists.write(0, &flat);
+            }
+        }
         if jobs.iter().take(n).any(|j| j.readback) && self.slots[slot_idx].voxel_readback.is_none() {
             let b = Buffer::readback(ctx, "voxel_readback", MAX_JOBS as u64 * SLOT_U16 * 2).map_err(|_| jobs.clone())?;
             self.slots[slot_idx].voxel_readback = Some(b);
@@ -468,6 +555,12 @@ impl WorldGpu {
         }
         unsafe {
             d.cmd_fill_buffer(cb, self.results.raw, 0, RESULTS_BYTES, 0);
+            for &(i, columns) in &clear {
+                d.cmd_fill_buffer(cb, self.voxels.raw, i as u64 * SLOT_U16 * 2, SLOT_CELLS * 2, 0);
+                if columns {
+                    d.cmd_fill_buffer(cb, self.columns.raw, i as u64 * SLOT_COLUMNS * 2, SLOT_COLUMNS * 2, 0);
+                }
+            }
         }
         memory_barrier(
             ctx,
@@ -489,35 +582,56 @@ impl WorldGpu {
             vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
         );
         let push = |p: &[u8]| unsafe { d.cmd_push_constants(cb, pipes.layout, vk::ShaderStageFlags::ALL, 0, p) };
-        let gen_push = GenPush {
-                jobs: slot.jobs_buf.address,
-                voxels: self.voxels.address,
-                results: self.results.address,
-                edits: slot.edits_buf.address,
-                params: self.params.address,
-                columns: self.columns.address,
-                prefab_table: self.prefab_addrs.0,
-                prefab_data: self.prefab_addrs.1,
-                num_jobs: n as u32,
-                seed,
-                edit_count,
-                pad: 0,
-                blocks: block_table,
-                prop_prims: self.prop_prims.address,
-                prop_segs: self.prop_segs.address,
+        // group g: layer g % nl, owning its cells (g < nl) or everything
+        let layer_push = |g: usize| GenPush {
+            jobs: slot.jobs_buf.address,
+            voxels: self.voxels.address,
+            results: self.results.address,
+            edits: slot.edits_buf.address,
+            params: self.params.address + layers[g % nl].param_base as u64 * 4,
+            columns: self.columns.address,
+            prefab_table: self.prefab_addrs.0,
+            prefab_data: self.prefab_addrs.1,
+            num_jobs: lists[g].len() as u32,
+            seed,
+            edit_count,
+            pad: 0,
+            blocks: block_table,
+            prop_prims: self.prop_prims.address,
+            prop_segs: self.prop_segs.address,
+            job_list: slot.job_lists.address + list_offsets[g],
+            own_min: if g < nl { layers[g].own.0.max(-1.0e30) } else { -1.0e30 },
+            own_max: if g < nl { layers[g].own.1.min(1.0e30) } else { 1.0e30 },
+            solo_zone: self.solo[0],
+            solo_biome: self.solo[1],
         };
-        unsafe {
-            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.generate);
-            push(bytemuck::bytes_of(&gen_push));
-            d.cmd_dispatch(cb, 5, 5, n as u32);
+        // terrain: the groups write disjoint cells, so they run back to back
+        for g in (0..lists.len()).filter(|&g| !lists[g].is_empty()) {
+            unsafe {
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, layers[g % nl].terrain);
+                push(bytemuck::bytes_of(&layer_push(g)));
+                d.cmd_dispatch(cb, 5, 5, lists[g].len() as u32);
+            }
         }
         compute_barrier(ctx, cb);
         profiler.end(ctx, cb, frame_slot);
         profiler.begin(ctx, cb, frame_slot, "props");
-        unsafe {
-            d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, pipes.props);
-            push(bytemuck::bytes_of(&gen_push));
-            d.cmd_dispatch(cb, n as u32, 1, 1);
+        // props: a job's prop scratch is shared by its layers, so a layer that shares jobs with
+        // one dispatched since the last barrier waits for it
+        let mut busy = vec![false; n];
+        for g in (0..lists.len()).filter(|&g| !lists[g].is_empty()) {
+            if lists[g].iter().any(|&e| busy[(e & !JOBLIST_COLUMNS) as usize]) {
+                compute_barrier(ctx, cb);
+                busy.iter_mut().for_each(|b| *b = false);
+            }
+            for &e in &lists[g] {
+                busy[(e & !JOBLIST_COLUMNS) as usize] = true;
+            }
+            unsafe {
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, layers[g % nl].props);
+                push(bytemuck::bytes_of(&layer_push(g)));
+                d.cmd_dispatch(cb, lists[g].len() as u32, 1, 1);
+            }
         }
         compute_barrier(ctx, cb);
         if edit_count > 0 {
@@ -649,6 +763,7 @@ impl WorldGpu {
             s.scratch.destroy(ctx);
             s.readback.destroy(ctx);
             s.jobs_buf.destroy(ctx);
+            s.job_lists.destroy(ctx);
             s.edits_buf.destroy(ctx);
         }
         for b in &mut self.record_staging {
