@@ -8,9 +8,10 @@ vec3 sky_color(FrameData f, vec3 dir) {
     float y = dir.y;
     float horizonBlend = pow(1.0 - clamp(y, 0.0, 1.0), 4.0);
     vec3 col = mix(f.skyZenith.rgb, f.skyHorizon.rgb, horizonBlend);
-    // below the horizon fade to a darker ground haze
+    // below the horizon: haze with a hint of the ground (what lies beyond the streamed world, seen
+    // through kilometres of air)
     if (y < 0.0) {
-        col = mix(f.skyHorizon.rgb, f.groundColor.rgb * 0.6, clamp(-y * 3.0, 0.0, 1.0));
+        col = mix(f.skyHorizon.rgb, mix(f.skyHorizon.rgb, f.groundColor.rgb, 0.3) * 0.85, clamp(-y * 3.0, 0.0, 1.0));
     }
     float mu = dot(dir, sunDir);
     float sunUp = smoothstep(-0.15, 0.1, sunDir.y);
@@ -58,12 +59,14 @@ vec3 apply_fog(FrameData f, vec3 color, vec3 rel, vec3 viewDir) {
     float integral = abs(dy) > 0.01
         ? heightTerm * (1.0 - exp(-falloff * dy)) / (falloff * dy)
         : heightTerm;
-    float amount = 1.0 - exp(-density * max(dist - f.fogParams.y, 0.0) * clamp(integral, 0.0, 4.0));
-    // distance haze so the far LOD rings melt into the sky
+    float amount = clamp(1.0 - exp(-density * max(dist - f.fogParams.y, 0.0) * clamp(integral, 0.0, 4.0)), 0.0, 1.0);
+    vec3 sky = sky_color(f, viewDir);
+    vec3 fogCol = mix(f.fogColor.rgb, sky, 0.65);
+    color = mix(color, fogCol, amount);
+    // distance haze: the far LOD rings melt into exactly the sky behind them, so the edge of the
+    // streamed world never shows (seen from high above, it is a square)
     float haze = smoothstep(f.fogParams.w * 0.55, f.fogParams.w, dist);
-    amount = clamp(max(amount, haze), 0.0, 1.0);
-    vec3 fogCol = mix(f.fogColor.rgb, sky_color(f, viewDir), 0.65);
-    return mix(color, fogCol, amount);
+    return mix(color, sky, haze);
 }
 
 #endif

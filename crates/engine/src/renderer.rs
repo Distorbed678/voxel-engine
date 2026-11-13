@@ -151,6 +151,36 @@ struct CloudPush {
     density: f32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CloudSeaPush {
+    frame: u64,
+    base: f32,
+    top: f32,
+    density: f32,
+    amp: f32,
+}
+
+/// The cloud sea between the surface and the sky layer (World Output): its base and top heights
+/// and how dense it is (0 = none). See `shaders/render/cloud_sea.frag`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CloudSea {
+    pub base: f32,
+    pub top: f32,
+    pub density: f32,
+}
+
+impl CloudSea {
+    /// Height of the lumps on its top and bottom faces.
+    pub fn amp(&self) -> f32 {
+        ((self.top - self.base) * 0.3).clamp(0.0, 160.0)
+    }
+    /// Whether the camera at height y sees it (from far below it is invisible).
+    pub fn visible_from(&self, y: f32) -> bool {
+        self.density > 0.0 && self.top > self.base && y > self.base - 1200.0
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CloudSettings {
     pub enabled: bool,
@@ -181,6 +211,7 @@ pub struct Pipelines {
     pub shadow: PipelineHandle,
     pub sky: PipelineHandle,
     pub clouds: PipelineHandle,
+    pub cloud_sea: PipelineHandle,
     pub tonemap: PipelineHandle,
     pub sort_trans: PipelineHandle,
     pub hiz: PipelineHandle,
@@ -570,6 +601,21 @@ impl Renderer {
                     },
                 ),
             )?,
+            cloud_sea: pm.create(
+                ctx,
+                "cloud_sea",
+                fullscreen(
+                    "render/cloud_sea.frag",
+                    GraphicsState {
+                        color_formats: vec![HDR_FORMAT],
+                        blend: vec![BlendMode::Premultiplied],
+                        depth_format: Some(DEPTH_FORMAT),
+                        depth_test: false,
+                        depth_write: false,
+                        ..Default::default()
+                    },
+                ),
+            )?,
             sort_trans: pm.create(ctx, "sort_trans", compute("render/sort_trans.comp", &[]))?,
             hiz: pm.create(ctx, "hiz", compute("render/hiz.comp", &[]))?,
             tonemap: pm.create(
@@ -716,6 +762,8 @@ impl Renderer {
         // cascades to redraw this frame (bit c); the others keep last frame's contents
         shadow_mask: u32,
         clouds: CloudSettings,
+        // the cloud sea, when the camera can see it
+        cloud_sea: Option<CloudSea>,
         overdraw: bool,
         particles: Option<(vk::Pipeline, crate::particles::ParticlePush)>,
         occlusion: bool,
@@ -954,6 +1002,11 @@ impl Renderer {
                     thickness: clouds.thickness,
                     density: clouds.density,
                 }));
+                d.cmd_draw(cb, 3, 1, 0, 0);
+            }
+            if let Some(cloud_sea) = cloud_sea {
+                d.cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pm.get(self.pipes.cloud_sea));
+                push(bytemuck::bytes_of(&CloudSeaPush { frame: frame_addr, base: cloud_sea.base, top: cloud_sea.top, density: cloud_sea.density.min(1.0), amp: cloud_sea.amp() }));
                 d.cmd_draw(cb, 3, 1, 0, 0);
             }
             if let Some((pipe, pp)) = &particles {

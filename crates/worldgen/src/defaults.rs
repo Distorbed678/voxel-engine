@@ -209,13 +209,14 @@ fn birch_hills() -> Graph {
 /// Sky layer: islands of 3D noise in a band around y = 4800, open air above and below.
 fn floating_isles() -> Graph {
     let mut b = B::new("floating_isles", GraphKind::Biome);
-    let blob = b.noise("simplex3d", 0.0, 160.0, 70.0, 3, 40.0, 12);
+    // big, thick islands: thin ones turn to dust at the coarse LODs the sky is seen at
+    let blob = b.noise("simplex3d", 0.0, 160.0, 140.0, 3, 50.0, 12);
     let center = b.n("coord", 0.0, 400.0, &[("axis", ev("Y"))]);
     let dist = b.n("scale_bias", 200.0, 400.0, &[("scale", fv(1.0)), ("bias", fv(-4800.0))]);
     b.l(center, dist, 0);
     let ad = b.n("abs", 380.0, 400.0, &[]);
     b.l(dist, ad, 0);
-    let falloff = b.n("scale_bias", 540.0, 400.0, &[("scale", fv(-1.6)), ("bias", fv(-8.0))]);
+    let falloff = b.n("scale_bias", 540.0, 400.0, &[("scale", fv(-0.6)), ("bias", fv(-25.0))]);
     b.l(ad, falloff, 0);
     let isl = b.n("add", 720.0, 250.0, &[]);
     b.l(blob, isl, 0);

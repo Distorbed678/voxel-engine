@@ -129,6 +129,18 @@ look 30 0
 settle
 wait 240
 expect_image crates/engine/tests/golden/sky_islands.png
+# the cloud sea: from above (the sky layer's islands over it), from below (an overcast that fades
+# in near its base; from the ground the sky looks normal)
+pos 0 5200 0
+look 30 -25
+settle
+wait 120
+expect_image crates/engine/tests/golden/cloud_sea_above.png
+pos 0 2400 0
+look 30 20
+settle
+wait 120
+expect_image crates/engine/tests/golden/cloud_sea_below.png
 pos 0 -500 0
 look 30 -10
 settle

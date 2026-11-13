@@ -833,6 +833,12 @@ impl Engine {
 
     /// The solo preview as generator indices: a zone alone, or a surface biome with a zone that
     /// uses it, or a cave biome in every zone's caves.
+    /// The cloud sea's settings (World Output).
+    pub fn cloud_sea(&self) -> crate::renderer::CloudSea {
+        let c = &self.wg.compiled;
+        crate::renderer::CloudSea { base: c.value(c.cloud_sea[0]), top: c.value(c.cloud_sea[1]), density: c.value(c.cloud_sea[2]) }
+    }
+
     /// The generator layers that have pipelines, as the batch recorder dispatches them.
     fn layer_passes(&self) -> Vec<crate::world::gpu::LayerPass> {
         let own = self.wg.compiled.owned_ranges();
@@ -1341,6 +1347,7 @@ impl Engine {
         self.prev_view_proj = unjittered.view_proj;
         self.prev_cam_pos = self.camera.pos;
 
+        let (sea, cam_y) = (self.cloud_sea(), self.camera.pos.y as f32);
         self.renderer.record_scene(
             &self.ctx,
             cb,
@@ -1355,11 +1362,13 @@ impl Engine {
             self.wg.biome_table.address,
             self.shadow_mask,
             {
-                // weather thickens the clouds
+                // weather thickens the clouds; up in (or above) the cloud sea they're hidden
                 let mut c = self.ui.clouds;
                 c.coverage = (c.coverage + 0.3 * self.atmosphere.weather).min(1.0);
+                c.enabled &= !(sea.density > 0.0 && cam_y > sea.base + sea.amp());
                 c
             },
+            Some(sea).filter(|s| s.visible_from(cam_y)),
             self.ui.debug_view == crate::ui::DEBUG_OVERDRAW,
             particle_draw,
             self.ui.occlusion,
