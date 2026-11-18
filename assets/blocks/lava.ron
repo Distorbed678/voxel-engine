@@ -10,4 +10,11 @@
         color: (255, 140, 50),
         level: 15,
     ),
+    fluid: true,
+    flow: (
+        distance: 3,
+        step: 0.6,
+        infinite: false,
+        hardens: "basalt",
+    ),
 )

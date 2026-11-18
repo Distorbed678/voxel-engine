@@ -275,11 +275,11 @@ pub static NODES: &[NodeDef] = &[
     NodeDef { kind: "zone_output", title: "Zone Output", category: "Output", help: "A zone: which biomes appear inside it and how caves are carved.",
         inputs: &[("Biomes", Biome), ("Caves", Density), ("Cave Biomes", Biome), ("Environment", Environment)], outputs: &[], params: &[col("map_color", [0.4, 0.7, 0.3])], allowed: ZONE },
     NodeDef { kind: "biome_output", title: "Biome Output", category: "Output",
-        help: "A biome: terrain density (>0 = solid), materials, ground cover, props and environment.",
+        help: "A biome: terrain density (>0 = solid), materials, ground cover, props and environment. Its seas (below the layer's sea level) are of `fluid` (a fluid block, or air for none), frozen over on top with `ice`.",
         inputs: &[("Terrain", Density), ("Material", Material), ("Ground Cover", Decor), ("Props 1", PropLayer), ("Props 2", PropLayer), ("Props 3", PropLayer), ("Props 4", PropLayer), ("Props 5", PropLayer), ("Props 6", PropLayer), ("Props 7", PropLayer), ("Props 8", PropLayer), ("Props 9", PropLayer), ("Props 10", PropLayer), ("Environment", Environment)],
         outputs: &[],
         params: &[
-            en("fluid", &["Water", "Lava", "Ice", "None"], 0),
+            blk("fluid", "water"), b("ice", false),
             col("grass_tint", [0.45, 0.75, 0.3]),
             col("foliage_tint", [0.35, 0.65, 0.25]),
             col("water_tint", [0.15, 0.35, 0.65]),

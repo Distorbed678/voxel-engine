@@ -231,7 +231,7 @@ fn floating_isles() -> Graph {
     b.l(gc, o, 2);
     let tree = b.prop("willow", 0.0, 840.0);
     b.scatter(tree, 260.0, 840.0, &[("spacing", fv(16.0)), ("chance", fv(0.5)), ("y_min", fv(4000.0)), ("y_max", fv(6200.0))], 3, None);
-    b.out_params(&[("fluid", ev("None")), ("grass_tint", Value::Color([0.42, 0.85, 0.45])), ("map_color", Value::Color([0.4, 0.85, 0.6]))]);
+    b.out_params(&[("fluid", bk("air")), ("grass_tint", Value::Color([0.42, 0.85, 0.45])), ("map_color", Value::Color([0.4, 0.85, 0.6]))]);
     b.g
 }
 
@@ -271,7 +271,7 @@ fn underground_biome(name: &str, base: &str, floor: &str, plants: &[(&str, f32)]
     }
     let gc = b.n("ground_cover", 220.0, 560.0, &gc_params);
     b.l(gc, o, 2);
-    b.out_params(&[("fluid", ev(fluid)), ("map_color", Value::Color(map))]);
+    b.out_params(&[("fluid", bk(&fluid.to_lowercase())), ("map_color", Value::Color(map))]);
     b.g
 }
 
@@ -405,7 +405,7 @@ fn glacier() -> Graph {
     b.scatter(spike, 260.0, 400.0, &[("spacing", fv(26.0)), ("chance", fv(0.35)), ("any_surface", Value::B(true))], 3, None);
     let ice = b.prop("boulder_ice", 0.0, 560.0);
     b.scatter(ice, 260.0, 560.0, &[("spacing", fv(30.0)), ("chance", fv(0.3)), ("any_surface", Value::B(true)), ("seed", iv(2))], 4, None);
-    b.out_params(&[("fluid", ev("Ice")), ("water_tint", Value::Color([0.3, 0.5, 0.8])), ("fog_color", Value::Color([0.85, 0.9, 1.0])), ("fog_density", fv(1.8)), ("map_color", Value::Color([0.85, 0.92, 1.0]))]);
+    b.out_params(&[("fluid", bk("water")), ("ice", Value::B(true)), ("water_tint", Value::Color([0.3, 0.5, 0.8])), ("fog_color", Value::Color([0.85, 0.9, 1.0])), ("fog_density", fv(1.8)), ("map_color", Value::Color([0.85, 0.92, 1.0]))]);
     b.g
 }
 
@@ -478,7 +478,7 @@ fn ashlands() -> Graph {
     b.scatter(dead, 260.0, 780.0, &[("spacing", fv(16.0)), ("chance", fv(0.4)), ("surface", bk("ash"))], 3, None);
     let col = b.prop("basalt_column", 0.0, 920.0);
     b.scatter(col, 260.0, 920.0, &[("spacing", fv(12.0)), ("chance", fv(0.35)), ("any_surface", Value::B(true)), ("seed", iv(7))], 4, None);
-    b.out_params(&[("fluid", ev("Lava")), ("grass_tint", Value::Color([0.4, 0.38, 0.32])), ("fog_color", Value::Color([0.45, 0.38, 0.35])), ("fog_density", fv(3.0)), ("map_color", Value::Color([0.35, 0.33, 0.32]))]);
+    b.out_params(&[("fluid", bk("lava")), ("grass_tint", Value::Color([0.4, 0.38, 0.32])), ("fog_color", Value::Color([0.45, 0.38, 0.35])), ("fog_density", fv(3.0)), ("map_color", Value::Color([0.35, 0.33, 0.32]))]);
     b.g
 }
 
@@ -507,7 +507,7 @@ fn lava_fields() -> Graph {
     b.l(ns, o, 1);
     let spike = b.prop("obsidian_spike", 0.0, 640.0);
     b.scatter(spike, 260.0, 640.0, &[("spacing", fv(30.0)), ("chance", fv(0.3)), ("any_surface", Value::B(true))], 3, None);
-    b.out_params(&[("fluid", ev("Lava")), ("fog_color", Value::Color([0.55, 0.3, 0.2])), ("fog_density", fv(3.5)), ("map_color", Value::Color([0.75, 0.25, 0.1]))]);
+    b.out_params(&[("fluid", bk("lava")), ("fog_color", Value::Color([0.55, 0.3, 0.2])), ("fog_density", fv(3.5)), ("map_color", Value::Color([0.75, 0.25, 0.1]))]);
     b.g
 }
 
@@ -541,7 +541,7 @@ fn cave_biome(name: &str, floor: &str, ceiling: &str, accent: Option<(&str, f32)
     }
     let gc = b.n("ground_cover", 520.0, 260.0, &params);
     b.l(gc, o, 2);
-    b.out_params(&[("fluid", ev("None")), ("map_color", Value::Color(map))]);
+    b.out_params(&[("fluid", bk("air")), ("map_color", Value::Color(map))]);
     b.g
 }
 

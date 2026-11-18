@@ -7,9 +7,10 @@
             kind: "biome_output",
             pos: (1320.0, 0.0),
             params: {
-                "fluid": E("Water"),
+                "fluid": Block("water"),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
                 "grass_tint": Color((0.45, 0.75, 0.3)),
+                "ice": B(false),
                 "map_color": Color((0.3, 0.5, 0.3)),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },

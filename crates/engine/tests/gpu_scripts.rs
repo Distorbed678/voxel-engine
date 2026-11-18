@@ -118,3 +118,9 @@ fn environment() {
 fn particles() {
     run("particles");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn fluids() {
+    run("fluids");
+}

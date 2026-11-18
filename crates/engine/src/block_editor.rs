@@ -404,8 +404,29 @@ impl BlockEditorUi {
         }
         ui.checkbox("Washed away by flowing fluids", &mut d.washes_away);
         ui.checkbox("Fluid (flow levels, lowered surface)", &mut d.fluid);
-        if ui.is_item_hovered() {
-            ui.tooltip_text("the flowing-water simulation handles water only for now");
+        if d.fluid {
+            ui.indent();
+            let mut dist = d.flow.distance as i32;
+            ui.set_next_item_width(200.0);
+            if ui.slider("Flow distance", 1, 7, &mut dist) {
+                d.flow.distance = dist.clamp(1, 7) as u8;
+            }
+            ui.set_next_item_width(200.0);
+            ui.slider("Seconds per block", 0.05f32, 3.0f32, &mut d.flow.step);
+            ui.checkbox("Infinite sources", &mut d.flow.infinite);
+            if ui.is_item_hovered() {
+                ui.tooltip_text("a gap between two sources on solid ground becomes a source too");
+            }
+            let names: Vec<String> = std::iter::once("(nothing)".to_string()).chain(reg.live().filter(|(_, b)| !b.fluid).map(|(_, b)| b.name.clone())).collect();
+            let mut h = names.iter().position(|n| *n == d.flow.hardens).unwrap_or(0);
+            ui.set_next_item_width(200.0);
+            if ui.combo_simple_string("Hardens into", &mut h, &names) {
+                d.flow.hardens = if h == 0 { String::new() } else { names[h].clone() };
+            }
+            if ui.is_item_hovered() {
+                ui.tooltip_text("what it turns into where it touches another fluid (lava into basalt)");
+            }
+            ui.unindent();
         }
 
         if d != before

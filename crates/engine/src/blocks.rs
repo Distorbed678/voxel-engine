@@ -157,6 +157,8 @@ pub struct BlockDef {
     pub washes_away: bool,
     /// A fluid: its state holds a flow level and its surface sits lower (water).
     pub fluid: bool,
+    /// How a fluid flows (`fluid.rs`).
+    pub flow: Flow,
     /// Deleted this session: a tombstone that acts as air, so ids stay stable.
     pub deleted: bool,
 }
@@ -208,6 +210,7 @@ impl BlockDef {
             rotation: Rotation::None,
             washes_away: false,
             fluid: false,
+            flow: Flow::default(),
             deleted: false,
         }
     }
@@ -290,8 +293,9 @@ pub fn builtin_defs() -> Vec<BlockDef> {
         tbs("snowy_grass", "Snowy Grass", "snow", "snowy_grass_side", "dirt", "Terrain"),
         attenuate(with_kind(cube("ice", "Ice", "ice", "Terrain"), Transparent), 1),
         cube("packed_ice", "Packed Ice", "packed_ice", "Terrain"),
-        BlockDef { tint: Tint::Water, fluid: true, ..attenuate(with_kind(cube("water", "Water", "water", "Fluids"), Transparent), 2) },
-        lit(glow(cube("lava", "Lava", "lava", "Fluids"), 220), [255, 140, 50], 15),
+        BlockDef { tint: Tint::Water, fluid: true, flow: Flow { infinite: true, ..Flow::default() }, ..attenuate(with_kind(cube("water", "Water", "water", "Fluids"), Transparent), 2) },
+        // lava creeps: 3 blocks, slowly, and turns to basalt where it meets water
+        BlockDef { fluid: true, flow: Flow { distance: 3, step: 0.6, infinite: false, hardens: "basalt".into() }, ..lit(glow(cube("lava", "Lava", "lava", "Fluids"), 220), [255, 140, 50], 15) },
         cube("red_sand", "Red Sand", "red_sand", "Terrain"),
         cube("terracotta", "Terracotta", "terracotta", "Terrain"),
         cube("terracotta_orange", "Orange Terracotta", "terracotta_orange", "Terrain"),
@@ -373,6 +377,27 @@ pub fn builtin_defs() -> Vec<BlockDef> {
 }
 
 // ---- file format ------------------------------------------------------------------------------
+
+/// How a fluid block flows (see `fluid.rs`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Flow {
+    /// how far it runs from where it lands, 1..7 blocks (one level lower per block)
+    pub distance: u8,
+    /// seconds per block it runs
+    pub step: f32,
+    /// a gap between two sources (on solid ground) becomes a source too
+    pub infinite: bool,
+    /// it turns into this block where it touches another fluid (lava into basalt)
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub hardens: String,
+}
+
+impl Default for Flow {
+    fn default() -> Self {
+        Flow { distance: 7, step: 0.15, infinite: false, hardens: String::new() }
+    }
+}
 
 fn is_default<T: Default + PartialEq>(v: &T) -> bool {
     *v == T::default()
@@ -481,6 +506,9 @@ pub struct BlockFile {
     pub washes_away: bool,
     #[serde(skip_serializing_if = "is_default")]
     pub fluid: bool,
+    /// how the fluid flows (fluids only)
+    #[serde(skip_serializing_if = "is_default")]
+    pub flow: Flow,
 }
 
 impl BlockFile {
@@ -498,6 +526,7 @@ impl BlockFile {
             rotation: d.rotation,
             washes_away: d.washes_away,
             fluid: d.fluid,
+            flow: if d.fluid { d.flow.clone() } else { Flow::default() },
         }
     }
 
@@ -520,6 +549,7 @@ impl BlockFile {
             rotation: self.rotation,
             washes_away: self.washes_away,
             fluid: self.fluid,
+            flow: Flow { distance: self.flow.distance.clamp(1, 7), step: self.flow.step.clamp(0.05, 10.0), ..self.flow.clone() },
             deleted: false,
         })
     }

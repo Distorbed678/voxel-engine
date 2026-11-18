@@ -419,7 +419,11 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
     (thunderstorms with lightning, sandstorms, blizzards, ash storms), falling leaves, sand and
     cave motes; old biome particle settings converted on load; `particles.vxs` test.
 - **Fluids as data and graphs**: fluid definitions (flow distance, speed, light, colour,
-  texture, whether sources are infinite). Generalise `fluid.rs`; lava flows.
+  texture, whether sources are infinite). Generalise `fluid.rs`; lava flows. **Done**: fluids
+  are blocks with flow settings (distance, seconds per block, infinite sources, the block it
+  hardens into where it meets another fluid), edited in the Block Editor; any fluid block
+  flows; lava creeps 3 blocks and hardens into basalt by water; a biome's seas are any fluid
+  block (plus ice on top); `fluids.vxs` test.
 - **Light & time** in the World graph: day length, sun and moon light colours, per-layer
   ambient (dark-lit-by-life underground), sky light behaviour in the sky layer. **Done** with
   the environments: day length on the World Output, the Light node per level.

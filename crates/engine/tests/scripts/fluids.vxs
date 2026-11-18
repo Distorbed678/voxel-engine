@@ -1,0 +1,61 @@
+# Fluids are blocks with flow settings (block editor: Fluid; `block_set NAME flow ...`). Lava
+# creeps 3 blocks, slowly, and turns to basalt where water reaches it; water sources are
+# infinite; a new fluid block flows by its own settings.
+ui off
+weather 0
+time 0.36
+# a stone basin in the sky (floor y=300, walls up to 302)
+select -12 300 -12 12 302 12
+block stone
+op fill
+select -11 301 -11 11 302 11
+op clear
+pos 0.5 316 -14
+look 180 -50
+settle
+# lava and water sources side by side: after a second the water has run 3 blocks, the lava
+# at most 2
+select -5 301 0 -5 301 0
+block lava
+op fill
+select 5 301 4 5 301 4
+block water
+op fill
+wait 60
+expect_block 2 301 4 water:3
+expect_block -8 301 0 air
+expect_block -2 301 0 air
+settle
+# lava runs 3 blocks (one level lower per block), water 7
+expect_block -5 301 0 lava
+expect_block -6 301 0 lava:1
+expect_block -8 301 0 lava:3
+expect_block -9 301 0 air
+expect_block -5 301 3 lava:3
+expect_block -5 301 4 air
+expect_image crates/engine/tests/golden/fluids_lava.png
+# water meets the lava: the lava it touches hardens into basalt
+select 5 301 0 5 301 0
+block water
+op fill
+settle
+expect_block -2 301 0 basalt
+expect_block -3 301 0 lava:2
+expect_block -1 301 0 water:6
+# infinite water: the gap between two sources becomes a source
+select 7 301 4 7 301 4
+block water
+op fill
+settle
+expect_block 6 301 4 water
+# a new fluid: runs 4 blocks
+block_new acid water
+block_set acid flow 4 0.3
+select 0 301 -8 0 301 -8
+block acid
+op fill
+settle
+expect_block 0 301 -8 acid
+expect_block 4 301 -8 acid:4
+expect_block 5 301 -8 air
+expect_image crates/engine/tests/golden/fluids_mixed.png

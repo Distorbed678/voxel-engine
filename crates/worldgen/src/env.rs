@@ -366,13 +366,27 @@ pub fn attach_part(g: &mut Graph, out: u32, pin: u8, part: u32) {
 /// Biome Outputs once had their own fog, grading and particle settings (fog_color, fog_density
 /// as a multiple of the default, grade_tint, saturation, contrast; ambient, precipitation,
 /// particle_density): move them into Fog, Grading and Particles nodes on the Environment input.
-/// Returns whether the graph changed.
+/// Their sea fluid was a fixed choice (Water, Lava, Ice, None): make it a block. Returns whether
+/// the graph changed.
 pub fn migrate_biome_output(g: &mut Graph) -> bool {
     if g.kind != crate::graph::GraphKind::Biome {
         return false;
     }
     let Some(o) = g.output_node().map(|n| n.id) else { return false };
     let params = &mut g.node_mut(o).unwrap().params;
+    // the seas' fluid was a fixed choice; it's a fluid block now (plus ice on top)
+    let mut fluid_changed = false;
+    if let Some(Value::E(f)) = params.get("fluid").cloned() {
+        let (block, ice) = match f.as_str() {
+            "Lava" => ("lava", false),
+            "Ice" => ("water", true),
+            "None" => ("air", false),
+            _ => ("water", false),
+        };
+        params.insert("fluid".into(), Value::Block(block.into()));
+        params.insert("ice".into(), Value::B(ice));
+        fluid_changed = true;
+    }
     let mut take = |k: &str| params.remove(k);
     let (color, density) = (take("fog_color"), take("fog_density"));
     let (tint, saturation, contrast) = (take("grade_tint"), take("saturation"), take("contrast"));
@@ -412,7 +426,7 @@ pub fn migrate_biome_output(g: &mut Graph) -> bool {
         "Snow" => types.push("snow"),
         _ => {}
     }
-    let changed = !parts.is_empty() || ambient.is_some() || precipitation.is_some() || particle_density.is_some();
+    let changed = fluid_changed || !parts.is_empty() || ambient.is_some() || precipitation.is_some() || particle_density.is_some();
     if !types.is_empty() {
         let p = g.add("env_particles", [0.0, 0.0]);
         for (i, t) in types.iter().enumerate() {

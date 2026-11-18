@@ -42,7 +42,7 @@ pipeline layout: a bindless image set plus 256 bytes of push constants.
   (`crates/engine/src/blocks.rs`). A file holds the display name, category, kind (opaque,
   cutout, transparent, model), model, face textures (`all`, `side`, `top`/`bottom`, single
   faces), biome tint, glow, light colour and reach, light absorption, rotation behaviour (none,
-  column, facing) and fluid behaviour (washed away, fluid). Optional fields are left out when
+  column, facing) and fluid behaviour (washed away, fluid and how it flows). Optional fields are left out when
   they have their default. `--export-block-defaults DIR` writes the built-in list, which is also
   what an empty folder gets.
 - **Ids**: `air` is always 0. `_order.ron` lists the names in id order, so ids stay the same
@@ -340,7 +340,8 @@ The compiler emits GLSL:
   ground cover. Natural overhangs aren't carved, so they don't count as caves.
 - **Rivers**: a 2D mask in [0, 1] per column. Near a river, terrain density is blended toward a
   bed at `sea_level - river_depth * mask`, up to `river_carve` above sea level, so floating islands
-  survive. Rivers fill with the column biome's fluid at sea level (water, ice or lava) and get a
+  survive. Rivers fill with the column biome's fluid at sea level (any fluid block, frozen over
+  when the biome has ice, or none) and get a
   bed block. The River node follows the zero line of warped noise, using `|n| / |grad n|` as the
   distance, so channel width stays even.
 - **Props**: one workgroup per chunk. A biome's Scatter places a Prop graph (or a prefab) on a
@@ -497,16 +498,26 @@ pipelines (~8–14 s cold, ~0.2 s from its cache). Meanwhile the layer runs in a
   graph changes, and undo/redo just restores overlay entries.
 - Region reads (copy, replace, paint, smooth, saving a prefab) queue LOD0 generation jobs
   flagged for readback. Their final voxels are copied to the host and assembled into a box.
-- **Flowing water** (`fluid.rs`): generated water is still (every water cell is a source). Edits
-  wake the cells around them, and a CPU simulation steps about 7 times a second. Water above a
-  cell makes it falling water. A cell next to water that rests on something (ground, or still
-  water) gets that water's level + 1, up to 7. Flowing water nothing feeds any more dries up.
+- **Flowing fluids** (`fluid.rs`): any block marked as a fluid flows, by its own `flow`
+  settings: distance (1..7 blocks), seconds per block, infinite sources, and a block it hardens
+  into where it touches another fluid. Water runs 7 blocks fast and its sources are infinite;
+  lava creeps 3 blocks, a block every 0.6 s, and turns to basalt where water reaches it.
+
+  Generated fluid is still (every fluid cell is a source). Edits wake the cells around them, and
+  a CPU simulation steps about 7 times a second; slower fluids change only every few steps.
+  - Fluid above an open cell makes it falling fluid.
+  - An open cell next to fluid that rests on something (ground, or a still fluid) gets that
+    fluid's level + 1, up to its distance. A cell holding one fluid only takes levels from the
+    same fluid.
+  - With infinite sources, a gap between two sources on solid ground becomes a source.
+  - Flowing fluid nothing feeds any more dries up.
+
   The simulation reads block values back from the GPU world one LOD0 chunk at a time, and writes
-  water as edits outside the undo history. So water saves with the world, survives
-  regeneration, and recedes when the edit that let it in is undone. When water dries up, a cell
-  gets back what it held before (plants it washed away return). The level is the block state
-  (0 still, 1..7 flowing, 8 falling). The mesh shader lowers the surface 1/8 per level, and the
-  mesher shows a water side face where the neighbouring water's surface is lower.
+  fluid as edits outside the undo history. So fluid saves with the world, survives
+  regeneration, and recedes when the edit that let it in is undone. When fluid dries up, a cell
+  gets back what it held before (plants it washed away return); hardened blocks stay. The level
+  is the block state (0 still, 1..7 flowing, 8 falling). The mesh shader lowers the surface 1/8
+  per level, and the mesher shows a side face where the neighbouring fluid's surface is lower.
 - **World files** (`saves/NAME.vxw`, RON): the seed, camera, time of day and the overlay. The
   world itself is regenerated, so a save only holds what the generator can't reproduce. Blocks
   are stored by name (`name` or `name:state`) through a palette, so saves survive changes to

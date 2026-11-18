@@ -1,19 +1,26 @@
-//! Flowing water for edits.
+//! Flowing fluids for edits: any block marked as a fluid (water, lava, your own), each with its
+//! own flow settings (`blocks::Flow`).
 //!
-//! Generated water is still: every water cell the generator makes is a source. When an edit opens
-//! space next to water, or takes away what fed some flowing water, the cells around it become
-//! active and the water spreads or recedes, a few steps per second:
+//! Generated fluid is still: every fluid cell the generator makes is a source. When an edit opens
+//! space next to a fluid, or takes away what fed some flowing fluid, the cells around it become
+//! active and the fluid spreads or recedes, a step at a time:
 //!
-//! - water above a cell makes it falling water;
-//! - otherwise a cell next to water that rests on something (a source, or a flowing or falling
-//!   cell over ground or still water) gets that water's level + 1, up to 7 (each level a lower
-//!   surface), so water runs out 7 blocks from where it lands;
-//! - flowing water that nothing feeds any more dries up, and plants it washed away come back.
+//! - fluid above an open cell makes it falling fluid;
+//! - otherwise an open cell next to fluid that rests on something (a source, or a flowing or
+//!   falling cell over ground or a still fluid) gets that fluid's level + 1, up to its flow
+//!   distance (each level a lower surface): water runs 7 blocks, lava 3;
+//! - a cell holding one fluid only takes levels from the same fluid;
+//! - with infinite sources (water), a cell between two sources on solid ground becomes one;
+//! - a fluid that hardens (lava) turns into its block where it touches another fluid;
+//! - flowing fluid that nothing feeds any more dries up, and plants it washed away come back.
+//!
+//! Each fluid moves at its own pace: the simulation steps every STEP seconds and a fluid with a
+//! slower `step` only changes every few steps.
 //!
 //! The simulation runs on the CPU over block values read back from the GPU world (generation plus
-//! edits, one LOD0 chunk at a time), and writes water as edits that are not on the undo stack. So
-//! water survives regeneration and saves with the world, and undoing the edit that let it in
-//! makes it recede. The water level lives in the block state: 0 = source, 1..7 = flowing,
+//! edits, one LOD0 chunk at a time), and writes fluid as edits that are not on the undo stack. So
+//! fluid survives regeneration and saves with the world, and undoing the edit that let it in
+//! makes it recede. The level lives in the block state: 0 = source, 1..7 = flowing,
 //! 8 = falling (`shaders/render/terrain.mesh` lowers the surface accordingly).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -24,8 +31,7 @@ use crate::blocks::{BlockRegistry, STATE_SHIFT, block_id};
 use crate::world::{CHUNK, RegionRead, World};
 
 pub const FALLING: u16 = 8;
-const MAX_LEVEL: u16 = 7;
-/// Seconds per simulation step (water runs about 7 blocks a second).
+/// Seconds per simulation step (the fastest a fluid runs: water, about 7 blocks a second).
 const STEP: f32 = 0.15;
 /// Cells updated per step at most (the rest wait for the next one).
 const MAX_UPDATES: usize = 32768;
@@ -58,9 +64,22 @@ fn index(p: IVec3) -> usize {
     ((l.y * CHUNK + l.z) * CHUNK + l.x) as usize
 }
 
+/// A fluid block's flow, for the simulation.
+#[derive(Clone, Copy, Debug)]
+struct Fluid {
+    /// flow distance (the deepest flowing level)
+    distance: u16,
+    /// simulation steps per block it runs
+    ticks: u64,
+    infinite: bool,
+    /// the block it turns into where it touches another fluid
+    hardens: Option<u16>,
+}
+
 pub struct FluidSim {
     pub enabled: bool,
-    water: u16,
+    /// the fluid blocks by id
+    fluids: HashMap<u16, Fluid>,
     active: BTreeSet<Key>,
     /// block values of LOD0 chunks around the activity (x fastest, then z, then y)
     chunks: HashMap<IVec3, Vec<u16>>,
@@ -79,7 +98,7 @@ impl FluidSim {
     pub fn new(blocks: &BlockRegistry) -> Self {
         Self {
             enabled: true,
-            water: blocks.id("water"),
+            fluids: Self::fluids_of(blocks),
             active: BTreeSet::new(),
             chunks: HashMap::new(),
             last_used: HashMap::new(),
@@ -89,6 +108,17 @@ impl FluidSim {
             timer: 0.0,
             steps: 0,
         }
+    }
+
+    fn fluids_of(reg: &BlockRegistry) -> HashMap<u16, Fluid> {
+        reg.live()
+            .filter(|(_, d)| d.fluid)
+            .map(|(id, d)| {
+                let hardens = (!d.flow.hardens.is_empty()).then(|| reg.id(&d.flow.hardens)).filter(|&h| h != 0 || d.flow.hardens == "air");
+                let ticks = (d.flow.step / STEP).round().max(1.0) as u64;
+                (id, Fluid { distance: d.flow.distance.clamp(1, 7) as u16, ticks, infinite: d.flow.infinite, hardens })
+            })
+            .collect()
     }
 
     /// Forget everything (the world was replaced: opened, cleared, regenerated from scratch).
@@ -153,8 +183,8 @@ impl FluidSim {
         self.chunks.get(&c).map(|cells| cells[index(p)]).ok_or(c)
     }
 
-    fn is_water(&self, v: u16) -> bool {
-        block_id(v) == self.water
+    fn fluid(&self, v: u16) -> Option<Fluid> {
+        self.fluids.get(&block_id(v)).copied()
     }
 
     fn level(v: u16) -> u16 {
@@ -166,40 +196,72 @@ impl FluidSim {
         v == 0 || reg.get(v).washes_away
     }
 
-    /// What `p` becomes (None = unchanged), or a chunk that has to be read first.
-    fn next(&self, p: IVec3, reg: &BlockRegistry) -> Result<Option<u16>, IVec3> {
+    /// What `p` becomes (None = unchanged) and the fluid whose pace the change follows, or a
+    /// chunk that has to be read first.
+    fn next(&self, p: IVec3, reg: &BlockRegistry) -> Result<Option<(u16, Fluid)>, IVec3> {
         let cur = self.get(p)?;
-        let water = self.is_water(cur);
-        if (water && Self::level(cur) == 0) || (!water && !self.open(cur, reg)) {
-            return Ok(None); // sources and solid blocks stay
+        let here = self.fluid(cur);
+        if here.is_none() && !self.open(cur, reg) {
+            return Ok(None); // solid blocks stay
         }
-        let new = if self.is_water(self.get(p + IVec3::Y)?) {
-            Some(self.water | (FALLING << STATE_SHIFT))
+        // a fluid that hardens turns into its block where it touches another fluid
+        if let Some(f) = here
+            && let Some(h) = f.hardens
+        {
+            for d in N6 {
+                let n = self.get(p + d)?;
+                if self.fluid(n).is_some() && block_id(n) != block_id(cur) {
+                    return Ok(Some((h, f)));
+                }
+            }
+        }
+        if here.is_some() && Self::level(cur) == 0 {
+            return Ok(None); // sources stay
+        }
+        let id = |v: u16| block_id(v);
+        // the fluid this cell may take: its own, or any (an open cell)
+        let same = |v: u16| here.is_none() || id(v) == id(cur);
+        let above = self.get(p + IVec3::Y)?;
+        let new = if self.fluid(above).is_some() && same(above) {
+            Some((id(above) | (FALLING << STATE_SHIFT), self.fluid(above).unwrap()))
         } else {
-            let mut best: Option<u16> = None;
+            let mut best: Option<(u16, u16, Fluid)> = None; // (level, block, fluid)
+            let mut sources: HashMap<u16, u32> = HashMap::new();
             for s in SIDES {
                 let n = self.get(p + s)?;
-                if !self.is_water(n) {
+                let Some(f) = self.fluid(n) else { continue };
+                if !same(n) {
                     continue;
                 }
-                // water spreads sideways only where it rests on something
+                if Self::level(n) == 0 {
+                    *sources.entry(id(n)).or_default() += 1;
+                }
+                // fluid spreads sideways only where it rests on something
                 let below = self.get(p + s - IVec3::Y)?;
-                if self.open(below, reg) || (self.is_water(below) && Self::level(below) == FALLING) {
+                if self.open(below, reg) || (self.fluid(below).is_some() && Self::level(below) == FALLING) {
                     continue;
                 }
                 let l = match Self::level(n) {
                     FALLING => 0,
                     l => l,
-                };
-                best = Some(best.map_or(l + 1, |b: u16| b.min(l + 1)));
+                } + 1;
+                if l <= f.distance && best.is_none_or(|b| (l, id(n)) < (b.0, b.1)) {
+                    best = Some((l, id(n), f));
+                }
             }
-            best.filter(|&l| l <= MAX_LEVEL).map(|l| self.water | (l << STATE_SHIFT))
+            // infinite sources: a gap between two sources, over solid ground or a source
+            let below = self.get(p - IVec3::Y)?;
+            let grounded = !self.open(below, reg) && self.fluid(below).is_none_or(|_| Self::level(below) == 0);
+            let refill = sources.iter().filter(|&(&b, &n)| n >= 2 && grounded && self.fluids.get(&b).is_some_and(|f| f.infinite)).map(|(&b, _)| b).min();
+            match refill {
+                Some(b) => Some((b, self.fluids[&b])),
+                None => best.map(|(l, b, f)| (b | (l << STATE_SHIFT), f)),
+            }
         };
         Ok(match new {
-            Some(v) if v != cur => Some(v),
-            Some(_) => None,
-            None if water => Some(0), // dries up
-            None => None,
+            Some((v, _)) if v == cur => None,
+            Some(n) => Some(n),
+            None => here.map(|f| (0, f)), // dries up
         })
     }
 
@@ -231,6 +293,8 @@ impl FluidSim {
         }
         self.timer = 0.0;
         self.steps += 1;
+        // the block editor may have changed a fluid's settings
+        self.fluids = Self::fluids_of(reg);
         self.step(world, reg);
         self.evict();
     }
@@ -252,7 +316,9 @@ impl FluidSim {
                     waiting.push(k);
                     self.wanted.insert(key(c));
                 }
-                Ok(Some(v)) => writes.push((pos(k), v)),
+                // slower fluids change only every few steps
+                Ok(Some((_, f))) if !self.steps.is_multiple_of(f.ticks) => waiting.push(k),
+                Ok(Some((v, _))) => writes.push((pos(k), v)),
                 Ok(None) => {}
             }
         }
@@ -263,11 +329,15 @@ impl FluidSim {
         let mut changed = Vec::with_capacity(writes.len());
         for (p, v) in writes {
             let cur = self.get(p).unwrap_or(0);
-            let (edit, block) = if self.is_water(v) {
+            let (edit, block) = if self.fluid(v).is_some() {
                 self.origin.entry(p).or_insert((world.overlay.get(p), cur));
                 (Some(v), v)
+            } else if v != 0 {
+                // hardened: a block of its own now, which stays
+                self.origin.remove(&p);
+                (Some(v), v)
             } else {
-                // receding: give the cell back what it held before the water came
+                // receding: give the cell back what it held before the fluid came
                 self.origin.remove(&p).unwrap_or((Some(0), 0))
             };
             world.overlay.set_untracked(p, edit);

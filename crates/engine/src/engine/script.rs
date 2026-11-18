@@ -52,7 +52,7 @@
 //! | `expect_image GOLDEN [TOL]` | compare this frame against a reference PNG (created if missing, `UPDATE_GOLDEN=1` rewrites) |
 //! | `check_apron CX CY CZ` / `check_apron ~DX ~DY ~DZ` | (debugging) compare a LOD0 chunk's generated apron cells with its neighbours' blocks |
 //! | `block_new NAME [FROM]` / `block_delete NAME` | create a block (a copy of FROM) / delete one (session only: scripts never save blocks) |
-//! | `block_set NAME PROPERTY VALUE...` | `kind opaque\|cutout\|transparent\|model`, `model cross\|tall_cross\|slab\|stairs\|lantern\|pebbles\|mushroom`, `texture all\|top\|bottom\|side\|east\|west\|south\|north TEX`, `tint none\|grass\|foliage\|water`, `emission N`, `light R G B REACH`, `absorb N`, `rotation none\|column\|facing`, `fluid on\|off`, `washes on\|off`, `display TEXT` |
+//! | `block_set NAME PROPERTY VALUE...` | `kind opaque\|cutout\|transparent\|model`, `model cross\|tall_cross\|slab\|stairs\|lantern\|pebbles\|mushroom`, `texture all\|top\|bottom\|side\|east\|west\|south\|north TEX`, `tint none\|grass\|foliage\|water`, `emission N`, `light R G B REACH`, `absorb N`, `rotation none\|column\|facing`, `fluid on\|off`, `flow DISTANCE SECONDS [infinite] [hardens BLOCK]`, `washes on\|off`, `display TEXT` |
 //! | `texture_new NAME [FROM]` / `texture_edit NAME` | create a texture (a copy of FROM, else transparent) / open one in the texture editor |
 //! | `paint TOOL X1 Y1 X2 Y2 RRGGBB[AA]` | paint the open texture: `pencil\|line\|rect\|filled\|fill\|eraser` from texel 1 to texel 2 |
 //! | `texture_frame add\|dup\|delete [COUNT]` / `texture_frame N` / `texture_fps F` | frames of the open texture / select frame N / animation speed |
@@ -991,6 +991,13 @@ impl Engine {
                 }
             }
             "fluid" => d.fluid = on_off(args.first().map(String::as_str).as_ref())?,
+            "flow" => {
+                // flow DISTANCE SECONDS_PER_BLOCK [infinite] [hardens BLOCK]
+                d.flow.distance = n(0)?.clamp(1, 7);
+                d.flow.step = arg(1)?.parse::<f32>().context("seconds per block")?.clamp(0.05, 10.0);
+                d.flow.infinite = args.iter().any(|a| a == "infinite");
+                d.flow.hardens = args.iter().position(|a| a == "hardens").and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
+            }
             "washes" => d.washes_away = on_off(args.first().map(String::as_str).as_ref())?,
             "display" => d.display = args.join(" "),
             "category" => d.category = args.join(" "),

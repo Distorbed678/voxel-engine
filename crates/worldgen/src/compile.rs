@@ -1022,7 +1022,8 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
         });
         sh.depth_biome = Some(bi as u32);
         let mut em = Em::new(sh, g, pfx.clone(), false);
-        fluids.push(em.enum_idx(&outn, "fluid"));
+        let ice = matches!(em.value(&outn, "ice"), Value::B(true));
+        fluids.push((em.block(&outn, "fluid"), ice));
         // density
         let dens = g
             .input_link(outn.id, 0)
@@ -1665,11 +1666,11 @@ uint wg_col_zone(in WgColumn c, uint k) {{ return k == 0u ? c.zone0 : c.zone1; }
     let _ = writeln!(s, "uint wg_fluid(vec3 p, bool skyOpen, in WgColumn c) {{\n    if (!skyOpen || p.y >= gSeaLevel) return 0u;\n    // sinkholes are dry shafts, even below sea level\n    float cv, fl;\n    wg_connect(p, cv, fl);\n    if (cv < 0.0) return 0u;");
     s.push_str(&sw(
         "c.biome[0]",
-        &|i| match fluids.get(i).copied().unwrap_or(0) {
-            0 => "return B_WATER;".to_string(),
-            1 => "return B_LAVA;".to_string(),
-            2 => "return p.y >= gSeaLevel - 1.0 ? B_ICE : B_WATER;".to_string(),
-            _ => "return 0u;".to_string(),
+        &|i| match fluids.get(i) {
+            Some((b, _)) if b == "0u" => "return 0u;".to_string(),
+            Some((b, true)) => format!("return p.y >= gSeaLevel - 1.0 ? B_ICE : {b};"),
+            Some((b, false)) => format!("return {b};"),
+            None => "return B_WATER;".to_string(),
         },
         nb,
         "return B_WATER;",
