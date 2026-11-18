@@ -15,7 +15,7 @@
 //! | `waypoint X Y Z YAW PITCH` ... `fly_path FRAMES` | fly a smooth spline from the camera through the waypoints |
 //! | `find_biome NAME [HEIGHT]` | survey the generator, go to the nearest large patch of a biome, HEIGHT blocks above its highest block |
 //! | `profile N [LABEL]` | average the GPU passes over the next N frames and log them |
-//! | `benchmark` | run the 24 s benchmark flight and wait for its report |
+//! | `benchmark [surface\|upper\|deep\|sky]` | run the 24 s benchmark flight (through a layer) and wait for its report |
 //! | `weather W` | fixed weather intensity 0..1 (turns automatic weather off) |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
@@ -125,7 +125,7 @@ enum Cmd {
     Grading(bool),
     Particles(bool),
     Occlusion(bool),
-    Benchmark,
+    Benchmark(crate::bench::Flight),
     Profile(u32, String),
     Weather(f32),
     SaveWorld(PathBuf),
@@ -434,7 +434,10 @@ fn parse(line: &str) -> Result<Cmd> {
         "grading" => Cmd::Grading(on_off(a.first())?),
         "particles" => Cmd::Particles(on_off(a.first())?),
         "occlusion" => Cmd::Occlusion(on_off(a.first())?),
-        "benchmark" => Cmd::Benchmark,
+        "benchmark" => Cmd::Benchmark(match a.first() {
+            Some(l) => crate::bench::Flight::parse(l).context("benchmark: surface, upper, deep or sky")?,
+            None => crate::bench::Flight::Surface,
+        }),
         "profile" => Cmd::Profile(num(a.first(), "frames")?, a.get(1..).map(|r| r.join(" ")).unwrap_or_default()),
         "weather" => Cmd::Weather(num(a.first(), "intensity")?),
         "save_world" => Cmd::SaveWorld(a.first().context("missing path")?.into()),
@@ -1352,8 +1355,8 @@ impl Engine {
                 self.gpu_sums.clear();
                 return Ok(Some(Busy::Profile { left: n, label }));
             }
-            Cmd::Benchmark => {
-                self.start_benchmark();
+            Cmd::Benchmark(flight) => {
+                self.start_benchmark_in(flight);
                 return Ok(Some(Busy::Bench));
             }
             Cmd::SaveWorld(path) => {

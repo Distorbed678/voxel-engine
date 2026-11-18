@@ -1,0 +1,20 @@
+Voxel engine benchmark on NVIDIA GeForce RTX 4080 (Deep flight)
+frames 4988, avg 4.81 ms (208 fps), 1% low 115 fps, worst 11.38 ms
+chunks generated+meshed: 44868 (1870 / s), quads resident 32.1M
+GPU passes (avg ms per frame where active):
+  bloom        0.056 ms
+  cull         0.014 ms
+  frame        4.795 ms
+  light        0.232 ms
+  main pass    4.059 ms
+  meshing      1.525 ms
+  particles    0.005 ms
+  props        0.015 ms
+  shadow c0    0.080 ms
+  shadow c1    0.139 ms
+  shadow c2    0.481 ms
+  shadow c3    0.736 ms
+  shadows      0.259 ms
+  taa          0.079 ms
+  tonemap+ui   0.158 ms
+  worldgen     0.936 ms

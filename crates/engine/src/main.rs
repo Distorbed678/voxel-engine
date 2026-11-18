@@ -142,6 +142,14 @@ fn parse_args() -> Options {
             "--seed" => o.seed = next(&mut i).parse().ok(),
             "--worldgen" => o.worldgen_dir = Some(next(&mut i).into()),
             "--benchmark" => o.benchmark = true,
+            "--benchmark-layer" => {
+                let l = next(&mut i);
+                o.benchmark = true;
+                o.benchmark_flight = bench::Flight::parse(&l).unwrap_or_else(|| {
+                    eprintln!("--benchmark-layer: surface, upper, deep or sky");
+                    std::process::exit(2)
+                });
+            }
             "--world" => o.world = Some(next(&mut i).into()),
             "--blocks" => o.blocks_dir = Some(next(&mut i).into()),
             "--script" => {

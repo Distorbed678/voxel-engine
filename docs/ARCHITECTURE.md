@@ -16,7 +16,7 @@ probes (camera biome, minimap)        probe dispatch
                                       main pass 1: terrain (task/mesh) + models
                                       depth pyramid -> cull phase 2 (occlusion) -> sort transparent
                                       main pass 2: newly visible terrain + models + sky
-                                      translucent pass: water + volumetric clouds
+                                      translucent pass: water + volumetric clouds + cloud sea
                                       TAA resolve (compute) -> history
                                       bloom: 13-tap downsample chain -> tent upsample (compute)
                                       tonemap (+ TAA sharpen, + bloom) + ImGui -> swapchain
@@ -145,6 +145,16 @@ Streams per chunk: 6 opaque directions, 6 transparent directions, and model inst
   are what keep sunlight out of caves.
 - **Precision**: rendering is camera-relative, with an integer camera block plus a fractional
   offset, so it stays precise anywhere in the i32 world.
+- **Cloud sea** (`cloud_sea.frag`): a permanent deck between the surface and the sky layer, base
+  and top from the World Output. Its top and its underside are lumpy height fields, ray-marched
+  in a fullscreen pass.
+  - From above: a sea of cloud tops lit by the sun, melting into the horizon.
+  - Inside: fog.
+  - From below: an overcast that fades in over the last kilometre under the base. From the
+    ground it is invisible and the pass doesn't run.
+  - Up in the deck, the weather clouds are hidden.
+- **Distance haze** fades the far world into exactly the sky behind it, so the square edge of the
+  streamed world never shows from high up.
 
 ## Transparency order
 
@@ -214,7 +224,10 @@ resident, so the volume keeps its own copy of the blocks:
    edits) into an R16 block image. Chunks that scroll into the volume while already meshed get a
    light-only job, which generates them but skips meshing.
 2. **Sky sources**: one thread per column walks down from the top of the volume. Cells keep full
-   sky light until the first light-blocking block. Water, ice and leaves on the way dim it.
+   sky light until the first light-blocking block. Water, ice and leaves on the way dim it. Below
+   the sky floor (the top of the underground layers) the sky above the volume isn't open, nothing
+   outside the volume counts as open sky, and fog fades to dark: caves are lit only by what
+   glows.
 3. **Propagation**: Jacobi steps between two RGBA8 images (RGB block light, A sky light). Each
    cell takes the brightest of its own emission or sky source and its six neighbours minus 1/15
    per block, plus the block's attenuation. Light moves one block per step, so 15 steps settle
@@ -239,12 +252,15 @@ the face, so distant lava still lights its banks.
 
 Graph kinds:
 
-- **World**: a Zone Voronoi node feeds the World Output, which also holds the sea level and the
-  river settings. A River node (or any 2D mask) feeds its Rivers input.
+- **World**: the World Output takes the world's layers (a surface, an underground and a sky
+  Layer; Depth Bands splits the underground into two bands), its Connections (Sinkholes, Sky
+  Pillars) and the cloud sea's heights. Each Layer has a zone layout (Zone Voronoi or a single
+  Zone), a vertical range, blend bands, a sea level and, on the surface, rivers (a River node or
+  any 2D mask).
 - **Zone**: biome layout (Biome Voronoi, Biome Threshold Select over any 2D selector such as
   humidity noise or a height map, or a single Biome), the cave carver density, and the cave
   biomes (a Biome, or Cave Biome Select picking up to four biomes in warped 3D cells).
-- **Biome**: Terrain (density > 0 means solid), Material, Ground Cover, up to 6 prop layers,
+- **Biome**: Terrain (density > 0 means solid), Material, Ground Cover, up to 10 prop layers,
   and environment colours.
 - **Function**: a reusable density subgraph with 4 arguments.
 - **Prop**: a tree, rock, ruin or any other prop: shapes built once per placed instance (below).
@@ -252,7 +268,10 @@ Graph kinds:
 The compiler emits GLSL:
 
 - **Live parameters**: every Float/Int parameter becomes `P(i)`, a slot in a GPU buffer.
-  Dragging a slider re-uploads parameters and regenerates chunks without recompiling.
+  Dragging a slider re-uploads parameters and regenerates chunks without recompiling. Each layer
+  has a block of its own (the push constant's address points at it), so a layer's code doesn't
+  change when another layer gains parameters. Positions are scaled by a reciprocal parameter
+  (computed on the CPU), never divided: GPU division isn't correctly rounded.
 - **2D hoisting**: any value that depends only on X/Z is computed once per column in
   `bN_col` and cached in `WgColumn.h[k][...]`. The per-voxel `bN_den` reads the cache.
 - **Transform contexts**: domain warp, stretch and offset create evaluation contexts.
@@ -277,6 +296,11 @@ The compiler emits GLSL:
   layer accepts (height limits, dry ground). Anchors are sorted by layer and position and drawn
   one at a time, since overlapping props resolve by order. So every chunk a prop touches draws
   the same blocks.
+  - **Anchor capacity:** anchors are packed in 8 bytes, 768 per chunk.
+  - **Thinning at a distance:** a prop layer adds at most about 320 anchors to a chunk. Where it
+    would add more (dense forests in the 256-block chunks of LOD 3), its anchors are thinned by a
+    per-cell decision computed from the LOD's chunk size. Every chunk of that LOD keeps the same
+    ones.
 
 ### Prop graphs
 
@@ -319,11 +343,41 @@ re-derived per voxel.
   and an orbit camera. "Place in world" puts the instance in the clipboard with its anchor as the
   paste point. Scripts place props the same way (`place_prop`), which the prop goldens use.
 
+### Layers
+
+Every layer of the World Output compiles to its own generator: terrain, props and probe
+pipelines, with its own biomes and zones (global ids: 12 bits) and its own parameter block. An
+edit rebuilds only the layers whose code changed.
+
+- **Ownership:** a cell belongs to the layer owning its centre height. Ranges are clipped where
+  they overlap (the higher layer wins), and the lowest layer also owns everything below. A chunk
+  in a boundary band runs every layer it touches, each writing its own cells; cells nobody owns
+  start as air.
+- **Outside its range** a layer's density is solid or air (Surface: solid below, air above;
+  Underground: solid; Sky: air).
+- **Blend bands:** within `blend` blocks (24) of its edges, a layer's terrain fades into what lies
+  beyond, so caves close and peaks end before the next layer begins.
+- **Streaming:**
+  - The camera's layer (the one owning its height; between layers, the cloud sea decides) streams
+    at every LOD. Other layers stream only at LOD 0–1.
+  - Chunks at LOD ≥ 2 are generated by the camera's layer alone (rock or air beyond its range)
+    and regenerate when the camera changes layer.
+  - Chunks no layer reaches (the air between the surface and the sky) are settled empty without
+    a job.
+- **Connections** (World graph: Sinkholes, Sky Pillars) are rare world-scale shapes every layer
+  evaluates, after its blend bands:
+  - A sinkhole is a dry shaft from above the ground down to a cavern.
+  - A sky pillar is a fluted column up through the cloud sea.
+  - The gaps between layers are shared out between their neighbours for generation, but only
+    chunks a connection reaches are generated there.
+  - `worldgen::connect` mirrors their placement on the CPU (the same `pcg3d` hash), for streaming
+    and for `find_connection`.
+- **Probes and minimap** use the camera's layer.
+
 ### Solo preview
 
-The editor's Solo button shows one zone or biome everywhere. The zone and biome indices sit in
-two fixed slots at the end of the parameter buffer (not after the graph's parameters, whose
-count changes while a rebuild is pending), so switching just regenerates the world. `wg_column`
+The editor's Solo button shows one zone or biome everywhere. The zone and biome (global ids)
+travel in the generator's push constants, so switching just regenerates the world. `wg_column`
 forces the zone (a soloed surface biome brings a zone that uses it, for its carver and caves)
 and the biome, and `wg_cave_biome` returns a soloed cave biome wherever a zone has caves. The
 minimap, probes and biome search see the same world.
@@ -348,15 +402,38 @@ above it over fixed windows, never "as far as this chunk happens to look":
 The `check_apron` script command compares a chunk's apron with its neighbours' blocks;
 `tests/scripts/apron.vxs` covers places that once disagreed.
 
-### Shader build tiers
+### Interpreter (crates/worldgen/src/vm)
 
-| Tier | Built how | Driver compile (cold) | Generation speed |
-|---|---|---|---|
-| Quick | big functions marked SPIR-V `DontInline` | ~3 s | ~5× slower |
-| Optimised | everything inlined | ~8 s | ~4 ms per 256 chunks |
+A structural edit changes a layer's GLSL, and the driver takes seconds to compile the new
+pipelines (~8–14 s cold, ~0.2 s from its cache). Meanwhile the layer runs in an interpreter.
 
-With the NVIDIA shader cache warm, either tier is ready in about 50 ms. The quick tier
-applies first, and the optimised one replaces it in the background.
+- **Compiling:** the layer's generated GLSL is compiled once more, on the CPU, by a small
+  compiler for the subset the generator emits (preprocessor, parser, codegen). Its output is
+  bytecode for a register VM: 5-word instructions over 32-bit registers, with frames, calls and
+  pointers for out-parameters.
+- **Running:** interpreter pipelines (terrain, props, probe) run it; `vm_core.glsl` and
+  `vm_run.glsl` hold the loop.
+  - They don't depend on the graph, so they build once and the driver caches them.
+  - Every helper the generated code calls (noise, caves, prop builders, ...) runs as a native:
+    the real GLSL function.
+  - The native table, its dispatch, the load/store helpers and the API glue (`wg_column`,
+    `wg_density_c`, ...) are generated from the same scan of the shader library, so both sides
+    agree on ids and layouts.
+- **Identical output:** the interpreter and the compiled shaders generate the same blocks,
+  checked cell by cell by `interp.vxs` (`check_interp`). This needs three things:
+  - noise inputs are multiplied, never divided;
+  - `simplex3` keeps a valid simplex at exact ties;
+  - both are built without fused multiply-adds (SPIR-V `NoContraction`, no measurable cost).
+- **When it runs:**
+  - A layer whose pipelines are building runs in the interpreter, so an edit shows at once.
+  - At startup the engine waits up to 1.5 s for the (usually cached) compiled build, then uses
+    the interpreter if it isn't there yet.
+  - Interpreter batches are capped at 8 chunks.
+- **No quick tier:** the generator's own pipelines are always fully inlined. A quick tier with
+  the big functions out of line (SPIR-V `DontInline`) built ~3× faster, but the NVIDIA driver
+  miscompiled it: lost prop parts, an endless loop (Xid 109), corrupted memory. Only the
+  interpreter keeps its loop and natives out of line (inlined into every API function, it took
+  84 s to build).
 
 ## Editing
 
@@ -397,7 +474,15 @@ The GPU tests in `crates/engine/tests/gpu_scripts.rs` and the README media
 
 ## Performance (RTX 4080, 1080p, `--benchmark`)
 
-- 279 fps average, 102 fps 1% low, while flying at 90 blocks/s and streaming about 2,000
-  chunks/s.
+Flying at 90 blocks/s while streaming about 1,800 chunks/s (`--benchmark-layer L` flies
+through another layer):
+
+| Flight | Average | 1% low | Quads resident |
+|---|---|---|---|
+| Surface | 249 fps | 89 fps | 1.3M |
+| Upper caves | 272 fps | 132 fps | 17.4M |
+| The Deep | 208 fps | 115 fps | 32.1M |
+| Sky | 680 fps | 339 fps | 0.1M |
+
 - Full regeneration of the whole 4 km world (about 9.2k chunks) costs about 0.5 s of GPU time
   with the optimised generator.

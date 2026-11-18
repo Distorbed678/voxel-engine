@@ -68,6 +68,8 @@ pub struct Options {
     pub seed: Option<u32>,
     pub worldgen_dir: Option<PathBuf>,
     pub benchmark: bool,
+    /// the layer the benchmark flies through (`--benchmark-layer`)
+    pub benchmark_flight: crate::bench::Flight,
     /// Scripted input playback (headless): see `engine/script.rs`.
     pub script: Option<PathBuf>,
     /// World file to open (or to create on the first save if it doesn't exist).
@@ -881,10 +883,19 @@ impl Engine {
     // ---------------------------------------------------------------------------------------
 
     pub fn start_benchmark(&mut self) {
+        let flight = self.opts.benchmark_flight;
+        self.start_benchmark_in(flight);
+    }
+
+    /// Fly the benchmark through one layer (the surface flight starts at the camera).
+    pub fn start_benchmark_in(&mut self, flight: crate::bench::Flight) {
         self.set_fly_mode(false);
+        if let Some(p) = flight.start() {
+            self.camera.pos = p;
+        }
         self.world.reset(self.frame_counter + 1);
-        self.bench = Some(crate::bench::Benchmark::new(self.camera.pos, self.world.stats.jobs_total));
-        self.ui.toast("Benchmark started (24 s)".into());
+        self.bench = Some(crate::bench::Benchmark::new(self.camera.pos, self.world.stats.jobs_total, flight));
+        self.ui.toast(format!("Benchmark started ({flight:?}, 24 s)"));
     }
 
     /// Save the seed, camera, time of day and edits (see `world/save.rs`); `path` becomes the

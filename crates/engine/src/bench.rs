@@ -7,7 +7,51 @@ use glam::DVec3;
 
 use crate::camera::Camera;
 
+/// Which layer a benchmark flies through. It starts at the layer's spot and stays in the layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Flight {
+    /// from the camera: 60 above it, then a climb to 700 above
+    #[default]
+    Surface,
+    /// the upper caves (y -500), then a descent to -820
+    Upper,
+    /// the Deep (y -3000), then a descent
+    Deep,
+    /// the sky islands over the cloud sea (y 4900), then a climb
+    Sky,
+}
+
+impl Flight {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "surface" => Flight::Surface,
+            "upper" => Flight::Upper,
+            "deep" => Flight::Deep,
+            "sky" => Flight::Sky,
+            _ => return None,
+        })
+    }
+    /// Where the flight starts (None: at the camera).
+    pub fn start(self) -> Option<DVec3> {
+        match self {
+            Flight::Surface => None,
+            Flight::Upper => Some(DVec3::new(0.0, -500.0, 0.0)),
+            Flight::Deep => Some(DVec3::new(0.0, -3000.0, 0.0)),
+            Flight::Sky => Some(DVec3::new(0.0, 4900.0, 0.0)),
+        }
+    }
+    /// Height above the start while flying level, and the climb rate of the last phase.
+    fn heights(self) -> (f64, f64) {
+        match self {
+            Flight::Surface => (60.0, 80.0),
+            Flight::Upper | Flight::Deep => (0.0, -40.0),
+            Flight::Sky => (0.0, 40.0),
+        }
+    }
+}
+
 pub struct Benchmark {
+    pub flight: Flight,
     start: Instant,
     pub duration: f32,
     origin: DVec3,
@@ -18,8 +62,9 @@ pub struct Benchmark {
 }
 
 impl Benchmark {
-    pub fn new(origin: DVec3, jobs_start: u64) -> Self {
+    pub fn new(origin: DVec3, jobs_start: u64, flight: Flight) -> Self {
         Self {
+            flight,
             start: Instant::now(),
             duration: 24.0,
             origin,
@@ -43,15 +88,17 @@ impl Benchmark {
             e.1 += 1;
         }
         // phase 1: fast straight flight (streaming stress), phase 2: wide orbit, phase 3: climb
+        // (underground: a descent)
         let speed = 90.0;
+        let (h, climb) = self.flight.heights();
         let p = if t < 10.0 {
-            self.origin + DVec3::new(0.0, 60.0, -(t as f64) * speed)
+            self.origin + DVec3::new(0.0, h, -(t as f64) * speed)
         } else if t < 18.0 {
             let a = (t - 10.0) as f64 * 0.6;
-            let c = self.origin + DVec3::new(0.0, 60.0, -900.0);
+            let c = self.origin + DVec3::new(0.0, h, -900.0);
             c + DVec3::new(a.sin() * 300.0, 0.0, a.cos() * 300.0)
         } else {
-            self.origin + DVec3::new(0.0, 60.0 + (t as f64 - 18.0) * 80.0, -900.0)
+            self.origin + DVec3::new(0.0, h + (t as f64 - 18.0) * climb, -900.0)
         };
         cam.pos = p;
         cam.yaw = if t < 10.0 { 0.0 } else { (t - 10.0) * 0.6 + std::f32::consts::FRAC_PI_2 };
@@ -68,7 +115,7 @@ impl Benchmark {
         let p1_low_fps = 1000.0 / p99.max(0.001);
         let jobs = jobs_total - self.jobs_start;
         let mut r = String::new();
-        r.push_str(&format!("Voxel engine benchmark on {device}\n"));
+        r.push_str(&format!("Voxel engine benchmark on {device} ({:?} flight)\n", self.flight));
         r.push_str(&format!("frames {n}, avg {:.2} ms ({:.0} fps), 1% low {:.0} fps, worst {:.2} ms\n", avg, 1000.0 / avg, p1_low_fps, v[n - 1]));
         r.push_str(&format!("chunks generated+meshed: {jobs} ({:.0} / s), quads resident {:.1}M\n", jobs as f32 / self.duration, quads as f64 / 1e6));
         r.push_str("GPU passes (avg ms per frame where active):\n");

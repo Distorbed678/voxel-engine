@@ -33,9 +33,10 @@ Dear ImGui debug UI.
 | | |
 |---|---|
 | **GPU world pipeline** | Compute shaders generate terrain, place props and greedy-mesh chunks into packed 8-byte quads. Task and mesh shaders cull every chunk and face direction and expand the quads, all from one indirect dispatch. |
-| **Node-graph world generator** | Typed World → Zone → Biome graphs plus reusable Function graphs, compiled to GLSL. Parameter edits regenerate the world instantly; structural edits rebuild the shaders in the background. |
+| **Node-graph world generator** | Typed World → Zone → Biome graphs plus reusable Function graphs, compiled to GLSL. Parameter edits regenerate the world instantly. Structural edits apply instantly too: the edited layer runs in a GPU interpreter of the same code, block for block, while its shaders rebuild in the background. |
+| **A layered world** | Three layers, each with its own zones, biomes and generator: the surface, the underground in two depth bands (caverns down to y −1,200, the Deep with its lava seas down to −6,000) and floating sky islands at y 4,000–6,200. A cloud sea at 2,600–3,400 hides the sky from the ground: fly up and you break through into a sea of cloud tops. Rare sinkholes drop from the surface into the caverns, and sky pillars rise through the clouds. The minimap jumps between layers. |
 | **Props are graphs too** | Every tree, rock, spike and geode is a Prop graph: shape nodes (spheres, capsules, boxes, blobs, combine, transform, mirror, repeat) and tree nodes built on them (trunk, recursive branches, leaves, roots, vines, fruit). Each instance is built once on the GPU and voxelised; the prop editor shows a 3D preview you can orbit, re-roll and place in the world. |
-| **4 zones, 12 biomes, 4 cave biomes** | Meadows, forests, birch hills, floating isles, desert, badlands, savanna, taiga, glaciers, snowy peaks, ashlands and lava fields above ground. Below it: lush, crystal, magma and frost caves in spaghetti, cheese and noodle cave systems and ravines. Rivers run at sea level, with ores, geodes and prefab ruins. All of it is ordinary, editable graphs. |
+| **7 zones, 18 biomes** | Meadows, forests, birch hills, desert, badlands, savanna, taiga, glaciers, snowy peaks, ashlands and lava fields on the surface, with lush, crystal, magma and frost caves under them in spaghetti, cheese and noodle cave systems and ravines. Deeper down: the caverns of the upper band and the magma depths of the Deep. Floating isles in the sky. Rivers run at sea level, with ores, geodes and prefab ruins. All of it is ordinary, editable graphs. |
 | **Light** | Colored block light and sky light are propagated on the GPU in a volume around the camera, with a coarse far-field volume so distant lava still lights its banks. Caves go dark and lanterns, lava and crystals light them. |
 | **Weather and particles** | Snow, rain, drifting ash, rising embers, fireflies at night and pollen by day, set per biome and scaled by a weather cycle. Rain and snow stay out of caves and from under roofs. |
 | **Stylized rendering** | Cascaded sun shadows, TAA, bloom, day/night with sun, moon and stars, volumetric clouds, waves with Fresnel reflections, per-biome fog and tints, wind on leaves, per-cell AO and normal-mapped 32×32 procedural textures. |
@@ -64,12 +65,14 @@ Dear ImGui debug UI.
 
 The generator is a set of graphs, modelled on Hytale's world generation:
 
-- **World**: a Zone Voronoi and a River network feeding the world output (which also holds the
-  sea level).
+- **World**: the world's layers (surface, underground, sky), each a Layer node with a vertical
+  range, a sea level and a zone layout (a Zone Voronoi, or one Zone), plus rivers on the surface.
+  Depth Bands split the underground in two. Sinkholes and Sky Pillars connect the layers, and the
+  World Output sets the cloud sea's heights.
 - **Zone**: a biome layout (Biome Voronoi cells, Biome Threshold Select bands of a noise or height
   map, or a single biome), a cave carver and cave biomes
   (picked in 3D cells; they cover cave floors and ceilings and grow plants there).
-- **Biome**: terrain density, materials, ground cover, up to six prop layers and environment
+- **Biome**: terrain density, materials, ground cover, up to ten prop layers and environment
   colours.
 - **Function**: a reusable density subgraph with four arguments.
 - **Prop**: a tree, rock, ruin or anything else a biome scatters, built from shape and tree nodes
@@ -79,8 +82,9 @@ The generator is a set of graphs, modelled on Hytale's world generation:
 The compiler turns them into GLSL. Every number in a graph is a live parameter in a GPU buffer, so
 dragging a slider regenerates the world without recompiling. Values that only depend on X/Z are
 hoisted and computed once per column. Domain warps and stretches create separate evaluation
-contexts. Up to three biomes blend per column. More in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+contexts. Up to three biomes blend per column. Each layer compiles to its own shaders, so an edit
+rebuilds only its layer. Until the rebuild lands, the layer runs in an interpreter of the same
+code. More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Performance
 
@@ -88,8 +92,8 @@ RTX 4080, 1080p, `--benchmark` (a scripted 24 s flight at 90 blocks/s):
 
 | Metric | Result |
 |---|---|
-| Average frame rate | **289 fps** (1% low: 102 fps) |
-| Streaming | ~2,000 chunks/s while flying |
+| Average frame rate | **249 fps** on the surface (1% low: 89 fps); upper caves 272, the Deep 208, sky 680 (`--benchmark-layer`) |
+| Streaming | ~1,800 chunks/s while flying |
 | Regenerating the whole 4 km world | ~0.5 s of GPU time (~9.2k chunks) |
 | Occlusion culling (main pass) | 2.1 → 1.2 ms in a forest, 2.4 → 0.4 ms in a cave |
 | Cached far shadow cascades | 1.3 → 0.2 ms in a forest (shadows, standing still) |
@@ -146,6 +150,7 @@ A **Comment** node is a resizable box with a note; dragging it moves the nodes i
 --debug-view N     (0 lit, 1 normals, 2 LOD, 3 chunks, 4 meshlets, 5 AO, 6 albedo, 7 overdraw, 8 zones, 9 biomes)
 --script FILE      headless scripted run (camera, input, tools, checks); exit code 1 on failure
 --benchmark        scripted 24 s flight, report saved to benchmarks/
+--benchmark-layer L   the same flight through a layer: surface, upper, deep or sky
 --world FILE       open a world file (seed, camera, time, edits), or create it on the first save
 --worldgen DIR     load generator graphs from DIR instead of assets/worldgen
 --blocks DIR       load block definitions from DIR instead of assets/blocks
