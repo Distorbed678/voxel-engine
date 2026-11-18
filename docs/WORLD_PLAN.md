@@ -430,6 +430,19 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
 - **Tests**: goldens for a custom particle type and a weather event; a fluid script test for a
   second fluid.
 
+- **Phase D benchmark** (RTX 4080, 1080p, 24 s flights; environments, particle types and
+  weather on):
+
+  | Flight | Average fps | 1% low fps | Quads resident |
+  |---|---|---|---|
+  | Surface | 249 | 90 | 1.3M |
+  | Upper caves | 281 | 138 | 17.4M |
+  | The Deep | 212 | 119 | 32.1M |
+  | Sky | 696 | 354 | 0.1M |
+
+  Same as phase C within noise: environments are CPU-only, and the particle type table costs
+  nothing measurable.
+
 ### Phase E (item 23): editor tooling
 - **Graph browser**: a tree of Layers > Zones > Biomes, plus Props, Functions, Particles,
   Fluids, Blocks; search; open in the node editor.
