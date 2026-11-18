@@ -16,10 +16,13 @@ pub enum GraphKind {
     Function,
     /// A prop (tree, rock, ruin...): shapes built per placed instance.
     Prop,
+    /// A particle type (snow, embers, fireflies...): its look, motion and where it spawns.
+    /// Environment nodes pick which types appear where.
+    Particle,
 }
 
 impl GraphKind {
-    pub const ALL: [GraphKind; 5] = [GraphKind::World, GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop];
+    pub const ALL: [GraphKind; 6] = [GraphKind::World, GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop, GraphKind::Particle];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -28,6 +31,7 @@ impl GraphKind {
             GraphKind::Biome => "Biome",
             GraphKind::Function => "Function",
             GraphKind::Prop => "Prop",
+            GraphKind::Particle => "Particle",
         }
     }
     pub fn dir(self) -> &'static str {
@@ -37,6 +41,7 @@ impl GraphKind {
             GraphKind::Biome => "biomes",
             GraphKind::Function => "functions",
             GraphKind::Prop => "props",
+            GraphKind::Particle => "particles",
         }
     }
     /// The node every graph of this kind ends in.
@@ -47,6 +52,7 @@ impl GraphKind {
             GraphKind::Biome => "biome_output",
             GraphKind::Function => "function_output",
             GraphKind::Prop => "prop_output",
+            GraphKind::Particle => "particle_output",
         }
     }
 }
@@ -264,6 +270,10 @@ impl Project {
         }
         if p.graphs.is_empty() {
             anyhow::bail!("no graphs in {}", dir.display());
+        }
+        // projects from before particle types were graphs
+        if p.names(GraphKind::Particle).is_empty() {
+            p.graphs.extend(crate::defaults::default_particles());
         }
         Ok(p)
     }

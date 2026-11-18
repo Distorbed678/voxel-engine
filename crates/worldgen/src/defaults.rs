@@ -669,9 +669,14 @@ fn world() -> Graph {
     let s = dark(&mut b, 0.0, 960.0, [0.6, 0.8, 1.0]);
     let f = b.n("env_fog", 0.0, 1000.0, &[("color", Value::Color([0.07, 0.09, 0.11])), ("strength", fv(1.0)), ("density", fv(0.003)), ("height_falloff", fv(0.0)), ("start", fv(24.0))]);
     let li = b.n("env_light", 0.0, 1040.0, &[("sun", fv(0.0)), ("moon", fv(0.0)), ("sky", fv(0.0)), ("cave", fv(0.035))]);
+    // motes drifting near glowing blocks; no weather down here
+    let pa = b.n("env_particles", 0.0, 1080.0, &[("type1", rv("cave_motes"))]);
+    let calm = b.n("env_weather", 0.0, 1120.0, &[("peak", fv(0.0)), ("wind", fv(0.2))]);
     b.l(s, upper_env, 0);
     b.l(f, upper_env, 1);
     b.l(li, upper_env, 2);
+    b.l(pa, upper_env, 3);
+    b.l(calm, upper_env, 4);
     b.l(upper_env, bands, 2);
     let deep_env = b.n("environment", 260.0, 1100.0, &[]);
     let s = dark(&mut b, 0.0, 1100.0, [1.0, 0.45, 0.3]);
@@ -682,6 +687,10 @@ fn world() -> Graph {
     b.l(f, deep_env, 1);
     b.l(li, deep_env, 2);
     b.l(gr, deep_env, 3);
+    let pa = b.n("env_particles", 0.0, 1260.0, &[("type1", rv("embers")), ("type2", rv("cave_motes")), ("density", fv(0.6))]);
+    let calm = b.n("env_weather", 0.0, 1300.0, &[("peak", fv(0.0)), ("wind", fv(0.3))]);
+    b.l(pa, deep_env, 4);
+    b.l(calm, deep_env, 5);
     b.l(deep_env, bands, 3);
     // sky: y 4000..6200, above the cloud sea
     let sky_z = b.n("zone", 0.0, 800.0, &[("zone", rv("sky"))]);
@@ -916,6 +925,41 @@ pub fn default_props() -> Vec<Graph> {
     ]
 }
 
+/// The built-in particle types: one Particle graph each.
+pub fn default_particles() -> Vec<Graph> {
+    let c = |r: f32, g: f32, b: f32| Value::Color([r, g, b]);
+    let defs: Vec<(&str, Vec<(&str, Value)>)> = vec![
+        ("snow", vec![("color", c(0.95, 0.97, 1.0)), ("color2", c(0.9, 0.94, 1.0)), ("alpha", fv(0.9)), ("size", fv(0.06)), ("speed", fv(1.3)), ("sway", fv(0.35)), ("wind", fv(0.6)), ("life", fv(14.0)), ("density", fv(0.2)), ("storm_density", fv(0.9)), ("open_sky", Value::B(true))]),
+        ("rain", vec![("shape", ev("Streak")), ("color", c(0.75, 0.8, 0.9)), ("color2", c(0.75, 0.8, 0.9)), ("alpha", fv(0.55)), ("size", fv(0.03)), ("speed", fv(13.0)), ("sway", fv(0.0)), ("wind", fv(1.5)), ("life", fv(6.0)), ("density", fv(0.0)), ("storm_density", fv(0.9)), ("open_sky", Value::B(true))]),
+        ("ash", vec![("color", c(0.35, 0.33, 0.32)), ("color2", c(0.45, 0.42, 0.4)), ("alpha", fv(0.85)), ("size", fv(0.05)), ("motion", ev("Drift")), ("speed", fv(0.35)), ("sway", fv(0.4)), ("wind", fv(0.5)), ("life", fv(14.0)), ("density", fv(0.35)), ("storm_density", fv(0.6))]),
+        ("embers", vec![("shape", ev("Spark")), ("color", c(1.0, 0.35, 0.075)), ("color2", c(1.0, 0.55, 0.15)), ("alpha", fv(1.0)), ("size", fv(0.065)), ("glow", fv(4.0)), ("motion", ev("Rise")), ("speed", fv(1.4)), ("sway", fv(0.6)), ("wind", fv(0.3)), ("life", fv(3.5)), ("density", fv(0.12)), ("storm_density", fv(0.2))]),
+        ("fireflies", vec![("color", c(0.67, 1.0, 0.25)), ("color2", c(0.8, 1.0, 0.3)), ("alpha", fv(1.0)), ("size", fv(0.07)), ("glow", fv(2.4)), ("blink", fv(1.0)), ("motion", ev("Wander")), ("speed", fv(0.9)), ("sway", fv(0.0)), ("wind", fv(0.0)), ("life", fv(14.0)), ("density", fv(0.05)), ("storm_density", fv(0.02)), ("time", ev("Night"))]),
+        ("pollen", vec![("color", c(1.0, 0.95, 0.7)), ("color2", c(1.0, 0.9, 0.55)), ("alpha", fv(0.7)), ("size", fv(0.03)), ("motion", ev("Drift")), ("speed", fv(0.08)), ("sway", fv(0.2)), ("wind", fv(0.4)), ("life", fv(14.0)), ("density", fv(0.06)), ("storm_density", fv(0.0)), ("time", ev("Day"))]),
+        ("sand", vec![("shape", ev("Streak")), ("color", c(0.42, 0.3, 0.16)), ("color2", c(0.6, 0.45, 0.24)), ("alpha", fv(0.85)), ("size", fv(0.035)), ("speed", fv(0.4)), ("sway", fv(0.6)), ("wind", fv(2.5)), ("life", fv(5.0)), ("density", fv(0.0)), ("storm_density", fv(0.85)), ("open_sky", Value::B(true))]),
+        ("falling_leaves", vec![("shape", ev("Square")), ("color", c(0.16, 0.3, 0.04)), ("color2", c(0.55, 0.28, 0.04)), ("alpha", fv(1.0)), ("size", fv(0.09)), ("motion", ev("Drift")), ("speed", fv(0.7)), ("sway", fv(0.8)), ("wind", fv(0.8)), ("life", fv(10.0)), ("density", fv(0.2)), ("storm_density", fv(0.35)), ("near", ev("Leaves"))]),
+        ("cave_motes", vec![("color", c(0.45, 0.9, 1.0)), ("color2", c(0.7, 1.0, 0.6)), ("alpha", fv(0.9)), ("size", fv(0.03)), ("glow", fv(1.5)), ("blink", fv(0.5)), ("motion", ev("Wander")), ("speed", fv(0.25)), ("sway", fv(0.0)), ("wind", fv(0.0)), ("life", fv(12.0)), ("density", fv(0.08)), ("storm_density", fv(0.08)), ("near", ev("Glowing"))]),
+    ];
+    defs.into_iter()
+        .map(|(name, params)| {
+            let mut b = B::new(name, GraphKind::Particle);
+            b.out_params(&params);
+            b.g
+        })
+        .collect()
+}
+
+/// The weather of each surface zone: thunderstorms, sandstorms, blizzards, ash storms.
+fn zone_weather(zone: &str) -> Option<Vec<(&'static str, Value)>> {
+    let c = |r: f32, g: f32, b: f32| Value::Color([r, g, b]);
+    Some(match zone {
+        "temperate" => vec![("storm_wind", fv(3.0)), ("fog", fv(2.0)), ("clouds", fv(0.5)), ("darken", fv(0.35)), ("lightning", fv(4.0))],
+        "arid" => vec![("cycle", fv(1200.0)), ("storminess", fv(0.3)), ("storm_wind", fv(7.0)), ("fog", fv(22.0)), ("fog_color", c(0.78, 0.62, 0.42)), ("fog_tint", fv(1.0)), ("clouds", fv(0.0)), ("darken", fv(0.25))],
+        "frozen" => vec![("storm_wind", fv(6.0)), ("fog", fv(6.0)), ("fog_color", c(0.85, 0.9, 0.97)), ("fog_tint", fv(0.8)), ("clouds", fv(0.5)), ("darken", fv(0.15))],
+        "volcanic" => vec![("storm_wind", fv(3.5)), ("fog", fv(5.0)), ("fog_color", c(0.28, 0.25, 0.23)), ("fog_tint", fv(0.75)), ("clouds", fv(0.4)), ("darken", fv(0.4)), ("lightning", fv(6.0))],
+        _ => return None,
+    })
+}
+
 pub fn default_project() -> Project {
     let mut p = Project {
         graphs: vec![
@@ -961,6 +1005,7 @@ pub fn default_project() -> Project {
         ],
     };
     p.graphs.extend(default_props());
+    p.graphs.extend(default_particles());
     // colour grading while the camera is in a biome: tint, saturation, contrast
     let grading: &[(&str, [f32; 3], f32, f32)] = &[
         ("meadow", [1.0, 1.0, 0.97], 1.08, 1.0),
@@ -998,12 +1043,51 @@ pub fn default_project() -> Project {
             g.set(o, "saturation", fv(sat));
             g.set(o, "contrast", fv(contrast));
         }
-        crate::env::migrate_biome_output(g);
         if let Some(&(_, ambient, precip)) = particles.iter().find(|e| e.0 == g.name)
             && let Some(o) = g.output_node().map(|n| n.id)
         {
             g.set(o, "ambient", ev(ambient));
             g.set(o, "precipitation", ev(precip));
+        }
+        crate::env::migrate_biome_output(g);
+        // falling leaves in the forests, sand in the deserts' storms
+        let extra = match g.name.as_str() {
+            "oak_forest" | "birch_hills" => Some("falling_leaves"),
+            "desert" | "badlands" => Some("sand"),
+            _ => None,
+        };
+        if let Some(t) = extra
+            && let Some(o) = g.output_node().map(|n| n.id)
+        {
+            let link = g.input_link(o, crate::env::BIOME_ENV_PIN).copied();
+            let existing = link.and_then(|l| {
+                let n = g.node(l.from_node)?;
+                if n.kind == "env_particles" {
+                    return Some(n.id);
+                }
+                (0..6u8).filter_map(|p| g.input_link(n.id, p)).map(|l| l.from_node).find(|&id| g.node(id).is_some_and(|n| n.kind == "env_particles"))
+            });
+            let p = match existing {
+                Some(p) => p,
+                None => {
+                    let p = g.add("env_particles", [0.0, 0.0]);
+                    crate::env::attach_part(g, o, crate::env::BIOME_ENV_PIN, p);
+                    p
+                }
+            };
+            let used = |i: &i32| matches!(g.node(p).and_then(|n| n.params.get(&format!("type{i}"))), Some(Value::Ref(r)) if !r.is_empty());
+            let free = (1..=6).find(|i| !used(i)).unwrap_or(6);
+            g.set(p, &format!("type{free}"), rv(t));
+        }
+        if g.kind == GraphKind::Zone
+            && let Some(w) = zone_weather(&g.name)
+            && let Some(o) = g.output_node().map(|n| n.id)
+        {
+            let n = g.add("env_weather", [0.0, 0.0]);
+            for (k, v) in w {
+                g.set(n, k, v);
+            }
+            crate::env::attach_part(g, o, crate::env::ZONE_ENV_PIN, n);
         }
         crate::layout::auto_layout(g);
         if g.kind == GraphKind::World {
@@ -1138,12 +1222,26 @@ mod tests {
         let desert = env(0, "desert");
         assert!(desert.fog.color != Env::default().fog.color && desert.fog.density > Env::default().fog.density);
         // no sun or sky light underground; the Deep is warmer and glows more
-        let (upper, deep) = (env(1, "lush_caves"), env(2, "magma_depths"));
+        let (upper, deep) = (env(1, "caverns"), env(2, "magma_depths"));
         assert_eq!((upper.light.sun, upper.light.sky, deep.light.sky), (0.0, 0.0, 0.0));
         assert!(deep.light.cave > upper.light.cave && deep.fog.color[0] > deep.fog.color[2]);
         // the sky isles: their own sky, lit from below by the cloud sea
         let isles = env(3, "floating_isles");
         assert!(isles.light.sky > 1.0 && isles.sky.ground[0][2] > 0.8);
+        // particle types are graphs; each biome, zone and layer picks its own, and the weather
+        let names: Vec<&str> = c.particles.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["ash", "cave_motes", "embers", "falling_leaves", "fireflies", "pollen", "rain", "sand", "snow"]);
+        let forest = env(0, "oak_forest");
+        assert_eq!(forest.particles.types, ["fireflies", "rain", "falling_leaves"]);
+        assert_eq!(forest.weather.lightning, 4.0, "the temperate zone's thunderstorms");
+        let desert = env(0, "desert");
+        assert_eq!(desert.particles.types, ["sand"]);
+        assert!(desert.weather.fog > 10.0 && desert.weather.fog_tint == 1.0, "sandstorms");
+        assert_eq!(upper.particles.types, ["cave_motes"]);
+        assert_eq!(upper.weather.peak, 0.0, "no weather underground");
+        let leaves = &c.particles[3];
+        assert_eq!((leaves.near, leaves.shape), (1, 2), "near leaves, a tumbling square");
+        assert!(c.particles.iter().find(|d| d.name == "rain").unwrap().open_sky);
     }
 
     #[test]
@@ -1154,12 +1252,17 @@ mod tests {
         g.set(o, "fog_color", Value::Color([0.5, 0.4, 0.3]));
         g.set(o, "fog_density", fv(2.0));
         g.set(o, "saturation", fv(0.5));
+        g.set(o, "ambient", ev("Embers"));
+        g.set(o, "precipitation", ev("Snow"));
+        g.set(o, "particle_density", fv(2.0));
         assert!(crate::env::migrate_biome_output(&mut g));
         assert!(!crate::env::migrate_biome_output(&mut g), "a second pass finds nothing to move");
         let e = crate::env::resolve(&g, o, crate::env::BIOME_ENV_PIN);
         let fog = e.fog.unwrap();
         assert_eq!((fog.color, fog.density), ([0.5, 0.4, 0.3], 0.0024));
         assert_eq!(e.grade.unwrap().saturation, 0.5);
+        let p = e.particles.unwrap();
+        assert_eq!((p.types, p.density), (vec!["embers".to_string(), "ash".into(), "snow".into()], 2.0));
     }
 
     #[test]

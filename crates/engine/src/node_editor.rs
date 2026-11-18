@@ -258,11 +258,11 @@ impl NodeEditorUi {
         }
         ui.separator();
         ui.text("New graph");
-        let kinds = ["Zone", "Biome", "Function", "Prop"];
+        let kinds = ["Zone", "Biome", "Function", "Prop", "Particle"];
         ui.combo_simple_string("##kind", &mut self.new_kind, &kinds);
         ui.input_text("##name", &mut self.new_name).build();
         if ui.button("Create") {
-            let kind = [GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop][self.new_kind.min(3)];
+            let kind = [GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop, GraphKind::Particle][self.new_kind.min(4)];
             let name = worldgen::compile::sanitize(self.new_name.trim()).to_lowercase();
             if !name.is_empty() && wg.project.get(kind, &name).is_none() {
                 wg.project.graphs.push(Graph::new(&name, kind));
@@ -685,6 +685,8 @@ impl NodeEditorUi {
         let zone_names = wg.project.names(GraphKind::Zone);
         let fn_names = wg.project.names(GraphKind::Function);
         let prop_names = wg.project.names(GraphKind::Prop);
+        // a particle slot may be empty
+        let particle_names: Vec<String> = std::iter::once("(none)".to_string()).chain(wg.project.names(GraphKind::Particle)).collect();
         let block_names: Vec<&str> = std::iter::once("air").chain(blocks.live().map(|(_, b)| b.name.as_str())).collect();
         let prefab_names = wg.prefab_names.clone();
         let mut changed = false;
@@ -756,19 +758,24 @@ impl NodeEditorUi {
                             GraphKind::Biome => &biome_names,
                             GraphKind::Zone => &zone_names,
                             GraphKind::Prop => &prop_names,
+                            GraphKind::Particle => &particle_names,
                             _ => &fn_names,
                         };
+                        let none = kind == GraphKind::Particle;
                         let cur = match node.params.get(pd.name) {
+                            Some(Value::Ref(s)) if none && s.is_empty() => Some(0),
                             Some(Value::Ref(s)) => list.iter().position(|o| o == s),
+                            None if none => Some(0),
                             _ => None,
                         };
                         let mut i = cur.unwrap_or(0);
                         if !list.is_empty() && ui.combo_simple_string(&label, &mut i, list) && Some(i) != cur {
-                            node.params.insert(pd.name.into(), Value::Ref(list[i].clone()));
+                            let v = if none && i == 0 { String::new() } else { list[i].clone() };
+                            node.params.insert(pd.name.into(), Value::Ref(v));
                             changed = true;
                             snapshot = true;
                         }
-                        if cur.is_some() && ui.small_button(format!("open {}##open{}", kind.label(), pd.name)) {
+                        if cur.is_some_and(|c| !(none && c == 0)) && ui.small_button(format!("open {}##open{}", kind.label(), pd.name)) {
                             self.current = (kind, list[i].clone());
                             self.selected.clear();
                             self.navigate = true;

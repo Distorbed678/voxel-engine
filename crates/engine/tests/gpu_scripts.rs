@@ -112,3 +112,9 @@ fn props() {
 fn environment() {
     run("environment");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn particles() {
+    run("particles");
+}

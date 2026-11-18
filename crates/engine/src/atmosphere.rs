@@ -22,6 +22,8 @@ pub struct Atmosphere {
     pub exposure: f32,
     /// Weather intensity 0..1 (rain, heavier snow, more clouds and fog).
     pub weather: f32,
+    /// a lightning flash's brightness (0 = none)
+    pub flash: f32,
 }
 
 impl Default for Atmosphere {
@@ -35,6 +37,7 @@ impl Default for Atmosphere {
             fog_base: 62.0,
             exposure: 0.75,
             weather: 0.0,
+            flash: 0.0,
         }
     }
 }
@@ -85,10 +88,25 @@ impl Atmosphere {
             // moonlight (lighting shader flips to -sun_dir when the sun is down)
             (Vec3::from(sky.moon) * MOONLIGHT, 0.35 * ((-e - 0.05) / 0.15).clamp(0.0, 1.0) * light.moon)
         };
-        let ground = lerp3(Vec3::from(sky.ground[1]), Vec3::from(sky.ground[0]), day);
+        let mut ground = lerp3(Vec3::from(sky.ground[1]), Vec3::from(sky.ground[0]), day);
         // the fog colour dims at night, where the sun lights it
         let dim = 1.0 + (0.2 + 0.8 * day - 1.0) * light.sun.min(1.0);
-        let fog = lerp3(horizon, Vec3::from(self.env.fog.color) * dim, self.env.fog.strength);
-        SkyColors { sun_dir, sun_intensity, sun_color, zenith, horizon, ground, fog }
+        let mut fog = lerp3(horizon, Vec3::from(self.env.fog.color) * dim, self.env.fog.strength);
+        // a storm: its fog colour (sand, snow, ash) takes over the fog and the horizon, the sky
+        // and the sun darken, lightning lights everything up
+        let (we, w) = (&self.env.weather, self.weather.clamp(0.0, 1.0));
+        // (at night lit by the moon only)
+        let storm = Vec3::from(we.fog_color) * (1.0 + (0.06 + 0.94 * day - 1.0) * light.sun.min(1.0));
+        fog = lerp3(fog, storm, we.fog_tint * w);
+        horizon = lerp3(horizon, storm, we.fog_tint * w * 0.9);
+        zenith = lerp3(zenith, storm, we.fog_tint * w * 0.75);
+        let dark = 1.0 - we.darken.clamp(0.0, 1.0) * w;
+        let sky_dark = 1.0 - 0.6 * (1.0 - dark);
+        let flash = Vec3::new(0.55, 0.6, 0.75) * self.flash * 1.4 * light.sky.min(1.0);
+        zenith = zenith * sky_dark + flash;
+        horizon = horizon * sky_dark + flash;
+        ground = ground * sky_dark + flash * 0.6;
+        fog = fog * sky_dark + flash * 0.5;
+        SkyColors { sun_dir, sun_intensity: sun_intensity * dark, sun_color, zenith, horizon, ground, fog }
     }
 }

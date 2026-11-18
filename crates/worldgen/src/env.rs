@@ -64,6 +64,43 @@ pub struct LightEnv {
     pub cave: f32,
 }
 
+/// The particle types (Particle graph names) around the camera, and a density multiplier.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParticlesEnv {
+    pub types: Vec<String>,
+    pub density: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WeatherEnv {
+    /// seconds per cycle, share of the time it storms (0..1), peak intensity
+    pub cycle: f32,
+    pub storminess: f32,
+    pub peak: f32,
+    /// wind speed in calm weather and at the peak of a storm
+    pub wind: f32,
+    pub storm_wind: f32,
+    /// at the peak: fog density multiplier, the storm's fog colour and how much it takes over
+    pub fog: f32,
+    pub fog_color: Rgb,
+    pub fog_tint: f32,
+    /// at the peak: cloud coverage added, sky and sunlight darkening, lightning per minute
+    pub clouds: f32,
+    pub darken: f32,
+    pub lightning: f32,
+}
+
+impl WeatherEnv {
+    /// The automatic weather intensity (0..1) at time `t` seconds: two slow waves, stormy for
+    /// `storminess` of the time.
+    pub fn intensity(&self, t: f64) -> f32 {
+        let f = std::f64::consts::TAU / self.cycle.max(1.0) as f64;
+        let w = (t * f).sin() * 0.6 + (t * f * 2.366 + 1.3).sin() * 0.4;
+        let threshold = 1.0 - 2.0 * self.storminess;
+        (((w as f32) - threshold) * 2.0).clamp(0.0, 1.0) * self.peak
+    }
+}
+
 /// What one level (world, layer, zone, biome) sets: None leaves a group to the levels above.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EnvOverride {
@@ -72,6 +109,8 @@ pub struct EnvOverride {
     pub grade: Option<GradeEnv>,
     pub clouds: Option<CloudEnv>,
     pub light: Option<LightEnv>,
+    pub particles: Option<ParticlesEnv>,
+    pub weather: Option<WeatherEnv>,
 }
 
 /// Every group set: the environment the renderer uses.
@@ -82,6 +121,8 @@ pub struct Env {
     pub grade: GradeEnv,
     pub clouds: CloudEnv,
     pub light: LightEnv,
+    pub particles: ParticlesEnv,
+    pub weather: WeatherEnv,
 }
 
 impl Default for Env {
@@ -103,6 +144,20 @@ impl Default for Env {
             grade: GradeEnv { tint: [1.0; 3], saturation: 1.0, contrast: 1.0, exposure: 1.0 },
             clouds: CloudEnv { coverage: 0.45, base: 230.0, thickness: 90.0, density: 0.06 },
             light: LightEnv { sun: 1.0, moon: 1.0, sky: 1.0, block: 1.0, cave: 0.018 },
+            particles: ParticlesEnv { types: Vec::new(), density: 1.0 },
+            weather: WeatherEnv {
+                cycle: 1530.0,
+                storminess: 0.375,
+                peak: 1.0,
+                wind: 0.6,
+                storm_wind: 2.2,
+                fog: 2.0,
+                fog_color: [0.55, 0.6, 0.68],
+                fog_tint: 0.0,
+                clouds: 0.3,
+                darken: 0.0,
+                lightning: 0.0,
+            },
         }
     }
 }
@@ -165,6 +220,12 @@ impl Env {
             "light.sky" => v(l.sky),
             "light.block" => v(l.block),
             "light.cave" => v(l.cave),
+            "particles.density" => v(self.particles.density),
+            "weather.wind" => v(self.weather.wind),
+            "weather.storm_wind" => v(self.weather.storm_wind),
+            "weather.fog" => v(self.weather.fog),
+            "weather.fog_color" => col(&self.weather.fog_color),
+            "weather.lightning" => v(self.weather.lightning),
             _ => None,
         }
     }
@@ -207,6 +268,21 @@ impl Env {
         mix(&mut l.sky, t.sky, k);
         mix(&mut l.block, t.block, k);
         mix(&mut l.cave, t.cave, k);
+        // the set of particle types switches at once (the engine fades each type's share)
+        self.particles.types.clone_from(&to.particles.types);
+        mix(&mut self.particles.density, to.particles.density, k);
+        let (w, t) = (&mut self.weather, &to.weather);
+        mix(&mut w.cycle, t.cycle, k);
+        mix(&mut w.storminess, t.storminess, k);
+        mix(&mut w.peak, t.peak, k);
+        mix(&mut w.wind, t.wind, k);
+        mix(&mut w.storm_wind, t.storm_wind, k);
+        mix(&mut w.fog, t.fog, k);
+        mix3(&mut w.fog_color, &t.fog_color, k);
+        mix(&mut w.fog_tint, t.fog_tint, k);
+        mix(&mut w.clouds, t.clouds, k);
+        mix(&mut w.darken, t.darken, k);
+        mix(&mut w.lightning, t.lightning, k);
     }
 
     /// Override the groups `o` sets.
@@ -225,6 +301,12 @@ impl Env {
         }
         if let Some(l) = &o.light {
             self.light = l.clone();
+        }
+        if let Some(p) = &o.particles {
+            self.particles = p.clone();
+        }
+        if let Some(w) = &o.weather {
+            self.weather = w.clone();
         }
     }
 }
@@ -247,15 +329,44 @@ impl EnvOverride {
         if o.light.is_some() {
             self.light = o.light;
         }
+        if o.particles.is_some() {
+            self.particles = o.particles;
+        }
+        if o.weather.is_some() {
+            self.weather = o.weather;
+        }
     }
     pub fn is_empty(&self) -> bool {
         *self == EnvOverride::default()
     }
 }
 
-/// Biome Outputs once had their own fog and grading settings (fog_color, fog_density as a
-/// multiple of the default, grade_tint, saturation, contrast): move them into Fog and Grading
-/// nodes on the Environment input. Returns whether the graph changed.
+/// Wire environment part `part` into input `pin` of node `out`: directly when the input is
+/// free, else into the Environment node already there (or a new one combining both). Later
+/// inputs win, so `part` overrides what was there.
+pub fn attach_part(g: &mut Graph, out: u32, pin: u8, part: u32) {
+    let Some(l) = g.input_link(out, pin).copied() else {
+        g.connect(part, 0, out, pin);
+        return;
+    };
+    let combine = match g.node(l.from_node) {
+        Some(n) if n.kind == "environment" => l.from_node,
+        _ => {
+            let env = g.add("environment", [0.0, 0.0]);
+            g.connect(l.from_node, l.from_pin, env, 0);
+            g.connect(env, 0, out, pin);
+            env
+        }
+    };
+    if let Some(free) = (0..6u8).find(|&p| g.input_link(combine, p).is_none()) {
+        g.connect(part, 0, combine, free);
+    }
+}
+
+/// Biome Outputs once had their own fog, grading and particle settings (fog_color, fog_density
+/// as a multiple of the default, grade_tint, saturation, contrast; ambient, precipitation,
+/// particle_density): move them into Fog, Grading and Particles nodes on the Environment input.
+/// Returns whether the graph changed.
 pub fn migrate_biome_output(g: &mut Graph) -> bool {
     if g.kind != crate::graph::GraphKind::Biome {
         return false;
@@ -265,6 +376,7 @@ pub fn migrate_biome_output(g: &mut Graph) -> bool {
     let mut take = |k: &str| params.remove(k);
     let (color, density) = (take("fog_color"), take("fog_density"));
     let (tint, saturation, contrast) = (take("grade_tint"), take("saturation"), take("contrast"));
+    let (ambient, precipitation, particle_density) = (take("ambient"), take("precipitation"), take("particle_density"));
     let mut parts = Vec::new();
     if color.is_some() || density.is_some() {
         let f = g.add("env_fog", [0.0, 0.0]);
@@ -283,21 +395,38 @@ pub fn migrate_biome_output(g: &mut Graph) -> bool {
         }
         parts.push(e);
     }
-    if parts.is_empty() || g.input_link(o, BIOME_ENV_PIN).is_some() {
-        return !parts.is_empty();
-    }
-    let out = match parts.as_slice() {
-        [one] => *one,
-        many => {
-            let env = g.add("environment", [0.0, 0.0]);
-            for (i, p) in many.iter().enumerate() {
-                g.connect(*p, 0, env, i as u8);
-            }
-            env
-        }
+    // the old fixed particle kinds are default Particle graphs now
+    let name = |v: &Option<Value>| match v {
+        Some(Value::E(s)) => s.clone(),
+        _ => String::new(),
     };
-    g.connect(out, 0, o, BIOME_ENV_PIN);
-    true
+    let mut types: Vec<&str> = match name(&ambient).as_str() {
+        "Ash" => vec!["ash"],
+        "Embers" => vec!["embers", "ash"],
+        "Fireflies" => vec!["fireflies"],
+        "Pollen" => vec!["pollen"],
+        _ => vec![],
+    };
+    match name(&precipitation).as_str() {
+        "Rain" => types.push("rain"),
+        "Snow" => types.push("snow"),
+        _ => {}
+    }
+    let changed = !parts.is_empty() || ambient.is_some() || precipitation.is_some() || particle_density.is_some();
+    if !types.is_empty() {
+        let p = g.add("env_particles", [0.0, 0.0]);
+        for (i, t) in types.iter().enumerate() {
+            g.set(p, &format!("type{}", i + 1), Value::Ref(t.to_string()));
+        }
+        if let Some(d) = particle_density {
+            g.set(p, "density", d);
+        }
+        parts.push(p);
+    }
+    for p in parts {
+        attach_part(g, o, BIOME_ENV_PIN, p);
+    }
+    changed
 }
 
 /// The Environment inputs of the Biome, Zone and World Outputs
@@ -361,6 +490,30 @@ fn resolve_node(g: &Graph, id: u32, depth: u32) -> EnvOverride {
         "env_grading" => o.grade = Some(GradeEnv { tint: c(n, "tint"), saturation: f(n, "saturation"), contrast: f(n, "contrast"), exposure: f(n, "exposure") }),
         "env_clouds" => o.clouds = Some(CloudEnv { coverage: f(n, "coverage"), base: f(n, "base"), thickness: f(n, "thickness"), density: f(n, "density") }),
         "env_light" => o.light = Some(LightEnv { sun: f(n, "sun"), moon: f(n, "moon"), sky: f(n, "sky"), block: f(n, "block"), cave: f(n, "cave") }),
+        "env_particles" => {
+            let types = (1..=6)
+                .filter_map(|i| match n.params.get(&format!("type{i}")) {
+                    Some(Value::Ref(r)) if !r.is_empty() => Some(r.clone()),
+                    _ => None,
+                })
+                .collect();
+            o.particles = Some(ParticlesEnv { types, density: f(n, "density") })
+        }
+        "env_weather" => {
+            o.weather = Some(WeatherEnv {
+                cycle: f(n, "cycle"),
+                storminess: f(n, "storminess"),
+                peak: f(n, "peak"),
+                wind: f(n, "wind"),
+                storm_wind: f(n, "storm_wind"),
+                fog: f(n, "fog"),
+                fog_color: c(n, "fog_color"),
+                fog_tint: f(n, "fog_tint"),
+                clouds: f(n, "clouds"),
+                darken: f(n, "darken"),
+                lightning: f(n, "lightning"),
+            })
+        }
         _ => {}
     }
     o

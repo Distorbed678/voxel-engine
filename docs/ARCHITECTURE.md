@@ -186,18 +186,46 @@ a ping-ponged RGBA16F history:
 
 A pool of 24,576 GPU particles lives in a 64³ box that wraps around the camera: a particle that
 leaves one side comes back on the other, so the camera is always surrounded
-(`crates/engine/src/particles.rs`, `shaders/particles/`). Each frame `sim.comp` respawns free slots
-with a kind picked from per-kind shares, steers velocities towards per-kind targets (falling snow,
-fast rain, drifting ash, rising embers, wandering fireflies, pollen), and kills particles inside
-solid blocks. Rain and snow also die under a roof, using the light volume's sky sources. The
-translucent pass draws camera-facing quads (rain is stretched along its motion). Embers and
-fireflies are emissive, so bloom makes them glow.
+(`crates/engine/src/particles.rs`, `shaders/particles/`).
 
-The shares come from the camera's biome: each Biome Output has ambient particles (ash, embers,
-fireflies at night, pollen by day), precipitation (rain or snow) and a density. They're multiplied
-by a weather intensity that cycles slowly by itself or is set by hand. Weather also thickens the
-clouds and the fog. Everything blends over time like fog. Scripts restart the particles and snap
-the blend when `settle` finishes, so golden images stay deterministic.
+**Particle types are graphs.** Each Particle graph's Particle Output is one type
+(`worldgen::particles`):
+- **Look:** shape (soft dot, streak along the motion, tumbling square, spark), two colours each
+  particle mixes at random (linear light, like block albedo), opacity, size, glow, blink.
+- **Motion:** fall, drift, rise, swirl around the camera, wander, flock in groups of 24, orbit a
+  point in groups of 16. Each has a speed, a sway and how much it follows the wind; plus a
+  lifetime.
+- **Spawn rules:** a share of the pool in calm weather and at a storm's peak, day/night, near
+  what (leaves, plants, water, glowing blocks, the ground or one block), and whether it needs
+  open sky.
+
+The engine uploads the types as a table of up to 64 entries. Each frame, `sim.comp` respawns
+free slots with a type picked from the (up to 8) active types' shares. It skips a spot the
+type's "near" rule rejects, testing eight neighbouring cells of the light volume's block copy.
+It steers velocities towards the type's motion and kills particles inside solid blocks
+(open-sky types also die under a roof). The translucent pass draws camera-facing quads lit by
+the sky, the sun and the light volume; glowing types light themselves, so bloom makes them glow.
+
+**The camera's environment picks the types** (a Particles node: up to six types and a density).
+The default world:
+- the forests drop falling leaves near their leaves;
+- the deserts blow sand in storms;
+- the upper caves have motes near glowing blocks;
+- the Deep has embers.
+
+**Weather is an environment part too** (a Weather node):
+- a slow intensity cycle: seconds per cycle, the share of the time it storms, a peak;
+- at a storm's peak: wind, a fog multiplier and the storm's fog colour taking over the fog and
+  the sky (sand, snow, ash), more clouds, a darker sky and sun, lightning flashes per minute.
+
+Lightning strikes on the animation clock, one chance per second, and lights the sky and
+everything it reaches. The default zones bring thunderstorms (temperate), sandstorms (arid),
+blizzards (frozen) and ash storms (volcanic). Underground the weather's peak is 0.
+
+The slider and the `weather` script command set the intensity by hand, up to the environment's
+peak. The `lightning` script command and the settings panel button force a strike. Shares
+blend over time; scripts restart the particles and snap the blend when `settle` finishes, so
+golden images stay deterministic.
 
 ## Environments
 

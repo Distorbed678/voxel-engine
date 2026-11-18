@@ -26,10 +26,6 @@ pub struct BiomeInfo {
     pub foliage_tint: [f32; 3],
     pub water_tint: [f32; 3],
     pub map_color: [f32; 3],
-    /// Ambient particles (None, Ash, Embers, Fireflies, Pollen), precipitation (None, Rain, Snow).
-    pub ambient: u32,
-    pub precipitation: u32,
-    pub particle_density: f32,
     /// Used by a zone for its caves (and by none for its surface).
     pub cave: bool,
 }
@@ -140,6 +136,8 @@ pub struct Compiled {
     pub env_biomes: Vec<crate::env::EnvOverride>,
     /// length of a day in seconds (World Output)
     pub day_length: f32,
+    /// every Particle graph's type (Particles environment nodes name them)
+    pub particles: Vec<crate::particles::ParticleDef>,
 }
 
 impl Compiled {
@@ -1020,18 +1018,11 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
             foliage_tint: color_param(g, &outn, "foliage_tint"),
             water_tint: color_param(g, &outn, "water_tint"),
             map_color: color_param(g, &outn, "map_color"),
-            ambient: 0,
-            precipitation: 0,
-            particle_density: outn.params.get("particle_density").map(|v| v.as_f32()).unwrap_or(1.0),
             cave: false,
         });
         sh.depth_biome = Some(bi as u32);
         let mut em = Em::new(sh, g, pfx.clone(), false);
         fluids.push(em.enum_idx(&outn, "fluid"));
-        if let Some(info) = biome_infos.last_mut() {
-            info.ambient = em.enum_idx(&outn, "ambient") as u32;
-            info.precipitation = em.enum_idx(&outn, "precipitation") as u32;
-        }
         // density
         let dens = g
             .input_link(outn.id, 0)
@@ -2008,6 +1999,7 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             None => 600.0,
         };
     }
+    c.particles = crate::particles::particle_defs(project);
     warnings.append(&mut sh.warnings);
     c.warnings = warnings;
     c.params = params.values;

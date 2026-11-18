@@ -9,6 +9,7 @@ pub mod defaults;
 pub mod graph;
 pub mod layout;
 pub mod nodes;
+pub mod particles;
 
 pub use compile::{BiomeInfo, Compiled, ParamKey, ZoneInfo, compile};
 pub use graph::{Graph, GraphKind, Link, Node, Project, Value};

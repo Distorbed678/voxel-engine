@@ -414,6 +414,10 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
   - Weather pattern nodes: storms with lightning flashes, sandstorms, blizzards, ash storms,
     intensity cycles.
   - Generalise the GPU particle system beyond the 6 kinds.
+  - **Done**: the Particle graph kind (look, motion, spawn rules near block classes), a GPU type
+    table with 8 active types, Particles and Weather environment nodes, storms per zone
+    (thunderstorms with lightning, sandstorms, blizzards, ash storms), falling leaves, sand and
+    cave motes; old biome particle settings converted on load; `particles.vxs` test.
 - **Fluids as data and graphs**: fluid definitions (flow distance, speed, light, colour,
   texture, whether sources are infinite). Generalise `fluid.rs`; lava flows.
 - **Light & time** in the World graph: day length, sun and moon light colours, per-layer

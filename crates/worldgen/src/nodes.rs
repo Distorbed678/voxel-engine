@@ -150,6 +150,7 @@ const ZONE: &[GraphKind] = &[GraphKind::Zone];
 const WORLD: &[GraphKind] = &[GraphKind::World];
 const FUNC: &[GraphKind] = &[GraphKind::Function];
 const ENV: &[GraphKind] = &[GraphKind::World, GraphKind::Zone, GraphKind::Biome];
+const PARTICLE: &[GraphKind] = &[GraphKind::Particle];
 
 /// Shape nodes: the block they place and its priority where shapes overlap (higher wins).
 const SH: &[(&str, PinType)] = &[("Shape", Shape)];
@@ -231,6 +232,36 @@ pub static NODES: &[NodeDef] = &[
         inputs: &[], outputs: &[("Out", Environment)],
         params: &[f("sun", 1.0, 0.0, 4.0), f("moon", 1.0, 0.0, 4.0), f("sky", 1.0, 0.0, 4.0), f("block", 1.0, 0.0, 4.0), f("cave", 0.018, 0.0, 0.5)],
         allowed: ENV },
+    NodeDef { kind: "env_particles", title: "Particles", category: "Environment",
+        help: "Which particle types (Particle graphs) float around the camera here, and a density multiplier for all of them. Each type sets its own amount in calm weather and in a storm.",
+        inputs: &[], outputs: &[("Out", Environment)],
+        params: &[rf("type1", GraphKind::Particle), rf("type2", GraphKind::Particle), rf("type3", GraphKind::Particle), rf("type4", GraphKind::Particle), rf("type5", GraphKind::Particle), rf("type6", GraphKind::Particle), f("density", 1.0, 0.0, 4.0)],
+        allowed: ENV },
+    NodeDef { kind: "env_weather", title: "Weather", category: "Environment",
+        help: "The weather: how it cycles (seconds per cycle, the share of the time it storms, the peak intensity) and what a storm does at its peak: wind, fog (a density multiplier, and how much it takes the storm's fog colour: sand, snow, ash), more clouds, a darker sky, lightning flashes per minute. Particle types add rain, snow, sand or ash with the intensity.",
+        inputs: &[], outputs: &[("Out", Environment)],
+        params: &[
+            f("cycle", 1530.0, 10.0, 36000.0), f("storminess", 0.375, 0.0, 1.0), f("peak", 1.0, 0.0, 1.0),
+            f("wind", 0.6, 0.0, 20.0), f("storm_wind", 2.2, 0.0, 20.0),
+            f("fog", 2.0, 0.0, 20.0), col("fog_color", [0.55, 0.6, 0.68]), f("fog_tint", 0.0, 0.0, 1.0),
+            f("clouds", 0.3, 0.0, 1.0), f("darken", 0.0, 0.0, 1.0), f("lightning", 0.0, 0.0, 60.0),
+        ],
+        allowed: ENV },
+    NodeDef { kind: "particle_output", title: "Particle Output", category: "Output",
+        help: "A particle type. Look: shape (Soft dot, Streak along the motion like rain, Square that tumbles like a leaf or petal, Spark with a bright core), two colours in linear light, like block albedo (each particle mixes them at random), opacity, size in blocks, glow (emissive) and blink (glow pulsing). Motion: Fall, Drift (falls slowly and bobs), Rise, Swirl (around the camera), Wander, Flock (in groups), Orbit (circles a point); speed in blocks per second, sway, and how much it follows the wind; lifetime in seconds. Spawn: the share of the particle pool in calm weather and in a storm, the time of day, near what (leaves, plants, water, glowing blocks, the ground or one block), and whether it needs open sky (rain and snow stop under a roof).",
+        inputs: &[], outputs: &[],
+        params: &[
+            en("shape", &["Soft", "Streak", "Square", "Spark"], 0),
+            col("color", [1.0, 1.0, 1.0]), col("color2", [1.0, 1.0, 1.0]), f("alpha", 0.8, 0.0, 1.0),
+            f("size", 0.05, 0.005, 2.0), f("glow", 0.0, 0.0, 20.0), f("blink", 0.0, 0.0, 1.0),
+            en("motion", &["Fall", "Drift", "Rise", "Swirl", "Wander", "Flock", "Orbit"], 0),
+            f("speed", 1.0, 0.0, 60.0), f("sway", 0.3, 0.0, 10.0), f("wind", 0.5, 0.0, 4.0), f("life", 10.0, 0.2, 120.0),
+            f("density", 0.1, 0.0, 1.0), f("storm_density", 0.1, 0.0, 1.0),
+            en("time", &["Any", "Day", "Night"], 0),
+            en("near", &["Anywhere", "Leaves", "Plants", "Water", "Glowing", "Ground", "Block"], 0), blk("near_block", "stone"),
+            b("open_sky", false),
+        ],
+        allowed: PARTICLE },
     NodeDef { kind: "connections", title: "Connections", category: "Layout",
         help: "Several kinds of connection together (sinkholes, sky pillars, ...).",
         inputs: &[("A", Connection), ("B", Connection), ("C", Connection), ("D", Connection)], outputs: &[("Out", Connection)],
@@ -252,9 +283,6 @@ pub static NODES: &[NodeDef] = &[
             col("grass_tint", [0.45, 0.75, 0.3]),
             col("foliage_tint", [0.35, 0.65, 0.25]),
             col("water_tint", [0.15, 0.35, 0.65]),
-            en("ambient", &["None", "Ash", "Embers", "Fireflies", "Pollen"], 0),
-            en("precipitation", &["None", "Rain", "Snow"], 0),
-            f("particle_density", 1.0, 0.0, 4.0),
             col("map_color", [0.3, 0.6, 0.25]),
         ],
         allowed: BIOME },
@@ -514,6 +542,10 @@ pub fn def(kind: &str) -> Option<&'static NodeDef> {
 pub fn allowed_in(d: &NodeDef, g: GraphKind) -> bool {
     if d.kind.ends_with("_output") {
         return false; // exactly one output node per graph, created automatically
+    }
+    if g == GraphKind::Particle {
+        // a particle type is its output's settings (plus notes)
+        return d.kind == "comment";
     }
     d.allowed.is_empty() || d.allowed.contains(&g)
 }

@@ -170,6 +170,8 @@ pub struct Engine {
     /// Jump the environment (fog, grading, weather, particle shares) to its target on the next
     /// frame instead of blending (scripts set it after `settle`).
     env_snap: bool,
+    /// seconds since a forced lightning strike
+    forced_flash: Option<f32>,
     pub wg: WorldgenSystem,
     pub node_ui: NodeEditorUi,
     pub tools: crate::tools::Tools,
@@ -544,6 +546,7 @@ impl Engine {
             prev_taa: false,
             taa_frame: 0,
             env_snap: false,
+            forced_flash: None,
             wg,
             node_ui: NodeEditorUi::new(),
             tools: crate::tools::Tools::new(prefabs),
@@ -1180,6 +1183,11 @@ impl Engine {
         self.ui.refresh_worlds = true;
     }
 
+    /// Strike lightning now (scripts, the settings panel).
+    pub fn strike_lightning(&mut self) {
+        self.forced_flash = Some(0.0);
+    }
+
     /// The environment the camera is in: the defaults, overridden by the world's, then its
     /// layer's, zone's and biome's (see `worldgen::env`).
     pub fn target_env(&self) -> worldgen::env::Env {
@@ -1202,23 +1210,28 @@ impl Engine {
         if let Some(l) = c.layers.get(c.layer_near(self.camera.pos.y as f32)) {
             self.atmosphere.fog_base = c.value(l.sea).max(c.value(l.y_min));
         }
-        // weather: automatic (slow cycle on the animation clock) or the slider
-        let weather = if self.ui.weather_auto {
-            let t = self.anim_time as f64;
-            let w = (t * 0.0041).sin() * 0.6 + (t * 0.0097 + 1.3).sin() * 0.4;
-            ((w as f32 - 0.25) * 2.0).clamp(0.0, 1.0)
-        } else {
-            self.ui.weather
-        };
+        // weather: the environment's cycle on the animation clock, or the slider (both up to
+        // the environment's peak: none underground)
+        let wenv = &self.atmosphere.env.weather;
+        let weather = if self.ui.weather_auto { wenv.intensity(self.anim_time as f64) } else { self.ui.weather * wenv.peak.clamp(0.0, 1.0) };
         self.atmosphere.weather += (weather - self.atmosphere.weather) * k;
-        let rain = self.particles.shares.rain;
-        let dens = self.atmosphere.env.fog.density * self.ui.fog_scale * (1.0 + 1.5 * rain);
-        self.atmosphere.fog_density = dens;
-        let Some(cam) = self.probes.camera else { return };
-        let Some(b) = self.wg.compiled.biomes.get(cam.biome as usize) else { return };
+        let w = self.atmosphere.weather;
+        let storm_fog = 1.0 + (self.atmosphere.env.weather.fog - 1.0) * w;
+        self.atmosphere.fog_density = self.atmosphere.env.fog.density * self.ui.fog_scale * storm_fog.max(0.0);
+        // lightning: strikes on the animation clock (a script or the UI can force one)
+        if let Some(t) = &mut self.forced_flash {
+            *t += self.dt;
+        }
+        let forced = self.forced_flash.map_or(0.0, flash_envelope);
+        if self.forced_flash.is_some_and(|t| t > 1.0) {
+            self.forced_flash = None;
+        }
+        self.atmosphere.flash = forced.max(lightning(self.anim_time as f64, self.atmosphere.env.weather.lightning * w));
+        // particles: the environment's types at this weather and time of day
         let daylight = (self.atmosphere.colors().sun_dir.y * 5.0 + 0.5).clamp(0.0, 1.0);
-        let target = crate::particles::Shares::for_biome(b.ambient, b.precipitation, b.particle_density, self.atmosphere.weather, daylight);
-        self.particles.shares = self.particles.shares.lerp(target, if k >= 1.0 { 1.0 } else { (self.dt * 0.8).min(1.0) });
+        self.particles.set_types(&self.wg.compiled.particles, &self.wg.block_ids);
+        let target = crate::particles::target_shares(&self.wg.compiled.particles, &self.atmosphere.env.particles, w, daylight);
+        self.particles.blend_shares(&target, if k >= 1.0 { 1.0 } else { (self.dt * 0.8).min(1.0) });
     }
 
     fn read_pick(&mut self, slot: usize) {
@@ -1548,7 +1561,8 @@ impl Engine {
         // ambient particles and weather
         let particle_draw = if self.ui.particles {
             let t = self.anim_time;
-            let wind = glam::Vec2::new((t * 0.05).sin(), (t * 0.037).cos()) * (0.6 + 1.6 * self.atmosphere.weather);
+            let we = &self.atmosphere.env.weather;
+            let wind = glam::Vec2::new((t * 0.05).sin(), (t * 0.037).cos()) * (we.wind + (we.storm_wind - we.wind) * self.atmosphere.weather);
             let light_blocks = if self.ui.block_light && self.light.ready() { self.light.blocks_img } else { u32::MAX };
             let push = self.particles.push(
                 self.renderer.per_slot[slot].frame_buf.address,
@@ -1670,7 +1684,7 @@ impl Engine {
                 // sea they're hidden
                 let e = &self.atmosphere.env.clouds;
                 let mut c = crate::renderer::CloudSettings { enabled: self.ui.clouds.enabled, coverage: e.coverage, base: e.base, thickness: e.thickness, density: e.density };
-                c.coverage = (c.coverage + 0.3 * self.atmosphere.weather).min(1.0);
+                c.coverage = (c.coverage + self.atmosphere.env.weather.clouds * self.atmosphere.weather).min(1.0);
                 c.enabled &= !(sea.density > 0.0 && cam_y > sea.base + sea.amp());
                 c
             },
@@ -2252,6 +2266,9 @@ impl Engine {
         if a.save_generator {
             self.wg.save();
         }
+        if a.lightning {
+            self.strike_lightning();
+        }
         if a.benchmark {
             self.start_benchmark();
         }
@@ -2356,4 +2373,32 @@ fn find_shader_root() -> Result<PathBuf> {
 pub fn chrono_stamp() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     format!("{secs}")
+}
+
+/// Brightness of a lightning flash `t` seconds after the strike: a bright flash and a flicker.
+fn flash_envelope(t: f32) -> f32 {
+    if !(0.0..0.5).contains(&t) {
+        return 0.0;
+    }
+    (1.0 - t / 0.12).max(0.0) + 0.7 * (1.0 - (t - 0.22).abs() / 0.07).max(0.0)
+}
+
+/// Lightning at `rate` strikes per minute: one chance per second of the clock `t`, each strike at
+/// a random moment within its second. Returns the flash brightness.
+fn lightning(t: f64, rate: f32) -> f32 {
+    if rate <= 0.0 {
+        return 0.0;
+    }
+    let hash = |s: i64, k: u64| {
+        let mut x = (s as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ k;
+        x ^= x >> 31;
+        x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x ^= x >> 29;
+        (x >> 40) as f32 / (1u64 << 24) as f32
+    };
+    let slot = t.floor() as i64;
+    (slot - 1..=slot)
+        .filter(|&s| hash(s, 1) < rate / 60.0)
+        .map(|s| flash_envelope((t - s as f64) as f32 - 0.6 * hash(s, 2)))
+        .fold(0.0, f32::max)
 }

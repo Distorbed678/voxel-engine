@@ -53,7 +53,7 @@
         (
             id: 5,
             kind: "spaghetti_caves",
-            pos: (0.0, 549.0),
+            pos: (0.0, 892.0),
             params: {
                 "max_lod": I(1),
                 "seed": I(0),
@@ -67,7 +67,7 @@
         (
             id: 6,
             kind: "cheese_caves",
-            pos: (0.0, 777.0),
+            pos: (0.0, 1120.0),
             params: {
                 "max_lod": I(1),
                 "seed": I(0),
@@ -81,7 +81,7 @@
         (
             id: 7,
             kind: "noodle_caves",
-            pos: (330.0, 679.0),
+            pos: (330.0, 1022.0),
             params: {
                 "max_lod": I(0),
                 "seed": I(0),
@@ -95,21 +95,21 @@
         (
             id: 8,
             kind: "max",
-            pos: (330.0, 549.0),
+            pos: (330.0, 892.0),
             params: {},
             comment: "",
         ),
         (
             id: 9,
             kind: "max",
-            pos: (660.0, 549.0),
+            pos: (660.0, 892.0),
             params: {},
             comment: "",
         ),
         (
             id: 10,
             kind: "cave_biomes",
-            pos: (660.0, 679.0),
+            pos: (660.0, 1022.0),
             params: {
                 "cell_size": F(64.0),
                 "seed": I(0),
@@ -124,7 +124,7 @@
         (
             id: 11,
             kind: "biome",
-            pos: (330.0, 907.0),
+            pos: (330.0, 1250.0),
             params: {
                 "biome": Ref("magma_caves"),
             },
@@ -133,9 +133,28 @@
         (
             id: 12,
             kind: "biome",
-            pos: (330.0, 1020.0),
+            pos: (330.0, 1363.0),
             params: {
                 "biome": Ref("crystal_caves"),
+            },
+            comment: "",
+        ),
+        (
+            id: 13,
+            kind: "env_weather",
+            pos: (660.0, 549.0),
+            params: {
+                "clouds": F(0.4),
+                "cycle": F(1530.0),
+                "darken": F(0.4),
+                "fog": F(5.0),
+                "fog_color": Color((0.28, 0.25, 0.23)),
+                "fog_tint": F(0.75),
+                "lightning": F(6.0),
+                "peak": F(1.0),
+                "storm_wind": F(3.5),
+                "storminess": F(0.375),
+                "wind": F(0.6),
             },
             comment: "",
         ),
@@ -207,6 +226,12 @@
             to_node: 1,
             to_pin: 2,
         ),
+        (
+            from_node: 13,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 3,
+        ),
     ],
-    next_id: 13,
+    next_id: 14,
 )

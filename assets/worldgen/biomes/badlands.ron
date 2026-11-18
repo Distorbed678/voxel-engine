@@ -7,13 +7,10 @@
             kind: "biome_output",
             pos: (1320.0, 0.0),
             params: {
-                "ambient": E("None"),
                 "fluid": E("Water"),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
                 "grass_tint": Color((0.7, 0.62, 0.35)),
                 "map_color": Color((0.8, 0.45, 0.25)),
-                "particle_density": F(1.0),
-                "precipitation": E("None"),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -65,7 +62,7 @@
         (
             id: 6,
             kind: "block",
-            pos: (0.0, 566.0),
+            pos: (0.0, 817.0),
             params: {
                 "block": Block("stone"),
             },
@@ -74,7 +71,7 @@
         (
             id: 7,
             kind: "block",
-            pos: (0.0, 679.0),
+            pos: (0.0, 930.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -83,7 +80,7 @@
         (
             id: 8,
             kind: "height_select",
-            pos: (330.0, 566.0),
+            pos: (330.0, 817.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -93,7 +90,7 @@
         (
             id: 9,
             kind: "simplex2d",
-            pos: (0.0, 792.0),
+            pos: (0.0, 1043.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -107,7 +104,7 @@
         (
             id: 10,
             kind: "strata",
-            pos: (660.0, 566.0),
+            pos: (660.0, 817.0),
             params: {
                 "band1": Block("terracotta"),
                 "band2": Block("terracotta_orange"),
@@ -160,7 +157,7 @@
         (
             id: 13,
             kind: "prop",
-            pos: (660.0, 1046.0),
+            pos: (660.0, 1157.0),
             params: {
                 "prop": Ref("boulder_terracotta"),
             },
@@ -213,6 +210,21 @@
             kind: "environment",
             pos: (990.0, 179.0),
             params: {},
+            comment: "",
+        ),
+        (
+            id: 18,
+            kind: "env_particles",
+            pos: (660.0, 566.0),
+            params: {
+                "density": F(1.0),
+                "type1": Ref("sand"),
+                "type2": Ref(""),
+                "type3": Ref(""),
+                "type4": Ref(""),
+                "type5": Ref(""),
+                "type6": Ref(""),
+            },
             comment: "",
         ),
     ],
@@ -302,17 +314,23 @@
             to_pin: 0,
         ),
         (
+            from_node: 17,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 13,
+        ),
+        (
             from_node: 16,
             from_pin: 0,
             to_node: 17,
             to_pin: 1,
         ),
         (
-            from_node: 17,
+            from_node: 18,
             from_pin: 0,
-            to_node: 1,
-            to_pin: 13,
+            to_node: 17,
+            to_pin: 2,
         ),
     ],
-    next_id: 18,
+    next_id: 19,
 )

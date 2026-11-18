@@ -159,6 +159,7 @@ pub struct UiActions {
     pub teleport: Option<(f64, f64)>,
     pub layer_jump: Option<LayerJump>,
     pub benchmark: bool,
+    pub lightning: bool,
     /// save to the open world file (or ask for a name)
     pub save_world: bool,
     pub save_world_as: Option<std::path::PathBuf>,
@@ -426,6 +427,10 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
                 ui.text_disabled(format!("weather {:.2}", c.atmosphere.weather));
             } else {
                 ui.slider("Weather", 0.0f32, 1.0f32, &mut c.state.weather);
+            }
+            ui.same_line();
+            if ui.small_button("Lightning") {
+                a.lightning = true;
             }
             if c.state.bloom {
                 ui.slider("Bloom strength", 0.0f32, 1.5f32, &mut c.state.bloom_strength);

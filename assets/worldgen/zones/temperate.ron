@@ -62,7 +62,7 @@
         (
             id: 6,
             kind: "spaghetti_caves",
-            pos: (0.0, 549.0),
+            pos: (0.0, 892.0),
             params: {
                 "max_lod": I(1),
                 "seed": I(0),
@@ -76,7 +76,7 @@
         (
             id: 7,
             kind: "cheese_caves",
-            pos: (0.0, 777.0),
+            pos: (0.0, 1120.0),
             params: {
                 "max_lod": I(1),
                 "seed": I(0),
@@ -90,7 +90,7 @@
         (
             id: 8,
             kind: "noodle_caves",
-            pos: (330.0, 679.0),
+            pos: (330.0, 1022.0),
             params: {
                 "max_lod": I(0),
                 "seed": I(0),
@@ -104,21 +104,21 @@
         (
             id: 9,
             kind: "max",
-            pos: (330.0, 549.0),
+            pos: (330.0, 892.0),
             params: {},
             comment: "",
         ),
         (
             id: 10,
             kind: "max",
-            pos: (660.0, 549.0),
+            pos: (660.0, 892.0),
             params: {},
             comment: "",
         ),
         (
             id: 11,
             kind: "ravines",
-            pos: (660.0, 679.0),
+            pos: (660.0, 1022.0),
             params: {
                 "depth": F(70.0),
                 "max_lod": I(2),
@@ -132,14 +132,14 @@
         (
             id: 12,
             kind: "max",
-            pos: (990.0, 549.0),
+            pos: (990.0, 892.0),
             params: {},
             comment: "",
         ),
         (
             id: 13,
             kind: "cave_biomes",
-            pos: (990.0, 679.0),
+            pos: (990.0, 1022.0),
             params: {
                 "cell_size": F(64.0),
                 "seed": I(0),
@@ -154,7 +154,7 @@
         (
             id: 14,
             kind: "biome",
-            pos: (660.0, 907.0),
+            pos: (660.0, 1250.0),
             params: {
                 "biome": Ref("lush_caves"),
             },
@@ -163,9 +163,28 @@
         (
             id: 15,
             kind: "biome",
-            pos: (660.0, 1020.0),
+            pos: (660.0, 1363.0),
             params: {
                 "biome": Ref("crystal_caves"),
+            },
+            comment: "",
+        ),
+        (
+            id: 16,
+            kind: "env_weather",
+            pos: (990.0, 549.0),
+            params: {
+                "clouds": F(0.5),
+                "cycle": F(1530.0),
+                "darken": F(0.35),
+                "fog": F(2.0),
+                "fog_color": Color((0.55, 0.6, 0.68)),
+                "fog_tint": F(0.0),
+                "lightning": F(4.0),
+                "peak": F(1.0),
+                "storm_wind": F(3.0),
+                "storminess": F(0.375),
+                "wind": F(0.6),
             },
             comment: "",
         ),
@@ -255,6 +274,12 @@
             to_node: 1,
             to_pin: 2,
         ),
+        (
+            from_node: 16,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 3,
+        ),
     ],
-    next_id: 16,
+    next_id: 17,
 )

@@ -7,13 +7,10 @@
             kind: "biome_output",
             pos: (2310.0, 0.0),
             params: {
-                "ambient": E("Pollen"),
                 "fluid": E("Water"),
                 "foliage_tint": Color((0.6, 0.65, 0.25)),
                 "grass_tint": Color((0.75, 0.72, 0.38)),
                 "map_color": Color((0.75, 0.7, 0.35)),
-                "particle_density": F(1.0),
-                "precipitation": E("Rain"),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -21,7 +18,7 @@
         (
             id: 2,
             kind: "simplex2d",
-            pos: (1320.0, 387.0),
+            pos: (1320.0, 638.0),
             params: {
                 "amplitude": F(8.0),
                 "gain": F(0.5),
@@ -35,7 +32,7 @@
         (
             id: 3,
             kind: "simplex2d",
-            pos: (990.0, 615.0),
+            pos: (990.0, 866.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -49,7 +46,7 @@
         (
             id: 4,
             kind: "curve",
-            pos: (1320.0, 615.0),
+            pos: (1320.0, 866.0),
             params: {
                 "curve": Curve([(-1.0, 0.0), (0.35, 0.0), (0.45, 22.0), (1.0, 26.0)]),
             },
@@ -58,7 +55,7 @@
         (
             id: 5,
             kind: "add",
-            pos: (1650.0, 387.0),
+            pos: (1650.0, 638.0),
             params: {},
             comment: "",
         ),
@@ -76,7 +73,7 @@
         (
             id: 7,
             kind: "block",
-            pos: (0.0, 853.0),
+            pos: (0.0, 1104.0),
             params: {
                 "block": Block("stone"),
             },
@@ -85,7 +82,7 @@
         (
             id: 8,
             kind: "block",
-            pos: (0.0, 966.0),
+            pos: (0.0, 1217.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -94,7 +91,7 @@
         (
             id: 9,
             kind: "height_select",
-            pos: (330.0, 853.0),
+            pos: (330.0, 1104.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -104,7 +101,7 @@
         (
             id: 10,
             kind: "simplex2d",
-            pos: (0.0, 1079.0),
+            pos: (0.0, 1330.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -118,7 +115,7 @@
         (
             id: 11,
             kind: "ore",
-            pos: (660.0, 853.0),
+            pos: (660.0, 1104.0),
             params: {
                 "ore": Block("coal_ore"),
                 "rarity": F(0.78),
@@ -133,7 +130,7 @@
         (
             id: 12,
             kind: "ore",
-            pos: (990.0, 853.0),
+            pos: (990.0, 1104.0),
             params: {
                 "ore": Block("iron_ore"),
                 "rarity": F(0.82),
@@ -148,7 +145,7 @@
         (
             id: 13,
             kind: "ore",
-            pos: (1320.0, 853.0),
+            pos: (1320.0, 1104.0),
             params: {
                 "ore": Block("copper_ore"),
                 "rarity": F(0.84),
@@ -163,7 +160,7 @@
         (
             id: 14,
             kind: "ore",
-            pos: (1650.0, 517.0),
+            pos: (1650.0, 768.0),
             params: {
                 "ore": Block("gold_ore"),
                 "rarity": F(0.86),
@@ -263,6 +260,21 @@
         ),
         (
             id: 21,
+            kind: "env_particles",
+            pos: (1650.0, 387.0),
+            params: {
+                "density": F(1.0),
+                "type1": Ref("pollen"),
+                "type2": Ref("rain"),
+                "type3": Ref(""),
+                "type4": Ref(""),
+                "type5": Ref(""),
+                "type6": Ref(""),
+            },
+            comment: "",
+        ),
+        (
+            id: 22,
             kind: "environment",
             pos: (1980.0, 0.0),
             params: {},
@@ -375,21 +387,27 @@
         (
             from_node: 19,
             from_pin: 0,
-            to_node: 21,
+            to_node: 22,
             to_pin: 0,
+        ),
+        (
+            from_node: 22,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 13,
         ),
         (
             from_node: 20,
             from_pin: 0,
-            to_node: 21,
+            to_node: 22,
             to_pin: 1,
         ),
         (
             from_node: 21,
             from_pin: 0,
-            to_node: 1,
-            to_pin: 13,
+            to_node: 22,
+            to_pin: 2,
         ),
     ],
-    next_id: 22,
+    next_id: 23,
 )

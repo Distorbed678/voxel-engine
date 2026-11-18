@@ -7,13 +7,10 @@
             kind: "biome_output",
             pos: (1320.0, 0.0),
             params: {
-                "ambient": E("Embers"),
                 "fluid": E("Lava"),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
                 "grass_tint": Color((0.45, 0.75, 0.3)),
                 "map_color": Color((0.75, 0.25, 0.1)),
-                "particle_density": F(1.0),
-                "precipitation": E("None"),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -21,7 +18,7 @@
         (
             id: 2,
             kind: "simplex2d",
-            pos: (330.0, 387.0),
+            pos: (330.0, 638.0),
             params: {
                 "amplitude": F(11.0),
                 "gain": F(0.5),
@@ -35,7 +32,7 @@
         (
             id: 3,
             kind: "worley2d",
-            pos: (0.0, 615.0),
+            pos: (0.0, 866.0),
             params: {
                 "amplitude": F(1.0),
                 "jitter": F(1.0),
@@ -49,7 +46,7 @@
         (
             id: 4,
             kind: "curve",
-            pos: (330.0, 615.0),
+            pos: (330.0, 866.0),
             params: {
                 "curve": Curve([(0.0, 60.0), (0.12, 40.0), (0.3, 6.0), (1.0, 0.0)]),
             },
@@ -58,7 +55,7 @@
         (
             id: 5,
             kind: "add",
-            pos: (660.0, 387.0),
+            pos: (660.0, 638.0),
             params: {},
             comment: "",
         ),
@@ -76,7 +73,7 @@
         (
             id: 7,
             kind: "block",
-            pos: (330.0, 853.0),
+            pos: (330.0, 1104.0),
             params: {
                 "block": Block("basalt"),
             },
@@ -85,7 +82,7 @@
         (
             id: 8,
             kind: "block",
-            pos: (1320.0, 534.0),
+            pos: (1320.0, 465.0),
             params: {
                 "block": Block("obsidian"),
             },
@@ -94,7 +91,7 @@
         (
             id: 9,
             kind: "surface_layers",
-            pos: (660.0, 517.0),
+            pos: (660.0, 768.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -110,7 +107,7 @@
         (
             id: 10,
             kind: "block",
-            pos: (660.0, 811.0),
+            pos: (660.0, 1062.0),
             params: {
                 "block": Block("magma"),
             },
@@ -119,7 +116,7 @@
         (
             id: 11,
             kind: "simplex3d",
-            pos: (660.0, 924.0),
+            pos: (660.0, 1175.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -142,7 +139,7 @@
         (
             id: 13,
             kind: "prop",
-            pos: (660.0, 1152.0),
+            pos: (660.0, 1403.0),
             params: {
                 "prop": Ref("obsidian_spike"),
             },
@@ -192,6 +189,21 @@
         ),
         (
             id: 17,
+            kind: "env_particles",
+            pos: (660.0, 387.0),
+            params: {
+                "density": F(1.0),
+                "type1": Ref("embers"),
+                "type2": Ref("ash"),
+                "type3": Ref(""),
+                "type4": Ref(""),
+                "type5": Ref(""),
+                "type6": Ref(""),
+            },
+            comment: "",
+        ),
+        (
+            id: 18,
             kind: "environment",
             pos: (990.0, 0.0),
             params: {},
@@ -274,21 +286,27 @@
         (
             from_node: 15,
             from_pin: 0,
-            to_node: 17,
+            to_node: 18,
             to_pin: 0,
+        ),
+        (
+            from_node: 18,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 13,
         ),
         (
             from_node: 16,
             from_pin: 0,
-            to_node: 17,
+            to_node: 18,
             to_pin: 1,
         ),
         (
             from_node: 17,
             from_pin: 0,
-            to_node: 1,
-            to_pin: 13,
+            to_node: 18,
+            to_pin: 2,
         ),
     ],
-    next_id: 18,
+    next_id: 19,
 )

@@ -1,0 +1,47 @@
+# Particle types and weather as graphs (roadmap item 22). Each Particle graph is a type: look,
+# motion and spawn rules; Particles nodes in the environments pick the types, Weather nodes the
+# storms. Edits show at once and regenerate nothing.
+ui off
+anim 12
+weather 0
+time 0.4
+# falling leaves spawn near leaves only (the forests' Particles node adds them)
+find_biome oak_forest 14
+look 20 -35
+settle
+expect_env particles.density 1
+wait 240
+expect_image crates/engine/tests/golden/falling_leaves.png
+# a custom type: the meadow's pollen made big, pink, glowing and circling in flocks
+find_biome meadow 12
+look 40 -10
+settle
+graph_set particle pollen particle_output color 1 0.35 0.8
+graph_set particle pollen particle_output color2 0.6 0.4 1
+graph_set particle pollen particle_output size 0.12
+graph_set particle pollen particle_output glow 2
+graph_set particle pollen particle_output motion Orbit
+graph_set particle pollen particle_output speed 2
+graph_set particle pollen particle_output density 0.4
+wait 3
+expect_idle
+wait 240
+expect_image crates/engine/tests/golden/custom_particles.png
+# a sandstorm over the desert: the arid zone's Weather node, sand particles in the wind
+find_biome desert 20
+look 0 -8
+weather 1
+settle
+expect_env weather.fog 22
+expect_env weather.fog_color 0.78 0.62 0.42
+wait 240
+expect_image crates/engine/tests/golden/sandstorm.png
+# a thunderstorm over the meadow: rain, a darker sky and a lightning flash
+find_biome meadow 12
+look 40 -10
+settle
+expect_env weather.lightning 4
+wait 120
+lightning
+wait 3
+expect_image crates/engine/tests/golden/lightning.png

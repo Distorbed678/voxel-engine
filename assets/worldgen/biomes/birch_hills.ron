@@ -7,13 +7,10 @@
             kind: "biome_output",
             pos: (2640.0, 0.0),
             params: {
-                "ambient": E("Fireflies"),
                 "fluid": E("Water"),
                 "foliage_tint": Color((0.5, 0.72, 0.3)),
                 "grass_tint": Color((0.55, 0.78, 0.35)),
                 "map_color": Color((0.6, 0.75, 0.4)),
-                "particle_density": F(1.0),
-                "precipitation": E("Rain"),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -21,7 +18,7 @@
         (
             id: 2,
             kind: "ridged2d",
-            pos: (1650.0, 182.0),
+            pos: (1650.0, 433.0),
             params: {
                 "amplitude": F(34.0),
                 "gain": F(0.5),
@@ -35,7 +32,7 @@
         (
             id: 3,
             kind: "simplex2d",
-            pos: (1650.0, 410.0),
+            pos: (1650.0, 661.0),
             params: {
                 "amplitude": F(6.0),
                 "gain": F(0.5),
@@ -49,14 +46,14 @@
         (
             id: 4,
             kind: "add",
-            pos: (1980.0, 182.0),
+            pos: (1980.0, 433.0),
             params: {},
             comment: "",
         ),
         (
             id: 5,
             kind: "height_terrain",
-            pos: (2310.0, 182.0),
+            pos: (2310.0, 210.0),
             params: {
                 "base": F(82.0),
                 "falloff": F(1.0),
@@ -67,7 +64,7 @@
         (
             id: 6,
             kind: "block",
-            pos: (0.0, 638.0),
+            pos: (0.0, 889.0),
             params: {
                 "block": Block("stone"),
             },
@@ -76,7 +73,7 @@
         (
             id: 7,
             kind: "block",
-            pos: (0.0, 751.0),
+            pos: (0.0, 1002.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -85,7 +82,7 @@
         (
             id: 8,
             kind: "height_select",
-            pos: (330.0, 638.0),
+            pos: (330.0, 889.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -95,7 +92,7 @@
         (
             id: 9,
             kind: "simplex2d",
-            pos: (0.0, 864.0),
+            pos: (0.0, 1115.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -109,7 +106,7 @@
         (
             id: 10,
             kind: "ore",
-            pos: (660.0, 638.0),
+            pos: (660.0, 889.0),
             params: {
                 "ore": Block("coal_ore"),
                 "rarity": F(0.78),
@@ -124,7 +121,7 @@
         (
             id: 11,
             kind: "ore",
-            pos: (990.0, 638.0),
+            pos: (990.0, 889.0),
             params: {
                 "ore": Block("iron_ore"),
                 "rarity": F(0.82),
@@ -139,7 +136,7 @@
         (
             id: 12,
             kind: "ore",
-            pos: (1320.0, 638.0),
+            pos: (1320.0, 889.0),
             params: {
                 "ore": Block("copper_ore"),
                 "rarity": F(0.84),
@@ -154,7 +151,7 @@
         (
             id: 13,
             kind: "ore",
-            pos: (1650.0, 638.0),
+            pos: (1650.0, 889.0),
             params: {
                 "ore": Block("gold_ore"),
                 "rarity": F(0.86),
@@ -169,7 +166,7 @@
         (
             id: 14,
             kind: "surface_layers",
-            pos: (1980.0, 361.0),
+            pos: (1980.0, 563.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -185,7 +182,7 @@
         (
             id: 15,
             kind: "block",
-            pos: (1980.0, 655.0),
+            pos: (1980.0, 857.0),
             params: {
                 "block": Block("stone"),
             },
@@ -194,7 +191,7 @@
         (
             id: 16,
             kind: "height_select",
-            pos: (2310.0, 361.0),
+            pos: (2310.0, 389.0),
             params: {
                 "height": F(128.0),
                 "noise_amount": F(10.0),
@@ -204,7 +201,7 @@
         (
             id: 17,
             kind: "simplex2d",
-            pos: (1980.0, 768.0),
+            pos: (1980.0, 970.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -218,7 +215,7 @@
         (
             id: 18,
             kind: "ground_cover",
-            pos: (2310.0, 557.0),
+            pos: (2310.0, 585.0),
             params: {
                 "chance": F(0.3),
                 "on": Block("grass"),
@@ -237,7 +234,7 @@
         (
             id: 19,
             kind: "prop",
-            pos: (1980.0, 996.0),
+            pos: (1980.0, 1198.0),
             params: {
                 "prop": Ref("birch"),
             },
@@ -246,7 +243,7 @@
         (
             id: 20,
             kind: "scatter",
-            pos: (2310.0, 920.0),
+            pos: (2310.0, 948.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.55),
@@ -263,7 +260,7 @@
         (
             id: 21,
             kind: "prop",
-            pos: (1980.0, 1257.0),
+            pos: (1980.0, 1311.0),
             params: {
                 "prop": Ref("boulder_andesite"),
             },
@@ -272,7 +269,7 @@
         (
             id: 22,
             kind: "scatter",
-            pos: (2310.0, 1257.0),
+            pos: (2310.0, 1285.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.3),
@@ -289,13 +286,35 @@
         (
             id: 23,
             kind: "env_grading",
-            pos: (2310.0, 0.0),
+            pos: (1980.0, 0.0),
             params: {
                 "contrast": F(1.0),
                 "exposure": F(1.0),
                 "saturation": F(1.05),
                 "tint": Color((1.0, 1.0, 0.98)),
             },
+            comment: "",
+        ),
+        (
+            id: 24,
+            kind: "env_particles",
+            pos: (1980.0, 182.0),
+            params: {
+                "density": F(1.0),
+                "type1": Ref("fireflies"),
+                "type2": Ref("rain"),
+                "type3": Ref("falling_leaves"),
+                "type4": Ref(""),
+                "type5": Ref(""),
+                "type6": Ref(""),
+            },
+            comment: "",
+        ),
+        (
+            id: 25,
+            kind: "environment",
+            pos: (2310.0, 0.0),
+            params: {},
             comment: "",
         ),
     ],
@@ -429,9 +448,21 @@
         (
             from_node: 23,
             from_pin: 0,
+            to_node: 25,
+            to_pin: 0,
+        ),
+        (
+            from_node: 25,
+            from_pin: 0,
             to_node: 1,
             to_pin: 13,
         ),
+        (
+            from_node: 24,
+            from_pin: 0,
+            to_node: 25,
+            to_pin: 1,
+        ),
     ],
-    next_id: 24,
+    next_id: 26,
 )

@@ -18,12 +18,13 @@
 //! | `benchmark [surface\|upper\|deep\|sky]` | run the 24 s benchmark flight (through a layer) and wait for its report |
 //! | `weather W` | fixed weather intensity 0..1 (turns automatic weather off) |
 //! | `expect_env FIELD V...` | a value of the camera's environment (World, layer, zone and biome resolved), e.g. `expect_env fog.color 0.1 0.2 0.3`, `expect_env light.cave 0.02` |
+//! | `lightning` | strike lightning now (a flash, wherever the sky lights the world) |
 //! | `expect_idle` | nothing is streaming or generating (e.g. right after an edit that must not regenerate) |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
 //! | `find_connection sinkhole\|pillar [N]` | go to the nearest (or Nth nearest, from 1) sinkhole, looking down into it, or sky pillar, looking at it from the ground |
 //! | `interp on\|off` | generate every layer with the world generator's interpreter (`worldgen::vm`) instead of the compiled shaders |
-//! | `graph_set world\|zone\|biome\|function\|prop NAME NODE_KIND PARAM VALUE` | set a parameter of the first NODE_KIND node of a graph (a colour is `R G B`; session only: scripts never save the generator) |
+//! | `graph_set world\|zone\|biome\|function\|prop\|particle NAME NODE_KIND PARAM VALUE` | set a parameter of the first NODE_KIND node of a graph (a colour is `R G B`; session only: scripts never save the generator) |
 //! | `interp_hold on\|off` | hold finished generator builds back: the edited layers stay in the interpreter |
 //! | `check_interp CX CY CZ` / `check_interp ~DX ~DY ~DZ` | generate a LOD0 chunk (apron included) with the interpreter and with the compiled shaders: every block must match |
 //! | `layer_jump surface\|sky\|underground DEPTH` | the Minimap's layer jump: go to the layer and stand on its ground (in a cave near DEPTH) |
@@ -133,6 +134,7 @@ enum Cmd {
     /// the camera's environment (resolved, not blended): field, value
     ExpectEnv(String, Vec<f32>),
     ExpectIdle,
+    Lightning,
     SaveWorld(PathBuf),
     LoadWorld(PathBuf),
     ClearEdits,
@@ -328,6 +330,7 @@ fn graph_kind(s: &str) -> Result<worldgen::GraphKind> {
         "biome" => worldgen::GraphKind::Biome,
         "function" => worldgen::GraphKind::Function,
         "prop" => worldgen::GraphKind::Prop,
+        "particle" => worldgen::GraphKind::Particle,
         other => bail!("unknown graph kind {other:?}"),
     })
 }
@@ -450,6 +453,7 @@ fn parse(line: &str) -> Result<Cmd> {
             a[1..].iter().map(|t| t.parse::<f32>().with_context(|| format!("bad number {t}"))).collect::<Result<_>>()?,
         ),
         "expect_idle" => Cmd::ExpectIdle,
+        "lightning" => Cmd::Lightning,
         "save_world" => Cmd::SaveWorld(a.first().context("missing path")?.into()),
         "load_world" => Cmd::LoadWorld(a.first().context("missing path")?.into()),
         "clear_edits" => Cmd::ClearEdits,
@@ -1394,6 +1398,7 @@ impl Engine {
                     Some(_) => {}
                 }
             }
+            Cmd::Lightning => self.strike_lightning(),
             Cmd::ExpectIdle => {
                 if !self.world_idle() {
                     let st = &self.world.stats;

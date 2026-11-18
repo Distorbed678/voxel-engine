@@ -386,7 +386,7 @@ is part of item 21.
 21. ~~Layered world: layers in the World graph, per-layer generators, GPU graph interpreter,
     wider biome ids, cross-layer streaming, cloud sea, layer jump UI.~~
 22. Environment as graphs: sky & atmosphere, particles & weather, fluids, light & time.
-    *In progress: sky, fog, grading, clouds, light and day length are done.*
+    *In progress: sky, fog, grading, clouds, light, day length, particles and weather are done.*
 23. Editor tooling: graph browser, templates & duplicate, node previews, layer map.
 24. Surface content: 8 zones × 8 biomes, new blocks, oceans, waterfalls.
 25. Underground content: 2 depth bands × 4 zones × 8 biomes, huge and cramped caves, very rare
