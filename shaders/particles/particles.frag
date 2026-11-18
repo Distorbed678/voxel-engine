@@ -11,7 +11,7 @@ void main() {
     FrameData f = pc.frame.d;
     float r = length(vUV * 2.0 - 1.0);
     float a = vKind == PK_RAIN ? 1.0 - abs(vUV.x * 2.0 - 1.0) : 1.0 - smoothstep(0.45, 1.0, r);
-    vec3 skyAmb = f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3;
+    vec3 skyAmb = f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3 * f.lightParams.x;
     vec3 lit = skyAmb * 0.6 + f.sunColor.rgb * f.sunDir.w * 0.35;
     vec3 c;
     float alpha;

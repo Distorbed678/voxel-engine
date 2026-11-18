@@ -8,17 +8,12 @@
             pos: (1320.0, 0.0),
             params: {
                 "ambient": E("Embers"),
-                "contrast": F(1.12),
                 "fluid": E("Lava"),
-                "fog_color": Color((0.55, 0.3, 0.2)),
-                "fog_density": F(3.5),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
-                "grade_tint": Color((1.1, 0.95, 0.85)),
                 "grass_tint": Color((0.45, 0.75, 0.3)),
                 "map_color": Color((0.75, 0.25, 0.1)),
                 "particle_density": F(1.0),
                 "precipitation": E("None"),
-                "saturation": F(1.1),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -26,7 +21,7 @@
         (
             id: 2,
             kind: "simplex2d",
-            pos: (330.0, 0.0),
+            pos: (330.0, 387.0),
             params: {
                 "amplitude": F(11.0),
                 "gain": F(0.5),
@@ -40,7 +35,7 @@
         (
             id: 3,
             kind: "worley2d",
-            pos: (0.0, 228.0),
+            pos: (0.0, 615.0),
             params: {
                 "amplitude": F(1.0),
                 "jitter": F(1.0),
@@ -54,7 +49,7 @@
         (
             id: 4,
             kind: "curve",
-            pos: (330.0, 228.0),
+            pos: (330.0, 615.0),
             params: {
                 "curve": Curve([(0.0, 60.0), (0.12, 40.0), (0.3, 6.0), (1.0, 0.0)]),
             },
@@ -63,14 +58,14 @@
         (
             id: 5,
             kind: "add",
-            pos: (660.0, 0.0),
+            pos: (660.0, 387.0),
             params: {},
             comment: "",
         ),
         (
             id: 6,
             kind: "height_terrain",
-            pos: (990.0, 0.0),
+            pos: (990.0, 210.0),
             params: {
                 "base": F(58.0),
                 "falloff": F(1.0),
@@ -81,7 +76,7 @@
         (
             id: 7,
             kind: "block",
-            pos: (330.0, 466.0),
+            pos: (330.0, 853.0),
             params: {
                 "block": Block("basalt"),
             },
@@ -90,7 +85,7 @@
         (
             id: 8,
             kind: "block",
-            pos: (1320.0, 549.0),
+            pos: (1320.0, 534.0),
             params: {
                 "block": Block("obsidian"),
             },
@@ -99,7 +94,7 @@
         (
             id: 9,
             kind: "surface_layers",
-            pos: (660.0, 179.0),
+            pos: (660.0, 517.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -115,7 +110,7 @@
         (
             id: 10,
             kind: "block",
-            pos: (660.0, 473.0),
+            pos: (660.0, 811.0),
             params: {
                 "block": Block("magma"),
             },
@@ -124,7 +119,7 @@
         (
             id: 11,
             kind: "simplex3d",
-            pos: (660.0, 586.0),
+            pos: (660.0, 924.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -138,7 +133,7 @@
         (
             id: 12,
             kind: "noise_select",
-            pos: (990.0, 179.0),
+            pos: (990.0, 389.0),
             params: {
                 "threshold": F(0.4),
             },
@@ -147,7 +142,7 @@
         (
             id: 13,
             kind: "prop",
-            pos: (660.0, 814.0),
+            pos: (660.0, 1152.0),
             params: {
                 "prop": Ref("obsidian_spike"),
             },
@@ -156,7 +151,7 @@
         (
             id: 14,
             kind: "scatter",
-            pos: (990.0, 352.0),
+            pos: (990.0, 562.0),
             params: {
                 "any_surface": B(true),
                 "chance": F(0.3),
@@ -168,6 +163,38 @@
                 "y_max": F(512.0),
                 "y_min": F(-512.0),
             },
+            comment: "",
+        ),
+        (
+            id: 15,
+            kind: "env_fog",
+            pos: (660.0, 0.0),
+            params: {
+                "color": Color((0.55, 0.3, 0.2)),
+                "density": F(0.0042000003),
+                "height_falloff": F(0.012),
+                "start": F(32.0),
+                "strength": F(0.55),
+            },
+            comment: "",
+        ),
+        (
+            id: 16,
+            kind: "env_grading",
+            pos: (660.0, 205.0),
+            params: {
+                "contrast": F(1.12),
+                "exposure": F(1.0),
+                "saturation": F(1.1),
+                "tint": Color((1.1, 0.95, 0.85)),
+            },
+            comment: "",
+        ),
+        (
+            id: 17,
+            kind: "environment",
+            pos: (990.0, 0.0),
+            params: {},
             comment: "",
         ),
     ],
@@ -244,6 +271,24 @@
             to_node: 1,
             to_pin: 3,
         ),
+        (
+            from_node: 15,
+            from_pin: 0,
+            to_node: 17,
+            to_pin: 0,
+        ),
+        (
+            from_node: 16,
+            from_pin: 0,
+            to_node: 17,
+            to_pin: 1,
+        ),
+        (
+            from_node: 17,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 13,
+        ),
     ],
-    next_id: 15,
+    next_id: 18,
 )

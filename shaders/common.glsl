@@ -70,6 +70,9 @@ struct FrameData {
     uint pad3;
     vec4 grade;           // colour grading: rgb tint, a = saturation (contrast in exposure.w)
     vec4 shadowTexel;     // shadow texel size of each cascade (receiver offset)
+    vec4 skyParams;       // the environment's sky: sun size, moon size, stars, w = sunlight multiplier
+    vec4 lightParams;     // the environment's light: x = sky ambient, y = block light (multipliers), z = cave ambient
+    vec4 moonColor;       // rgb, w = moonlight multiplier
 };
 
 layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer FrameRef {

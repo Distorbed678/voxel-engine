@@ -8,17 +8,12 @@
             pos: (2310.0, 0.0),
             params: {
                 "ambient": E("Pollen"),
-                "contrast": F(1.0),
                 "fluid": E("Water"),
-                "fog_color": Color((0.7, 0.8, 0.95)),
-                "fog_density": F(1.0),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
-                "grade_tint": Color((1.0, 1.0, 0.97)),
                 "grass_tint": Color((0.5, 0.82, 0.32)),
                 "map_color": Color((0.55, 0.8, 0.35)),
                 "particle_density": F(1.0),
                 "precipitation": E("Rain"),
-                "saturation": F(1.08),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -51,7 +46,7 @@
         (
             id: 4,
             kind: "block",
-            pos: (0.0, 228.0),
+            pos: (0.0, 361.0),
             params: {
                 "block": Block("stone"),
             },
@@ -60,7 +55,7 @@
         (
             id: 5,
             kind: "block",
-            pos: (0.0, 341.0),
+            pos: (0.0, 474.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -69,7 +64,7 @@
         (
             id: 6,
             kind: "height_select",
-            pos: (330.0, 228.0),
+            pos: (330.0, 361.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -79,7 +74,7 @@
         (
             id: 7,
             kind: "simplex2d",
-            pos: (0.0, 454.0),
+            pos: (0.0, 587.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -93,7 +88,7 @@
         (
             id: 8,
             kind: "ore",
-            pos: (660.0, 228.0),
+            pos: (660.0, 361.0),
             params: {
                 "ore": Block("coal_ore"),
                 "rarity": F(0.78),
@@ -108,7 +103,7 @@
         (
             id: 9,
             kind: "ore",
-            pos: (990.0, 228.0),
+            pos: (990.0, 361.0),
             params: {
                 "ore": Block("iron_ore"),
                 "rarity": F(0.82),
@@ -123,7 +118,7 @@
         (
             id: 10,
             kind: "ore",
-            pos: (1320.0, 228.0),
+            pos: (1320.0, 361.0),
             params: {
                 "ore": Block("copper_ore"),
                 "rarity": F(0.84),
@@ -138,7 +133,7 @@
         (
             id: 11,
             kind: "ore",
-            pos: (1650.0, 228.0),
+            pos: (1650.0, 361.0),
             params: {
                 "ore": Block("gold_ore"),
                 "rarity": F(0.86),
@@ -153,7 +148,7 @@
         (
             id: 12,
             kind: "surface_layers",
-            pos: (1980.0, 179.0),
+            pos: (1980.0, 361.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -169,7 +164,7 @@
         (
             id: 13,
             kind: "simplex2d",
-            pos: (1650.0, 499.0),
+            pos: (1650.0, 655.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -183,7 +178,7 @@
         (
             id: 14,
             kind: "ground_cover",
-            pos: (1980.0, 473.0),
+            pos: (1980.0, 655.0),
             params: {
                 "chance": F(0.45),
                 "on": Block("grass"),
@@ -202,7 +197,7 @@
         (
             id: 15,
             kind: "prop",
-            pos: (1650.0, 836.0),
+            pos: (1650.0, 1018.0),
             params: {
                 "prop": Ref("oak"),
             },
@@ -211,7 +206,7 @@
         (
             id: 16,
             kind: "scatter",
-            pos: (1980.0, 836.0),
+            pos: (1980.0, 1018.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.35),
@@ -228,7 +223,7 @@
         (
             id: 17,
             kind: "prop",
-            pos: (1650.0, 1173.0),
+            pos: (1650.0, 1355.0),
             params: {
                 "prop": Ref("boulder"),
             },
@@ -237,7 +232,7 @@
         (
             id: 18,
             kind: "scatter",
-            pos: (1980.0, 1173.0),
+            pos: (1980.0, 1355.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.25),
@@ -254,7 +249,7 @@
         (
             id: 19,
             kind: "prefab",
-            pos: (1650.0, 1510.0),
+            pos: (1650.0, 1692.0),
             params: {
                 "prefab": Ref("ruin"),
                 "random_rotation": B(true),
@@ -265,7 +260,7 @@
         (
             id: 20,
             kind: "scatter",
-            pos: (1980.0, 1510.0),
+            pos: (1980.0, 1692.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.35),
@@ -276,6 +271,18 @@
                 "surface": Block("grass"),
                 "y_max": F(512.0),
                 "y_min": F(-512.0),
+            },
+            comment: "",
+        ),
+        (
+            id: 21,
+            kind: "env_grading",
+            pos: (1980.0, 179.0),
+            params: {
+                "contrast": F(1.0),
+                "exposure": F(1.0),
+                "saturation": F(1.08),
+                "tint": Color((1.0, 1.0, 0.97)),
             },
             comment: "",
         ),
@@ -395,6 +402,12 @@
             to_node: 1,
             to_pin: 5,
         ),
+        (
+            from_node: 21,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 13,
+        ),
     ],
-    next_id: 21,
+    next_id: 22,
 )

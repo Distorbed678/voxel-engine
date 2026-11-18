@@ -434,12 +434,6 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             ui.slider("Shadow distance", 64.0f32, 1024.0f32, &mut c.state.shadow_distance);
             ui.slider("Shadow strength", 0.0f32, 1.0f32, &mut c.state.shadow_strength);
             ui.checkbox("Clouds", &mut c.state.clouds.enabled);
-            if c.state.clouds.enabled {
-                ui.slider("Cloud coverage", 0.0f32, 1.0f32, &mut c.state.clouds.coverage);
-                ui.slider("Cloud height", 100.0f32, 600.0f32, &mut c.state.clouds.base);
-                ui.slider("Cloud thickness", 20.0f32, 300.0f32, &mut c.state.clouds.thickness);
-                ui.slider("Cloud density", 0.005f32, 0.3f32, &mut c.state.clouds.density);
-            }
             if let Some(vs) = c.vsync {
                 let mut v = vs;
                 if ui.checkbox("VSync", &mut v) {
@@ -452,10 +446,10 @@ pub fn draw(ui: &Ui, c: &mut UiCtx) -> UiActions {
             if ui.checkbox("Day/night cycle", &mut running) {
                 c.atmosphere.paused = !running;
             }
-            ui.slider("Day length (s)", 30.0f32, 3600.0f32, &mut c.atmosphere.day_length_s);
+            ui.text_disabled(format!("Day length {:.0} s (World Output)", c.atmosphere.day_length_s));
             ui.slider("Exposure", 0.1f32, 4.0f32, &mut c.atmosphere.exposure);
             ui.slider("Fog amount", 0.0f32, 4.0f32, &mut c.state.fog_scale);
-            ui.slider("Fog height falloff", 0.0f32, 0.1f32, &mut c.atmosphere.fog_height_falloff);
+            ui.text_disabled("Sky, fog, clouds and light: Environment nodes");
             if ui.button("Reload shaders (F5)") {
                 c.state.force_reload = true;
             }

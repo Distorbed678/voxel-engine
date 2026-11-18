@@ -8,17 +8,12 @@
             pos: (1320.0, 0.0),
             params: {
                 "ambient": E("None"),
-                "contrast": F(1.08),
                 "fluid": E("Water"),
-                "fog_color": Color((0.95, 0.75, 0.6)),
-                "fog_density": F(1.0),
                 "foliage_tint": Color((0.35, 0.65, 0.25)),
-                "grade_tint": Color((1.08, 0.98, 0.9)),
                 "grass_tint": Color((0.7, 0.62, 0.35)),
                 "map_color": Color((0.8, 0.45, 0.25)),
                 "particle_density": F(1.0),
                 "precipitation": E("None"),
-                "saturation": F(1.1),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -70,7 +65,7 @@
         (
             id: 6,
             kind: "block",
-            pos: (0.0, 238.0),
+            pos: (0.0, 566.0),
             params: {
                 "block": Block("stone"),
             },
@@ -79,7 +74,7 @@
         (
             id: 7,
             kind: "block",
-            pos: (0.0, 351.0),
+            pos: (0.0, 679.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -88,7 +83,7 @@
         (
             id: 8,
             kind: "height_select",
-            pos: (330.0, 238.0),
+            pos: (330.0, 566.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -98,7 +93,7 @@
         (
             id: 9,
             kind: "simplex2d",
-            pos: (0.0, 464.0),
+            pos: (0.0, 792.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -112,7 +107,7 @@
         (
             id: 10,
             kind: "strata",
-            pos: (660.0, 179.0),
+            pos: (660.0, 566.0),
             params: {
                 "band1": Block("terracotta"),
                 "band2": Block("terracotta_orange"),
@@ -130,7 +125,7 @@
         (
             id: 11,
             kind: "surface_layers",
-            pos: (990.0, 179.0),
+            pos: (990.0, 389.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -146,7 +141,7 @@
         (
             id: 12,
             kind: "ground_cover",
-            pos: (990.0, 473.0),
+            pos: (990.0, 683.0),
             params: {
                 "chance": F(0.03),
                 "on": Block("red_sand"),
@@ -165,7 +160,7 @@
         (
             id: 13,
             kind: "prop",
-            pos: (660.0, 836.0),
+            pos: (660.0, 1046.0),
             params: {
                 "prop": Ref("boulder_terracotta"),
             },
@@ -174,7 +169,7 @@
         (
             id: 14,
             kind: "scatter",
-            pos: (990.0, 836.0),
+            pos: (990.0, 1046.0),
             params: {
                 "any_surface": B(true),
                 "chance": F(0.3),
@@ -186,6 +181,38 @@
                 "y_max": F(512.0),
                 "y_min": F(-512.0),
             },
+            comment: "",
+        ),
+        (
+            id: 15,
+            kind: "env_fog",
+            pos: (660.0, 179.0),
+            params: {
+                "color": Color((0.95, 0.75, 0.6)),
+                "density": F(0.0012),
+                "height_falloff": F(0.012),
+                "start": F(32.0),
+                "strength": F(0.55),
+            },
+            comment: "",
+        ),
+        (
+            id: 16,
+            kind: "env_grading",
+            pos: (660.0, 384.0),
+            params: {
+                "contrast": F(1.08),
+                "exposure": F(1.0),
+                "saturation": F(1.1),
+                "tint": Color((1.08, 0.98, 0.9)),
+            },
+            comment: "",
+        ),
+        (
+            id: 17,
+            kind: "environment",
+            pos: (990.0, 179.0),
+            params: {},
             comment: "",
         ),
     ],
@@ -268,6 +295,24 @@
             to_node: 1,
             to_pin: 3,
         ),
+        (
+            from_node: 15,
+            from_pin: 0,
+            to_node: 17,
+            to_pin: 0,
+        ),
+        (
+            from_node: 16,
+            from_pin: 0,
+            to_node: 17,
+            to_pin: 1,
+        ),
+        (
+            from_node: 17,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 13,
+        ),
     ],
-    next_id: 15,
+    next_id: 18,
 )

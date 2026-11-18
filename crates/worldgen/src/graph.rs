@@ -256,6 +256,9 @@ impl Project {
                 let mut g: Graph = ron::from_str(&s).with_context(|| format!("parsing {}", f.display()))?;
                 g.kind = kind;
                 g.next_id = g.next_id.max(g.nodes.iter().map(|n| n.id).max().unwrap_or(0) + 1);
+                if crate::env::migrate_biome_output(&mut g) {
+                    crate::layout::auto_layout(&mut g);
+                }
                 p.graphs.push(g);
             }
         }

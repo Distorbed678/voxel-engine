@@ -6,12 +6,13 @@
 #include "common.glsl"
 #include "light/light_defs.glsl"
 
-// block light colour scale (light values are squared first for a soft falloff)
-#define BLOCK_LIGHT_GAIN 2.4
+// block light colour scale (light values are squared first for a soft falloff), times the
+// environment's multiplier (needs a FrameData `f` in scope)
+#define BLOCK_LIGHT_GAIN (2.4 * f.lightParams.y)
 // self-illumination of emissive faces
 #define EMISSIVE_GAIN 5.0
-// what's left in a sealed cave with no light at all
-#define CAVE_AMBIENT vec3(0.018)
+// what's left in a sealed cave with no light at all (the environment's Light: cave)
+#define CAVE_AMBIENT vec3(f.lightParams.z)
 
 // The coarse volume (block light only, 4 blocks per cell) takes over beyond the fine one.
 vec3 sample_coarse(FrameData f, vec3 rel, vec3 offset) {

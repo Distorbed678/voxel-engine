@@ -17,11 +17,13 @@
 //! | `profile N [LABEL]` | average the GPU passes over the next N frames and log them |
 //! | `benchmark [surface\|upper\|deep\|sky]` | run the 24 s benchmark flight (through a layer) and wait for its report |
 //! | `weather W` | fixed weather intensity 0..1 (turns automatic weather off) |
+//! | `expect_env FIELD V...` | a value of the camera's environment (World, layer, zone and biome resolved), e.g. `expect_env fog.color 0.1 0.2 0.3`, `expect_env light.cave 0.02` |
+//! | `expect_idle` | nothing is streaming or generating (e.g. right after an edit that must not regenerate) |
 //! | `anim T\|run` | freeze the animation clock (wind, water, clouds) at T seconds / let it run |
 //! | `find_cave [MIN_HEIGHT]` | step around from the camera until a column has an air pocket at least MIN_HEIGHT tall below sea level, and stand in it |
 //! | `find_connection sinkhole\|pillar [N]` | go to the nearest (or Nth nearest, from 1) sinkhole, looking down into it, or sky pillar, looking at it from the ground |
 //! | `interp on\|off` | generate every layer with the world generator's interpreter (`worldgen::vm`) instead of the compiled shaders |
-//! | `graph_set world\|zone\|biome\|function\|prop NAME NODE_KIND PARAM VALUE` | set a parameter of the first NODE_KIND node of a graph (session only: scripts never save the generator) |
+//! | `graph_set world\|zone\|biome\|function\|prop NAME NODE_KIND PARAM VALUE` | set a parameter of the first NODE_KIND node of a graph (a colour is `R G B`; session only: scripts never save the generator) |
 //! | `interp_hold on\|off` | hold finished generator builds back: the edited layers stay in the interpreter |
 //! | `check_interp CX CY CZ` / `check_interp ~DX ~DY ~DZ` | generate a LOD0 chunk (apron included) with the interpreter and with the compiled shaders: every block must match |
 //! | `layer_jump surface\|sky\|underground DEPTH` | the Minimap's layer jump: go to the layer and stand on its ground (in a cave near DEPTH) |
@@ -128,6 +130,9 @@ enum Cmd {
     Benchmark(crate::bench::Flight),
     Profile(u32, String),
     Weather(f32),
+    /// the camera's environment (resolved, not blended): field, value
+    ExpectEnv(String, Vec<f32>),
+    ExpectIdle,
     SaveWorld(PathBuf),
     LoadWorld(PathBuf),
     ClearEdits,
@@ -440,6 +445,11 @@ fn parse(line: &str) -> Result<Cmd> {
         }),
         "profile" => Cmd::Profile(num(a.first(), "frames")?, a.get(1..).map(|r| r.join(" ")).unwrap_or_default()),
         "weather" => Cmd::Weather(num(a.first(), "intensity")?),
+        "expect_env" => Cmd::ExpectEnv(
+            a.first().context("missing field")?.to_string(),
+            a[1..].iter().map(|t| t.parse::<f32>().with_context(|| format!("bad number {t}"))).collect::<Result<_>>()?,
+        ),
+        "expect_idle" => Cmd::ExpectIdle,
         "save_world" => Cmd::SaveWorld(a.first().context("missing path")?.into()),
         "load_world" => Cmd::LoadWorld(a.first().context("missing path")?.into()),
         "clear_edits" => Cmd::ClearEdits,
@@ -1374,6 +1384,22 @@ impl Engine {
                 let touched = self.world.overlay.clear();
                 self.world.invalidate_blocks(&touched);
             }
+            Cmd::ExpectEnv(field, want) => {
+                let env = self.target_env();
+                match env.field(&field) {
+                    None => s.fail(line, format!("no environment field {field}")),
+                    Some(got) if got.len() != want.len() || got.iter().zip(&want).any(|(g, w)| (g - w).abs() > 1e-4) => {
+                        s.fail(line, format!("environment {field} is {got:?}, expected {want:?}"))
+                    }
+                    Some(_) => {}
+                }
+            }
+            Cmd::ExpectIdle => {
+                if !self.world_idle() {
+                    let st = &self.world.stats;
+                    s.fail(line, format!("the world is busy: {} chunks pending, {} in flight", st.pending, st.in_flight));
+                }
+            }
             Cmd::Weather(w) => {
                 self.ui.weather_auto = false;
                 self.ui.weather = w.clamp(0.0, 1.0);
@@ -1561,6 +1587,14 @@ impl Engine {
                     ParamKind::Bool(_) => worldgen::Value::B(matches!(value.as_str(), "on" | "true" | "1")),
                     ParamKind::Enum(opts, _) if opts.contains(&value.as_str()) => worldgen::Value::E(value.clone()),
                     ParamKind::Block(_) => worldgen::Value::Block(value.clone()),
+                    ParamKind::Color(_) => {
+                        let c: Vec<f32> = value.split_whitespace().map(|t| t.parse()).collect::<Result<_, _>>().context("a colour (R G B)")?;
+                        let [r, g, b] = c[..] else {
+                            s.fail(line, format!("{param}: a colour is three numbers (R G B)"));
+                            return Ok(None);
+                        };
+                        worldgen::Value::Color([r, g, b])
+                    }
                     ParamKind::Ref(_) | ParamKind::Prefab => worldgen::Value::Ref(value.clone()),
                     _ => {
                         s.fail(line, format!("can't set {param} to {value}"));

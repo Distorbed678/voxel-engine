@@ -69,6 +69,12 @@ pub struct FrameData {
     pub grade: [f32; 4],
     /// size of a shadow texel in each cascade, for the receiver offset
     pub shadow_texel: [f32; 4],
+    /// the environment's sky: sun size, moon size, stars, w = sunlight multiplier
+    pub sky_params: [f32; 4],
+    /// the environment's light: sky ambient and block light multipliers, cave ambient
+    pub light_params: [f32; 4],
+    /// the moon's colour, w = moonlight multiplier
+    pub moon_color: [f32; 4],
 }
 
 pub const FLAG_SHADOWS: u32 = 2;

@@ -397,10 +397,16 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
 
   The placeholder cave biomes are very porous; their real content and meshing cost come in
   phase G.
+- **Owner, at the phase C check-in (2026-11-18)**: continue to phase D.
 
 ### Phase D (item 22): environment as graphs
 - **Sky & atmosphere** outputs per layer, zone and biome: sky colours, sun and moon size and
-  colour, clouds (and the cloud sea), fog, grading.
+  colour, clouds (and the cloud sea), fog, grading. **Done**: Sky, Fog, Grading, Clouds, Light
+  and Environment nodes; Environment inputs on the World Output, layers, depth bands, Zone and
+  Biome Outputs; resolved on the CPU and blended (no regeneration on edits); per-layer defaults
+  (dark upper caves, the Deep's red haze, the sky layer lit from below); old biome fog and
+  grading settings converted on load; `environment.vxs` test. The cloud sea keeps its World
+  Output settings.
 - **Particles & weather**:
   - A **Particle** graph kind (or nodes): look (shape, colour, size, glow), motion (fall,
     drift, rise, swirl, flock, orbit), spawn rules (biome, near blocks such as flowers, water
@@ -411,7 +417,8 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
 - **Fluids as data and graphs**: fluid definitions (flow distance, speed, light, colour,
   texture, whether sources are infinite). Generalise `fluid.rs`; lava flows.
 - **Light & time** in the World graph: day length, sun and moon light colours, per-layer
-  ambient (dark-lit-by-life underground), sky light behaviour in the sky layer.
+  ambient (dark-lit-by-life underground), sky light behaviour in the sky layer. **Done** with
+  the environments: day length on the World Output, the Light node per level.
 - **Tests**: goldens for a custom particle type and a weather event; a fluid script test for a
   second fluid.
 

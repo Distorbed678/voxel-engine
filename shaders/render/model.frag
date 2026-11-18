@@ -42,7 +42,7 @@ void main() {
     vec3 Ns = twoSided ? normalize(mix(N, vec3(0, 1, 0), 0.6)) : N;
     float ndl = twoSided ? (0.35 + 0.65 * max(dot(Ns, sunDir), 0.0)) : max(dot(Ns, sunDir), 0.0);
     float ao = twoSided ? mix(0.45, 1.0, clamp(1.0 - vUV.y, 0.0, 1.0)) : 0.9;
-    vec3 skyAmb = mix(f.groundColor.rgb, f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3, Ns.y * 0.5 + 0.5);
+    vec3 skyAmb = mix(f.groundColor.rgb, f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3, Ns.y * 0.5 + 0.5) * f.lightParams.x;
     vec4 Lv = sample_light(f, vRel, twoSided ? vec3(0.0, 0.25, 0.0) : N * 0.5);
     float skyVis = Lv.a * Lv.a;
     float sunVis = smoothstep(0.3, 0.8, Lv.a);

@@ -1,0 +1,38 @@
+# Environments (roadmap item 22): Sky, Fog, Grading, Clouds and Light nodes on the World Output,
+# the layers, Zone Outputs and Biome Outputs; the most specific wins, part by part. They are read
+# on the CPU only: an edit shows at once and regenerates nothing.
+ui off
+anim 12
+weather 0
+time 0.4
+find_biome meadow 30
+look 30 -15
+settle
+# the meadow: the world's defaults with the biome's own grading
+expect_env light.sky 1
+expect_env grade.saturation 1.08
+expect_env fog.color 0.7 0.8 0.95
+# a warm, washed-out grade: the view changes at once, the world doesn't regenerate
+graph_set biome meadow env_grading tint 1.3 0.85 0.7
+graph_set biome meadow env_grading saturation 0.6
+wait 3
+expect_env grade.saturation 0.6
+expect_env grade.tint 1.3 0.85 0.7
+expect_idle
+wait 300
+expect_idle
+expect_image crates/engine/tests/golden/env_graded.png
+# the layers' own environments: no sun or sky light in the upper caves, the Deep's red haze
+layer_jump underground -400
+settle
+expect_env light.sky 0
+expect_env light.cave 0.035
+pos 0 -3000 0
+settle
+expect_env fog.color 0.12 0.05 0.03
+expect_env light.cave 0.045
+# the sky layer: lit from below by the cloud sea
+layer_jump sky
+settle
+expect_env light.sky 1.15
+expect_env sky.ground_day 0.78 0.82 0.9

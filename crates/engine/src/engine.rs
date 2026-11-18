@@ -1180,17 +1180,28 @@ impl Engine {
         self.ui.refresh_worlds = true;
     }
 
-    /// Blend fog colour/density toward the biome the camera is in.
+    /// The environment the camera is in: the defaults, overridden by the world's, then its
+    /// layer's, zone's and biome's (see `worldgen::env`).
+    pub fn target_env(&self) -> worldgen::env::Env {
+        let c = &self.wg.compiled;
+        let li = c.layer_near(self.camera.pos.y as f32);
+        let (zone, biome) = match self.probes.camera {
+            Some(p) => (c.env_zones.get(p.zone as usize), c.env_biomes.get(p.biome as usize)),
+            None => (None, None),
+        };
+        worldgen::env::Env::resolve([Some(&c.env_world), c.env_layers.get(li), zone, biome])
+    }
+
+    /// Blend the environment toward the camera's; the weather on top.
     fn apply_environment(&mut self) {
-        let Some(cam) = self.probes.camera else { return };
-        let Some(b) = self.wg.compiled.biomes.get(cam.biome as usize) else { return };
         let k = if std::mem::take(&mut self.env_snap) { 1.0 } else { (self.dt * 1.5).min(1.0) };
-        let target = Vec3::from(b.fog_color);
-        self.atmosphere.fog_tint = self.atmosphere.fog_tint.lerp(target, k);
-        self.atmosphere.fog_tint_strength = 0.55;
-        self.atmosphere.grade_tint = self.atmosphere.grade_tint.lerp(Vec3::from(b.grade_tint), k);
-        self.atmosphere.saturation += (b.saturation - self.atmosphere.saturation) * k;
-        self.atmosphere.contrast += (b.contrast - self.atmosphere.contrast) * k;
+        let target = self.target_env();
+        self.atmosphere.env.lerp(&target, k);
+        let c = &self.wg.compiled;
+        self.atmosphere.day_length_s = c.day_length;
+        if let Some(l) = c.layers.get(c.layer_near(self.camera.pos.y as f32)) {
+            self.atmosphere.fog_base = c.value(l.sea).max(c.value(l.y_min));
+        }
         // weather: automatic (slow cycle on the animation clock) or the slider
         let weather = if self.ui.weather_auto {
             let t = self.anim_time as f64;
@@ -1200,12 +1211,14 @@ impl Engine {
             self.ui.weather
         };
         self.atmosphere.weather += (weather - self.atmosphere.weather) * k;
+        let rain = self.particles.shares.rain;
+        let dens = self.atmosphere.env.fog.density * self.ui.fog_scale * (1.0 + 1.5 * rain);
+        self.atmosphere.fog_density = dens;
+        let Some(cam) = self.probes.camera else { return };
+        let Some(b) = self.wg.compiled.biomes.get(cam.biome as usize) else { return };
         let daylight = (self.atmosphere.colors().sun_dir.y * 5.0 + 0.5).clamp(0.0, 1.0);
         let target = crate::particles::Shares::for_biome(b.ambient, b.precipitation, b.particle_density, self.atmosphere.weather, daylight);
         self.particles.shares = self.particles.shares.lerp(target, if k >= 1.0 { 1.0 } else { (self.dt * 0.8).min(1.0) });
-        let rain = self.particles.shares.rain;
-        let dens = 0.0012 * b.fog_density.max(0.05) * self.ui.fog_scale * (1.0 + 1.5 * rain);
-        self.atmosphere.fog_density += (dens - self.atmosphere.fog_density) * k;
     }
 
     fn read_pick(&mut self, slot: usize) {
@@ -1653,8 +1666,10 @@ impl Engine {
             self.wg.biome_table.address,
             self.shadow_mask,
             {
-                // weather thickens the clouds; up in (or above) the cloud sea they're hidden
-                let mut c = self.ui.clouds;
+                // the environment's clouds, thickened by the weather; up in (or above) the cloud
+                // sea they're hidden
+                let e = &self.atmosphere.env.clouds;
+                let mut c = crate::renderer::CloudSettings { enabled: self.ui.clouds.enabled, coverage: e.coverage, base: e.base, thickness: e.thickness, density: e.density };
                 c.coverage = (c.coverage + 0.3 * self.atmosphere.weather).min(1.0);
                 c.enabled &= !(sea.density > 0.0 && cam_y > sea.base + sea.amp());
                 c
@@ -1929,7 +1944,7 @@ impl Engine {
             sky_horizon: sky.horizon.extend(1.0).to_array(),
             ground_color: sky.ground.extend(1.0).to_array(),
             fog_color: sky.fog.extend(self.atmosphere.fog_density).to_array(),
-            fog_params: [self.atmosphere.fog_height_falloff, self.atmosphere.fog_start, self.atmosphere.sea_level, view_distance],
+            fog_params: [self.atmosphere.env.fog.falloff, self.atmosphere.env.fog.start, self.atmosphere.fog_base, view_distance],
             resolution: [extent.width as f32, extent.height as f32],
             time: self.anim_time,
             dt: self.dt,
@@ -1943,10 +1958,10 @@ impl Engine {
             hdr_tex: self.scene_output(),
             depth_tex: self.renderer.depth_tex,
             exposure: [
-                self.atmosphere.exposure,
+                self.atmosphere.exposure * self.atmosphere.env.grade.exposure,
                 self.atmosphere.time_of_day,
                 if self.ui.bloom { self.ui.bloom_strength } else { 0.0 },
-                if self.ui.grading { self.atmosphere.contrast } else { 1.0 },
+                if self.ui.grading { self.atmosphere.env.grade.contrast } else { 1.0 },
             ],
             shadow_vp: [[[0.0; 4]; 4]; 4],
             shadow_planes: [[0.0; 4]; 24],
@@ -1976,9 +1991,22 @@ impl Engine {
             pad: 0,
             shadow_texel: [0.0; 4],
             grade: if self.ui.grading {
-                [self.atmosphere.grade_tint.x, self.atmosphere.grade_tint.y, self.atmosphere.grade_tint.z, self.atmosphere.saturation]
+                let g = &self.atmosphere.env.grade;
+                [g.tint[0], g.tint[1], g.tint[2], g.saturation]
             } else {
                 [1.0, 1.0, 1.0, 1.0]
+            },
+            sky_params: {
+                let s = &self.atmosphere.env.sky;
+                [s.sun_size, s.moon_size, s.stars, self.atmosphere.env.light.sun]
+            },
+            light_params: {
+                let l = &self.atmosphere.env.light;
+                [l.sky, l.block, l.cave, 0.0]
+            },
+            moon_color: {
+                let s = &self.atmosphere.env;
+                [s.sky.moon[0], s.sky.moon[1], s.sky.moon[2], s.light.moon]
             },
         };
         let mut fd = fd;

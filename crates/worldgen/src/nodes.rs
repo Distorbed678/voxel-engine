@@ -27,6 +27,8 @@ pub enum PinType {
     /// Rare world-scale features every layer generates, crossing between layers: sinkholes,
     /// sky pillars.
     Connection,
+    /// Sky, fog, grading, clouds and light (crate::env): what the camera sees around it.
+    Environment,
 }
 
 impl PinType {
@@ -46,6 +48,7 @@ impl PinType {
             PinType::Zone => [1.0, 0.85, 0.3, 1.0],
             PinType::Layer => [0.45, 0.85, 0.95, 1.0],
             PinType::Connection => [0.95, 0.5, 0.55, 1.0],
+            PinType::Environment => [0.55, 0.75, 1.0, 1.0],
         }
     }
 }
@@ -146,6 +149,7 @@ const BIOME: &[GraphKind] = &[GraphKind::Biome];
 const ZONE: &[GraphKind] = &[GraphKind::Zone];
 const WORLD: &[GraphKind] = &[GraphKind::World];
 const FUNC: &[GraphKind] = &[GraphKind::Function];
+const ENV: &[GraphKind] = &[GraphKind::World, GraphKind::Zone, GraphKind::Biome];
 
 /// Shape nodes: the block they place and its priority where shapes overlap (higher wins).
 const SH: &[(&str, PinType)] = &[("Shape", Shape)];
@@ -162,12 +166,12 @@ pub static NODES: &[NodeDef] = &[
     // ---------------------------------------------------------------- outputs
     NodeDef { kind: "world_output", title: "World Output", category: "Output",
         help: "Root of the generator: the world's layers (surface, underground, sky), each with its own zones and biomes and its own generator, the connections between them (sinkholes, sky pillars), and the cloud sea that hides the sky layer from the ground.",
-        inputs: &[("Surface", Layer), ("Underground", Layer), ("Sky", Layer), ("Connections", Connection)], outputs: &[],
-        params: &[f("cloud_sea_base", 2600.0, 0.0, 8000.0), f("cloud_sea_top", 3400.0, 0.0, 8000.0), f("cloud_sea_density", 1.0, 0.0, 4.0)],
+        inputs: &[("Surface", Layer), ("Underground", Layer), ("Sky", Layer), ("Connections", Connection), ("Environment", Environment)], outputs: &[],
+        params: &[f("cloud_sea_base", 2600.0, 0.0, 8000.0), f("cloud_sea_top", 3400.0, 0.0, 8000.0), f("cloud_sea_density", 1.0, 0.0, 4.0), f("day_length", 600.0, 10.0, 7200.0)],
         allowed: WORLD },
     NodeDef { kind: "layer", title: "Layer", category: "Layout",
         help: "A layer of the world between y_min and y_max: its zone layout, sea level and rivers. Surface: air above, solid below; Underground: solid on both sides; Sky: air on both sides. A layer only generates its own range; within `blend` blocks of its edges the terrain fades into what lies beyond (rock or air), so neighbouring layers meet without a seam.",
-        inputs: &[("Zones", Zone), ("Rivers", Density)], outputs: &[("Out", Layer)],
+        inputs: &[("Zones", Zone), ("Rivers", Density), ("Environment", Environment)], outputs: &[("Out", Layer)],
         params: &[
             en("kind", &["Surface", "Underground", "Sky"], 0),
             f("y_min", -128.0, -16384.0, 16384.0),
@@ -191,35 +195,66 @@ pub static NODES: &[NodeDef] = &[
         params: &[f("spacing", 15000.0, 500.0, 100000.0), f("chance", 1.0, 0.0, 1.0), f("radius", 70.0, 8.0, 400.0), f("top_radius", 30.0, 4.0, 400.0),
                   f("bottom", -64.0, -16384.0, 16384.0), f("top", 4600.0, -16384.0, 16384.0), f("flutes", 7.0, 0.0, 24.0), i("seed", 2, 0, 9999)],
         allowed: WORLD },
+    NodeDef { kind: "environment", title: "Environment", category: "Environment",
+        help: "Combines environment parts (Sky, Fog, Grading, Clouds, Light): later inputs win where two set the same part. Wire it (or a single part) into the Environment input of the World Output, a layer, a Zone Output or a Biome Output. The most specific level wins, part by part: biome over zone over layer over world.",
+        inputs: &[("A", Environment), ("B", Environment), ("C", Environment), ("D", Environment), ("E", Environment), ("F", Environment)], outputs: &[("Out", Environment)],
+        params: &[], allowed: ENV },
+    NodeDef { kind: "env_sky", title: "Sky", category: "Environment",
+        help: "Sky colours at day, dusk and night (zenith and horizon), the light from below (ground), the sun and moon (colour, size) and the stars.",
+        inputs: &[], outputs: &[("Out", Environment)],
+        params: &[
+            col("zenith_day", [0.22, 0.45, 0.92]), col("horizon_day", [0.62, 0.78, 0.98]),
+            col("zenith_dusk", [0.25, 0.3, 0.55]), col("horizon_dusk", [1.0, 0.5, 0.25]),
+            col("zenith_night", [0.006, 0.01, 0.03]), col("horizon_night", [0.02, 0.03, 0.06]),
+            col("ground_day", [0.32, 0.28, 0.22]), col("ground_night", [0.02, 0.02, 0.025]),
+            col("sun", [1.0, 0.96, 0.9]), col("sun_dusk", [1.0, 0.55, 0.3]), f("sun_size", 1.0, 0.0, 8.0),
+            col("moon", [0.8, 0.85, 1.0]), f("moon_size", 1.0, 0.0, 8.0), f("stars", 1.0, 0.0, 4.0),
+        ],
+        allowed: ENV },
+    NodeDef { kind: "env_fog", title: "Fog", category: "Environment",
+        help: "Fog: its colour and how much it takes it (the rest is the sky's), density, how fast it thins with height, and where it starts.",
+        inputs: &[], outputs: &[("Out", Environment)],
+        params: &[col("color", [0.7, 0.8, 0.95]), f("strength", 0.55, 0.0, 1.0), f("density", 0.0012, 0.0, 0.05), f("height_falloff", 0.012, 0.0, 0.2), f("start", 32.0, 0.0, 1024.0)],
+        allowed: ENV },
+    NodeDef { kind: "env_grading", title: "Grading", category: "Environment",
+        help: "Colour grading: tint, saturation, contrast and exposure (a multiplier).",
+        inputs: &[], outputs: &[("Out", Environment)],
+        params: &[col("tint", [1.0, 1.0, 1.0]), f("saturation", 1.0, 0.0, 2.0), f("contrast", 1.0, 0.5, 2.0), f("exposure", 1.0, 0.1, 4.0)],
+        allowed: ENV },
+    NodeDef { kind: "env_clouds", title: "Clouds", category: "Environment",
+        help: "The weather clouds: coverage, base height, thickness and density (weather thickens them).",
+        inputs: &[], outputs: &[("Out", Environment)],
+        params: &[f("coverage", 0.45, 0.0, 1.0), f("base", 230.0, -16384.0, 16384.0), f("thickness", 90.0, 1.0, 2000.0), f("density", 0.06, 0.0, 1.0)],
+        allowed: ENV },
+    NodeDef { kind: "env_light", title: "Light", category: "Environment",
+        help: "Light: multipliers of sunlight, moonlight, sky ambient and block light, and the faint ambient left where nothing glows (caves).",
+        inputs: &[], outputs: &[("Out", Environment)],
+        params: &[f("sun", 1.0, 0.0, 4.0), f("moon", 1.0, 0.0, 4.0), f("sky", 1.0, 0.0, 4.0), f("block", 1.0, 0.0, 4.0), f("cave", 0.018, 0.0, 0.5)],
+        allowed: ENV },
     NodeDef { kind: "connections", title: "Connections", category: "Layout",
         help: "Several kinds of connection together (sinkholes, sky pillars, ...).",
         inputs: &[("A", Connection), ("B", Connection), ("C", Connection), ("D", Connection)], outputs: &[("Out", Connection)],
         params: &[], allowed: WORLD },
     NodeDef { kind: "depth_bands", title: "Depth Bands", category: "Layout",
         help: "The underground in two bands, each with its own zones: Upper from top down to split, Deep from split down to bottom. Each band has its own sea level (seas of water or lava fill open caves below it; far below the band means none). Caves close within `blend` blocks of a band's edges.",
-        inputs: &[("Upper", Zone), ("Deep", Zone)], outputs: &[("Out", Layer)],
+        inputs: &[("Upper", Zone), ("Deep", Zone), ("Upper Environment", Environment), ("Deep Environment", Environment)], outputs: &[("Out", Layer)],
         params: &[f("top", -128.0, -16384.0, 16384.0), f("split", -1200.0, -16384.0, 16384.0), f("bottom", -6000.0, -16384.0, 16384.0),
                   f("blend", 24.0, 0.0, 512.0), f("sea_level_upper", -100000.0, -100000.0, 16384.0), f("sea_level_deep", -100000.0, -100000.0, 16384.0)],
         allowed: WORLD },
     NodeDef { kind: "zone_output", title: "Zone Output", category: "Output", help: "A zone: which biomes appear inside it and how caves are carved.",
-        inputs: &[("Biomes", Biome), ("Caves", Density), ("Cave Biomes", Biome)], outputs: &[], params: &[col("map_color", [0.4, 0.7, 0.3])], allowed: ZONE },
+        inputs: &[("Biomes", Biome), ("Caves", Density), ("Cave Biomes", Biome), ("Environment", Environment)], outputs: &[], params: &[col("map_color", [0.4, 0.7, 0.3])], allowed: ZONE },
     NodeDef { kind: "biome_output", title: "Biome Output", category: "Output",
         help: "A biome: terrain density (>0 = solid), materials, ground cover, props and environment.",
-        inputs: &[("Terrain", Density), ("Material", Material), ("Ground Cover", Decor), ("Props 1", PropLayer), ("Props 2", PropLayer), ("Props 3", PropLayer), ("Props 4", PropLayer), ("Props 5", PropLayer), ("Props 6", PropLayer), ("Props 7", PropLayer), ("Props 8", PropLayer), ("Props 9", PropLayer), ("Props 10", PropLayer)],
+        inputs: &[("Terrain", Density), ("Material", Material), ("Ground Cover", Decor), ("Props 1", PropLayer), ("Props 2", PropLayer), ("Props 3", PropLayer), ("Props 4", PropLayer), ("Props 5", PropLayer), ("Props 6", PropLayer), ("Props 7", PropLayer), ("Props 8", PropLayer), ("Props 9", PropLayer), ("Props 10", PropLayer), ("Environment", Environment)],
         outputs: &[],
         params: &[
             en("fluid", &["Water", "Lava", "Ice", "None"], 0),
             col("grass_tint", [0.45, 0.75, 0.3]),
             col("foliage_tint", [0.35, 0.65, 0.25]),
             col("water_tint", [0.15, 0.35, 0.65]),
-            col("fog_color", [0.7, 0.8, 0.95]),
-            f("fog_density", 1.0, 0.0, 10.0),
-            col("grade_tint", [1.0, 1.0, 1.0]),
             en("ambient", &["None", "Ash", "Embers", "Fireflies", "Pollen"], 0),
             en("precipitation", &["None", "Rain", "Snow"], 0),
             f("particle_density", 1.0, 0.0, 4.0),
-            f("saturation", 1.0, 0.0, 2.0),
-            f("contrast", 1.0, 0.5, 2.0),
             col("map_color", [0.3, 0.6, 0.25]),
         ],
         allowed: BIOME },

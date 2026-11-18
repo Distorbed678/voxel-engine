@@ -199,11 +199,38 @@ by a weather intensity that cycles slowly by itself or is set by hand. Weather a
 clouds and the fog. Everything blends over time like fog. Scripts restart the particles and snap
 the blend when `settle` finishes, so golden images stay deterministic.
 
+## Environments
+
+Sky, fog, colour grading, the weather clouds and light are graph data (`worldgen::env`). Five
+nodes each set one part: **Sky** (zenith and horizon colours at day, dusk and night, the light
+from below, sun and moon colour and size, stars), **Fog** (colour, how much it takes it,
+density, height falloff, start), **Grading**, **Clouds** and **Light** (multipliers of
+sunlight, moonlight, sky ambient and block light, plus the faint ambient left where nothing
+glows). An **Environment** node combines parts. They feed the Environment inputs of the World
+Output, of each layer (Layer, and Depth Bands for each band), of Zone Outputs and of Biome
+Outputs.
+
+The compiler resolves each input on the CPU (`Compiled::env_world`, `env_layers`, `env_zones`,
+`env_biomes`). Each frame the engine builds the camera's environment: the built-in defaults
+(the look from before environments were graphs), overridden part by part by the world, the
+camera's layer, then the zone and biome under the camera (from the GPU probe). The rendered
+environment blends toward it over a second or two, so walking between biomes or dropping into
+the caves fades. Editing an environment node never recompiles shaders or regenerates chunks.
+
+The renderer reads it through `FrameData`: sky colours, sun and moon colour, fog (the reference
+height is the camera layer's sea level, or its floor when the sea lies below it), grading,
+`skyParams` (sun and moon disk sizes, stars, sunlight multiplier) and `lightParams` (sky
+ambient and block light multipliers, cave ambient). The defaults give the underground layers a
+dark sky and fog with no sun or sky light, the Deep a red haze, and the sky layer light from
+below off the cloud sea. Old projects whose Biome Outputs still have fog and grading settings
+are converted to Fog and Grading nodes on load. The settings panel keeps a fog amount and an
+exposure multiplier and the cloud on/off toggle; the World Output holds the day length.
+
 ## Colour grading
 
-Each biome output has a grading tint, saturation and contrast. Like fog, they blend toward the
-biome the camera stands in (from the GPU probes). The tonemap pass applies them in linear HDR
-before ACES: tint, then saturation around luminance, then contrast around mid-grey (0.18).
+The camera's environment sets a grading tint, saturation, contrast and exposure. The tonemap
+pass applies them in linear HDR before ACES: tint, then saturation around luminance, then
+contrast around mid-grey (0.18).
 
 ## Bloom
 
@@ -225,9 +252,9 @@ resident, so the volume keeps its own copy of the blocks:
    light-only job, which generates them but skips meshing.
 2. **Sky sources**: one thread per column walks down from the top of the volume. Cells keep full
    sky light until the first light-blocking block. Water, ice and leaves on the way dim it. Below
-   the sky floor (the top of the underground layers) the sky above the volume isn't open, nothing
-   outside the volume counts as open sky, and fog fades to dark: caves are lit only by what
-   glows.
+   the sky floor (the top of the underground layers) the sky above the volume isn't open and
+   nothing outside the volume counts as open sky: caves are lit only by what glows (and the
+   layer environment's cave ambient).
 3. **Propagation**: Jacobi steps between two RGBA8 images (RGB block light, A sky light). Each
    cell takes the brightest of its own emission or sky source and its six neighbours minus 1/15
    per block, plus the block's attenuation. Light moves one block per step, so 15 steps settle

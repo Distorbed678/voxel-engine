@@ -112,7 +112,7 @@ void main() {
     vec3 sunDir = f.sunDir.y > -0.05 ? f.sunDir.xyz : -f.sunDir.xyz;
     float ndl = max(dot(Nw, sunDir), 0.0) * smoothstep(-0.05, 0.05, dot(N, sunDir) + 0.05);
     vec3 sun = f.sunColor.rgb * f.sunDir.w;
-    vec3 skyAmb = mix(f.groundColor.rgb, f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3, Nw.y * 0.5 + 0.5);
+    vec3 skyAmb = mix(f.groundColor.rgb, f.skyZenith.rgb * 1.2 + f.skyHorizon.rgb * 0.3, Nw.y * 0.5 + 0.5) * f.lightParams.x;
     float shadow = ndl > 0.0 ? shadow_lookup(f, vRel, N, sunDir) : 1.0;
     shadow = mix(1.0, shadow, f.camForward.w);
     // light volume: sky light dims sun + ambient in enclosed spaces, block light adds colour

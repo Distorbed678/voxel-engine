@@ -25,13 +25,7 @@ pub struct BiomeInfo {
     pub grass_tint: [f32; 3],
     pub foliage_tint: [f32; 3],
     pub water_tint: [f32; 3],
-    pub fog_color: [f32; 3],
-    pub fog_density: f32,
     pub map_color: [f32; 3],
-    /// Colour grading while the camera is in this biome.
-    pub grade_tint: [f32; 3],
-    pub saturation: f32,
-    pub contrast: f32,
     /// Ambient particles (None, Ash, Embers, Fireflies, Pollen), precipitation (None, Rain, Snow).
     pub ambient: u32,
     pub precipitation: u32,
@@ -138,6 +132,14 @@ pub struct Compiled {
     pub cloud_sea: [u32; 3],
     /// the connections between layers (sinkholes, sky pillars), as the CPU places them
     pub connections: Vec<crate::connect::ConnectionSpec>,
+    /// environments (crate::env) set by the world, each layer, each zone and each biome (global
+    /// zone and biome ids)
+    pub env_world: crate::env::EnvOverride,
+    pub env_layers: Vec<crate::env::EnvOverride>,
+    pub env_zones: Vec<crate::env::EnvOverride>,
+    pub env_biomes: Vec<crate::env::EnvOverride>,
+    /// length of a day in seconds (World Output)
+    pub day_length: f32,
 }
 
 impl Compiled {
@@ -227,6 +229,8 @@ struct Unit {
     sea: &'static str,
     /// rivers (Layer pin 1)
     rivers: bool,
+    /// the Environment input of `node` for this layer
+    env_pin: u8,
     zones: Vec<String>,
     biomes: Vec<String>,
     props: Vec<String>,
@@ -1015,12 +1019,7 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
             grass_tint: color_param(g, &outn, "grass_tint"),
             foliage_tint: color_param(g, &outn, "foliage_tint"),
             water_tint: color_param(g, &outn, "water_tint"),
-            fog_color: color_param(g, &outn, "fog_color"),
-            fog_density: outn.params.get("fog_density").map(|v| v.as_f32()).unwrap_or(1.0),
             map_color: color_param(g, &outn, "map_color"),
-            grade_tint: color_param(g, &outn, "grade_tint"),
-            saturation: outn.params.get("saturation").map(|v| v.as_f32()).unwrap_or(1.0),
-            contrast: outn.params.get("contrast").map(|v| v.as_f32()).unwrap_or(1.0),
             ambient: 0,
             precipitation: 0,
             particle_density: outn.params.get("particle_density").map(|v| v.as_f32()).unwrap_or(1.0),
@@ -1868,11 +1867,11 @@ fn layer_units(project: &Project, warnings: &mut Vec<String>) -> Vec<Unit> {
                     Some(Value::E(e)) if e == "Sky" => LayerKind::Sky,
                     _ => LayerKind::Surface,
                 };
-                units.push(Unit { name: name.to_string(), kind, node: n.id, layout: layout(n.id, 0), y_min: "y_min", y_max: "y_max", blend: "blend", sea: "sea_level", rivers: true, zones: vec![], biomes: vec![], props: vec![] });
+                units.push(Unit { name: name.to_string(), kind, node: n.id, layout: layout(n.id, 0), y_min: "y_min", y_max: "y_max", blend: "blend", sea: "sea_level", rivers: true, env_pin: 2, zones: vec![], biomes: vec![], props: vec![] });
             }
             "depth_bands" => {
-                units.push(Unit { name: "upper".into(), kind: LayerKind::Underground, node: n.id, layout: layout(n.id, 0), y_min: "split", y_max: "top", blend: "blend", sea: "sea_level_upper", rivers: false, zones: vec![], biomes: vec![], props: vec![] });
-                units.push(Unit { name: "deep".into(), kind: LayerKind::Underground, node: n.id, layout: layout(n.id, 1), y_min: "bottom", y_max: "split", blend: "blend", sea: "sea_level_deep", rivers: false, zones: vec![], biomes: vec![], props: vec![] });
+                units.push(Unit { name: "upper".into(), kind: LayerKind::Underground, node: n.id, layout: layout(n.id, 0), y_min: "split", y_max: "top", blend: "blend", sea: "sea_level_upper", rivers: false, env_pin: 2, zones: vec![], biomes: vec![], props: vec![] });
+                units.push(Unit { name: "deep".into(), kind: LayerKind::Underground, node: n.id, layout: layout(n.id, 1), y_min: "bottom", y_max: "split", blend: "blend", sea: "sea_level_deep", rivers: false, env_pin: 3, zones: vec![], biomes: vec![], props: vec![] });
             }
             other => warnings.push(format!("World Output: '{other}' is not a layer (use a Layer or Depth Bands node)")),
         }
@@ -1974,6 +1973,17 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
             prop_layers: out.prop_layers,
         });
         c.prop_layers += out.prop_layers;
+        // environments: the layer's, its zones' and its biomes'
+        let world = project.graphs.iter().find(|g| g.kind == GraphKind::World);
+        c.env_layers.push(world.map(|g| crate::env::resolve(g, u.node, u.env_pin)).unwrap_or_default());
+        for z in &out.zones {
+            let g = project.get(GraphKind::Zone, &z.name);
+            c.env_zones.push(g.and_then(|g| g.output_node().map(|o| crate::env::resolve(g, o.id, crate::env::ZONE_ENV_PIN))).unwrap_or_default());
+        }
+        for b in &out.biomes {
+            let g = project.get(GraphKind::Biome, &b.name);
+            c.env_biomes.push(g.and_then(|g| g.output_node().map(|o| crate::env::resolve(g, o.id, crate::env::BIOME_ENV_PIN))).unwrap_or_default());
+        }
         c.biomes.extend(out.biomes);
         c.zones.extend(out.zones.into_iter().map(|mut z| {
             z.biomes.iter_mut().chain(z.cave_biomes.iter_mut()).for_each(|b| *b += bb);
@@ -1992,6 +2002,11 @@ pub fn compile(project: &Project, blocks: &HashMap<String, u32>, prefabs: &HashM
         let base = take_params(&mut sh, &mut params);
         c.cloud_sea = slots.map(|s| base + s);
         c.connections = connection_specs(g);
+        c.env_world = crate::env::resolve(g, o.id, crate::env::WORLD_ENV_PIN);
+        c.day_length = match o.params.get("day_length") {
+            Some(v) => v.as_f32(),
+            None => 600.0,
+        };
     }
     warnings.append(&mut sh.warnings);
     c.warnings = warnings;

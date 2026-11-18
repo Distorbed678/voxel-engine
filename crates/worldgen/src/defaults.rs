@@ -231,7 +231,7 @@ fn floating_isles() -> Graph {
     b.l(gc, o, 2);
     let tree = b.prop("willow", 0.0, 840.0);
     b.scatter(tree, 260.0, 840.0, &[("spacing", fv(16.0)), ("chance", fv(0.5)), ("y_min", fv(4000.0)), ("y_max", fv(6200.0))], 3, None);
-    b.out_params(&[("fluid", ev("None")), ("grass_tint", Value::Color([0.42, 0.85, 0.45])), ("fog_color", Value::Color([0.8, 0.85, 1.0])), ("map_color", Value::Color([0.4, 0.85, 0.6]))]);
+    b.out_params(&[("fluid", ev("None")), ("grass_tint", Value::Color([0.42, 0.85, 0.45])), ("map_color", Value::Color([0.4, 0.85, 0.6]))]);
     b.g
 }
 
@@ -271,7 +271,7 @@ fn underground_biome(name: &str, base: &str, floor: &str, plants: &[(&str, f32)]
     }
     let gc = b.n("ground_cover", 220.0, 560.0, &gc_params);
     b.l(gc, o, 2);
-    b.out_params(&[("fluid", ev(fluid)), ("fog_color", Value::Color([0.08, 0.08, 0.1])), ("map_color", Value::Color(map))]);
+    b.out_params(&[("fluid", ev(fluid)), ("map_color", Value::Color(map))]);
     b.g
 }
 
@@ -660,11 +660,43 @@ fn world() -> Graph {
     b.l(upper, bands, 0);
     b.l(deep, bands, 1);
     b.l(bands, o, 1);
+    // underground environments: no sky, dark fog, lit by what glows (the Deep: red haze, lava)
+    let dark = |b: &mut B, x: f32, y: f32, tint: [f32; 3]| {
+        let col = |k: f32| Value::Color([tint[0] * k, tint[1] * k, tint[2] * k]);
+        b.n("env_sky", x, y, &[("zenith_day", col(0.02)), ("horizon_day", col(0.03)), ("zenith_dusk", col(0.02)), ("horizon_dusk", col(0.03)), ("zenith_night", col(0.02)), ("horizon_night", col(0.03)), ("ground_day", col(0.02)), ("ground_night", col(0.02)), ("stars", fv(0.0))])
+    };
+    let upper_env = b.n("environment", 260.0, 960.0, &[]);
+    let s = dark(&mut b, 0.0, 960.0, [0.6, 0.8, 1.0]);
+    let f = b.n("env_fog", 0.0, 1000.0, &[("color", Value::Color([0.07, 0.09, 0.11])), ("strength", fv(1.0)), ("density", fv(0.003)), ("height_falloff", fv(0.0)), ("start", fv(24.0))]);
+    let li = b.n("env_light", 0.0, 1040.0, &[("sun", fv(0.0)), ("moon", fv(0.0)), ("sky", fv(0.0)), ("cave", fv(0.035))]);
+    b.l(s, upper_env, 0);
+    b.l(f, upper_env, 1);
+    b.l(li, upper_env, 2);
+    b.l(upper_env, bands, 2);
+    let deep_env = b.n("environment", 260.0, 1100.0, &[]);
+    let s = dark(&mut b, 0.0, 1100.0, [1.0, 0.45, 0.3]);
+    let f = b.n("env_fog", 0.0, 1140.0, &[("color", Value::Color([0.12, 0.05, 0.03])), ("strength", fv(1.0)), ("density", fv(0.003)), ("height_falloff", fv(0.0)), ("start", fv(24.0))]);
+    let li = b.n("env_light", 0.0, 1180.0, &[("sun", fv(0.0)), ("moon", fv(0.0)), ("sky", fv(0.0)), ("cave", fv(0.045))]);
+    let gr = b.n("env_grading", 0.0, 1220.0, &[("tint", Value::Color([1.08, 0.98, 0.92])), ("contrast", fv(1.05))]);
+    b.l(s, deep_env, 0);
+    b.l(f, deep_env, 1);
+    b.l(li, deep_env, 2);
+    b.l(gr, deep_env, 3);
+    b.l(deep_env, bands, 3);
     // sky: y 4000..6200, above the cloud sea
     let sky_z = b.n("zone", 0.0, 800.0, &[("zone", rv("sky"))]);
     let sky = b.n("layer", 520.0, 800.0, &[("kind", ev("Sky")), ("y_min", fv(4000.0)), ("y_max", fv(6200.0)), ("sea_level", fv(-100000.0))]);
     b.l(sky_z, sky, 0);
     b.l(sky, o, 2);
+    // the sky layer: light from below off the cloud sea, thin bright haze
+    let sky_env = b.n("environment", 260.0, 1300.0, &[]);
+    let s = b.n("env_sky", 0.0, 1300.0, &[("ground_day", Value::Color([0.78, 0.82, 0.9])), ("ground_night", Value::Color([0.05, 0.06, 0.09]))]);
+    let f = b.n("env_fog", 0.0, 1340.0, &[("color", Value::Color([0.85, 0.9, 1.0])), ("strength", fv(0.6)), ("density", fv(0.0006))]);
+    let li = b.n("env_light", 0.0, 1380.0, &[("sky", fv(1.15))]);
+    b.l(s, sky_env, 0);
+    b.l(f, sky_env, 1);
+    b.l(li, sky_env, 2);
+    b.l(sky_env, sky, 2);
     // very rare connections between the layers (about one of each per 15 km)
     let sink = b.n("sinkhole", 0.0, 1000.0, &[]);
     let pillar = b.n("sky_pillar", 0.0, 1160.0, &[]);
@@ -958,6 +990,7 @@ pub fn default_project() -> Project {
         ("lava_fields", "Embers", "None"),
     ];
     for g in &mut p.graphs {
+        // a biome's own fog and grading: Fog and Grading nodes on its Environment input
         if let Some(&(_, tint, sat, contrast)) = grading.iter().find(|e| e.0 == g.name)
             && let Some(o) = g.output_node().map(|n| n.id)
         {
@@ -965,6 +998,7 @@ pub fn default_project() -> Project {
             g.set(o, "saturation", fv(sat));
             g.set(o, "contrast", fv(contrast));
         }
+        crate::env::migrate_biome_output(g);
         if let Some(&(_, ambient, precip)) = particles.iter().find(|e| e.0 == g.name)
             && let Some(o) = g.output_node().map(|n| n.id)
         {
@@ -1081,6 +1115,51 @@ mod tests {
         };
         assert!(case("desert").contains(&12.0), "{fun}");
         assert_eq!(case("meadow"), [1.0, 3.0], "{fun}");
+    }
+
+    #[test]
+    fn environments_resolve_per_layer_and_biome() {
+        use crate::env::Env;
+        let p = default_project();
+        let c = compile::compile(&p, &blocks(), &prefabs()).unwrap();
+        assert_eq!(c.env_layers.len(), c.layers.len());
+        assert_eq!((c.env_zones.len(), c.env_biomes.len()), (c.zones.len(), c.biomes.len()));
+        assert!(c.env_world.is_empty() && c.env_layers[0].is_empty(), "the surface keeps the defaults");
+        assert_eq!(c.day_length, 600.0);
+        // the camera's environment: world, then layer, zone and biome
+        let env = |layer: usize, biome: &str| {
+            let b = c.biomes.iter().position(|i| i.name == biome).unwrap();
+            let z = c.zones.iter().position(|z| z.biomes.contains(&(b as u32)) || z.cave_biomes.contains(&(b as u32)));
+            Env::resolve([Some(&c.env_world), c.env_layers.get(layer), z.and_then(|z| c.env_zones.get(z)), c.env_biomes.get(b)])
+        };
+        let meadow = env(0, "meadow");
+        assert_eq!(meadow.light, Env::default().light);
+        assert_eq!(meadow.grade.saturation, 1.08);
+        let desert = env(0, "desert");
+        assert!(desert.fog.color != Env::default().fog.color && desert.fog.density > Env::default().fog.density);
+        // no sun or sky light underground; the Deep is warmer and glows more
+        let (upper, deep) = (env(1, "lush_caves"), env(2, "magma_depths"));
+        assert_eq!((upper.light.sun, upper.light.sky, deep.light.sky), (0.0, 0.0, 0.0));
+        assert!(deep.light.cave > upper.light.cave && deep.fog.color[0] > deep.fog.color[2]);
+        // the sky isles: their own sky, lit from below by the cloud sea
+        let isles = env(3, "floating_isles");
+        assert!(isles.light.sky > 1.0 && isles.sky.ground[0][2] > 0.8);
+    }
+
+    #[test]
+    fn old_biome_fog_moves_to_environment_nodes() {
+        let mut g = meadow();
+        g.name = "old".into();
+        let o = g.output_node().unwrap().id;
+        g.set(o, "fog_color", Value::Color([0.5, 0.4, 0.3]));
+        g.set(o, "fog_density", fv(2.0));
+        g.set(o, "saturation", fv(0.5));
+        assert!(crate::env::migrate_biome_output(&mut g));
+        assert!(!crate::env::migrate_biome_output(&mut g), "a second pass finds nothing to move");
+        let e = crate::env::resolve(&g, o, crate::env::BIOME_ENV_PIN);
+        let fog = e.fog.unwrap();
+        assert_eq!((fog.color, fog.density), ([0.5, 0.4, 0.3], 0.0024));
+        assert_eq!(e.grade.unwrap().saturation, 0.5);
     }
 
     #[test]

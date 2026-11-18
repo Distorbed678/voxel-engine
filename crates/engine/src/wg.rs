@@ -368,7 +368,7 @@ impl WorldgenSystem {
             let zi = zone_of.get(&b.name).copied().unwrap_or(0);
             let zc = self.compiled.zones.get(zi).map(|z| z.map_color).unwrap_or([1.0; 3]);
             t[i] = GpuBiome {
-                grass: [b.grass_tint[0], b.grass_tint[1], b.grass_tint[2], b.fog_density],
+                grass: [b.grass_tint[0], b.grass_tint[1], b.grass_tint[2], 1.0],
                 foliage: [b.foliage_tint[0], b.foliage_tint[1], b.foliage_tint[2], zi as f32],
                 water: [b.water_tint[0], b.water_tint[1], b.water_tint[2], 1.0],
                 map: [b.map_color[0], b.map_color[1], b.map_color[2], 1.0],

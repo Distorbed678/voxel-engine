@@ -106,3 +106,9 @@ fn blocks() {
 fn props() {
     run("props");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn environment() {
+    run("environment");
+}

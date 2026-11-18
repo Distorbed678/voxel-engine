@@ -8,17 +8,12 @@
             pos: (2970.0, 0.0),
             params: {
                 "ambient": E("None"),
-                "contrast": F(1.0),
                 "fluid": E("Water"),
-                "fog_color": Color((0.75, 0.82, 0.9)),
-                "fog_density": F(1.0),
                 "foliage_tint": Color((0.3, 0.5, 0.35)),
-                "grade_tint": Color((0.95, 1.0, 1.04)),
                 "grass_tint": Color((0.45, 0.62, 0.45)),
                 "map_color": Color((0.3, 0.5, 0.4)),
                 "particle_density": F(1.0),
                 "precipitation": E("Snow"),
-                "saturation": F(0.92),
                 "water_tint": Color((0.15, 0.35, 0.65)),
             },
             comment: "",
@@ -51,7 +46,7 @@
         (
             id: 4,
             kind: "block",
-            pos: (0.0, 203.5),
+            pos: (0.0, 502.0),
             params: {
                 "block": Block("stone"),
             },
@@ -60,7 +55,7 @@
         (
             id: 5,
             kind: "block",
-            pos: (0.0, 316.5),
+            pos: (0.0, 615.0),
             params: {
                 "block": Block("deepslate"),
             },
@@ -69,7 +64,7 @@
         (
             id: 6,
             kind: "height_select",
-            pos: (330.0, 203.5),
+            pos: (330.0, 502.0),
             params: {
                 "height": F(-32.0),
                 "noise_amount": F(6.0),
@@ -79,7 +74,7 @@
         (
             id: 7,
             kind: "simplex2d",
-            pos: (0.0, 429.5),
+            pos: (0.0, 728.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -93,7 +88,7 @@
         (
             id: 8,
             kind: "ore",
-            pos: (660.0, 203.5),
+            pos: (660.0, 502.0),
             params: {
                 "ore": Block("coal_ore"),
                 "rarity": F(0.78),
@@ -108,7 +103,7 @@
         (
             id: 9,
             kind: "ore",
-            pos: (990.0, 203.5),
+            pos: (990.0, 502.0),
             params: {
                 "ore": Block("iron_ore"),
                 "rarity": F(0.82),
@@ -123,7 +118,7 @@
         (
             id: 10,
             kind: "ore",
-            pos: (1320.0, 203.5),
+            pos: (1320.0, 502.0),
             params: {
                 "ore": Block("copper_ore"),
                 "rarity": F(0.84),
@@ -138,7 +133,7 @@
         (
             id: 11,
             kind: "ore",
-            pos: (1650.0, 203.5),
+            pos: (1650.0, 502.0),
             params: {
                 "ore": Block("gold_ore"),
                 "rarity": F(0.86),
@@ -153,7 +148,7 @@
         (
             id: 12,
             kind: "surface_layers",
-            pos: (1980.0, 203.5),
+            pos: (1980.0, 502.0),
             params: {
                 "base": Block("stone"),
                 "beach_height": F(2.0),
@@ -169,7 +164,7 @@
         (
             id: 13,
             kind: "block",
-            pos: (1980.0, 497.5),
+            pos: (1980.0, 796.0),
             params: {
                 "block": Block("podzol"),
             },
@@ -178,7 +173,7 @@
         (
             id: 14,
             kind: "simplex2d",
-            pos: (1980.0, 610.5),
+            pos: (1980.0, 909.0),
             params: {
                 "amplitude": F(1.0),
                 "gain": F(0.5),
@@ -192,7 +187,7 @@
         (
             id: 15,
             kind: "noise_select",
-            pos: (2310.0, 228.0),
+            pos: (2310.0, 615.0),
             params: {
                 "threshold": F(0.35),
             },
@@ -201,7 +196,7 @@
         (
             id: 16,
             kind: "depth_select",
-            pos: (2640.0, 179.0),
+            pos: (2640.0, 389.0),
             params: {
                 "depth": F(1.0),
             },
@@ -210,7 +205,7 @@
         (
             id: 17,
             kind: "ground_cover",
-            pos: (2640.0, 332.0),
+            pos: (2640.0, 542.0),
             params: {
                 "chance": F(0.18),
                 "on": Block("snowy_grass"),
@@ -229,7 +224,7 @@
         (
             id: 18,
             kind: "prop",
-            pos: (2310.0, 695.0),
+            pos: (2310.0, 905.0),
             params: {
                 "prop": Ref("spruce"),
             },
@@ -238,7 +233,7 @@
         (
             id: 19,
             kind: "scatter",
-            pos: (2640.0, 695.0),
+            pos: (2640.0, 905.0),
             params: {
                 "any_surface": B(true),
                 "chance": F(0.6),
@@ -255,7 +250,7 @@
         (
             id: 20,
             kind: "prop",
-            pos: (2310.0, 1032.0),
+            pos: (2310.0, 1242.0),
             params: {
                 "prop": Ref("geode"),
             },
@@ -264,7 +259,7 @@
         (
             id: 21,
             kind: "scatter",
-            pos: (2640.0, 1032.0),
+            pos: (2640.0, 1242.0),
             params: {
                 "any_surface": B(false),
                 "chance": F(0.5),
@@ -276,6 +271,38 @@
                 "y_max": F(20.0),
                 "y_min": F(-100.0),
             },
+            comment: "",
+        ),
+        (
+            id: 22,
+            kind: "env_fog",
+            pos: (2310.0, 228.0),
+            params: {
+                "color": Color((0.75, 0.82, 0.9)),
+                "density": F(0.0012),
+                "height_falloff": F(0.012),
+                "start": F(32.0),
+                "strength": F(0.55),
+            },
+            comment: "",
+        ),
+        (
+            id: 23,
+            kind: "env_grading",
+            pos: (2310.0, 433.0),
+            params: {
+                "contrast": F(1.0),
+                "exposure": F(1.0),
+                "saturation": F(0.92),
+                "tint": Color((0.95, 1.0, 1.04)),
+            },
+            comment: "",
+        ),
+        (
+            id: 24,
+            kind: "environment",
+            pos: (2640.0, 179.0),
+            params: {},
             comment: "",
         ),
     ],
@@ -406,6 +433,24 @@
             to_node: 1,
             to_pin: 4,
         ),
+        (
+            from_node: 22,
+            from_pin: 0,
+            to_node: 24,
+            to_pin: 0,
+        ),
+        (
+            from_node: 23,
+            from_pin: 0,
+            to_node: 24,
+            to_pin: 1,
+        ),
+        (
+            from_node: 24,
+            from_pin: 0,
+            to_node: 1,
+            to_pin: 13,
+        ),
     ],
-    next_id: 22,
+    next_id: 25,
 )
