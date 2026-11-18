@@ -1,0 +1,32 @@
+# The world generator's interpreter (worldgen::vm): it generates exactly the blocks the compiled
+# shaders do, and a structural edit applies through it at once, while the edited layer's
+# pipelines build in the background.
+ui off
+anim 12
+time 0.36
+pos 144 136 -368
+settle
+
+# the same blocks, chunk by chunk (aprons included): the forest surface, the caves under it, the
+# upper caves, the Deep, a sky island, a sinkhole crossing the surface/underground boundary
+check_interp 4 3 -12
+check_interp 4 2 -12
+check_interp 4 1 -12
+check_interp 4 0 -12
+check_interp 0 -16 0
+check_interp 0 -94 0
+check_interp 1 150 2
+check_interp -103 -5 227
+check_interp -103 -4 227
+
+# a structural edit (a block in the generated code): snow on the oak forest's ground, through the
+# interpreter while the build is held back, then compiled; the same picture both times
+look 90 4
+interp_hold on
+graph_set biome oak_forest surface_layers top snow
+settle
+expect_image crates/engine/tests/golden/interp_edit.png
+interp_hold off
+settle
+expect_image crates/engine/tests/golden/interp_edit.png
+check_interp 4 2 -12

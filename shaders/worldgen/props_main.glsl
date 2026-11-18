@@ -98,9 +98,15 @@ void main() {
                 if (geode && (float(a.y) < L.yMin || float(a.y) > L.yMax || a.y + Ri < rmin.y || a.y - Ri >= rmax.y)) continue;
                 WgColumn col;
                 wg_column(vec2(a.xz) + 0.5, col);
+#ifdef WG_INTERPRETER
+                // the interpreter keeps columns to itself
+                if (wg_col_biome(col) != L.biome || (!geode && wg_col_weight(col) < 0.55)) continue;
+#else
+                // (not through wg_col_*: the NVIDIA driver's first compile of the quick tier hung)
                 if (col.biome[0] != L.biome || (!geode && col.bw[0] < 0.55)) continue;
+#endif
                 if (L.hasMask) {
-                    float m = prop_mask(layer, vec3(float(a.x) + 0.5, 64.0, float(a.z) + 0.5), col.h[0]);
+                    float m = prop_mask(layer, vec3(float(a.x) + 0.5, 64.0, float(a.z) + 0.5), col);
                     if (r >= L.chance * clamp(m, 0.0, 1.0)) continue;
                 }
                 if (geode) {

@@ -70,13 +70,16 @@ pub struct PipelineManager {
     pub reload_count: u32,
 }
 
-/// Prop graph building (props pass): one thread runs it once per placed instance, so the quick
-/// tier keeps it out of line. (The optimised tier inlines it too: out of line, the NVIDIA driver
-/// compile took 30 s instead of 9.5 s.) The per-cell evaluation (`prop_eval`) is hot.
+/// Functions the world generator's interpreter pipelines (`worldgen_vm_*`) keep out of line:
+/// prop building (once per placed instance), the helpers its natives call, and its own loop and
+/// native dispatch (inlined into every API function, the build took 84 s instead of 4).
+/// The generator's own pipelines are fully inlined: a quick tier with these functions out of line
+/// built ~3x faster, but the NVIDIA driver miscompiled it again and again.
 pub fn worldgen_cold(name: &str) -> bool {
     // (not the transform helpers xf_* / rot_*: with them and the build functions both out of line,
     // the NVIDIA driver miscompiled the quick tier and lost parts of props)
-    const PREFIXES: &[&str] = &["prop_build", "tree_", "pb_", "sk_", "leaf_cluster", "quat_from_mat", "orient_column", "any_perp"];
+    // (and the interpreter's loop and native dispatch: called from every API function)
+    const PREFIXES: &[&str] = &["prop_build", "tree_", "pb_", "sk_", "leaf_cluster", "quat_from_mat", "orient_column", "any_perp", "vm_run", "vm_native"];
     if PREFIXES.iter().any(|p| name.starts_with(p)) {
         return true;
     }
@@ -84,10 +87,31 @@ pub fn worldgen_cold(name: &str) -> bool {
     name.strip_prefix("prop").and_then(|r| r.split('_').next()).is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// Functions of the generated world generator that should stay out-of-line (compile time).
+/// SPIR-V passes of the world generator's pipelines (`name` is the source's name):
+/// - generator and interpreter: no fused multiply-adds, so both round every operation alike and
+///   generate the same blocks (`VE_CONTRACT` set: allow them, for measuring);
+/// - interpreter: its loop, native dispatch and helpers out of line (`worldgen_cold`).
+pub fn worldgen_spirv(name: &str, spirv: &mut Vec<u32>) {
+    if !name.starts_with("worldgen_") {
+        return;
+    }
+    if std::env::var("VE_CONTRACT").is_err() {
+        vkcore::shader::spirv_no_contraction(spirv);
+    }
+    if name.starts_with("worldgen_vm_") {
+        vkcore::shader::spirv_dont_inline(spirv, worldgen_noinline);
+    }
+}
+
+/// Functions the interpreter pipelines keep out of line (see `worldgen_cold`).
 pub fn worldgen_noinline(name: &str) -> bool {
     if worldgen_cold(name) {
         return true;
+    }
+    // the column accessors are trivial; out of line, the NVIDIA driver miscompiled the quick
+    // tier's props pass into an endless loop (Xid 109)
+    if name.starts_with("wg_col_") {
+        return false;
     }
     // Tier-1 ("quick") builds keep every sizeable function out of line: ~3x faster driver
     // compile, ~5x slower generation. The tier-2 build inlines everything and replaces it.
@@ -146,9 +170,7 @@ impl PipelineManager {
             PipelineSource::ComputeSource { name: n, source, defines } => {
                 let t0 = std::time::Instant::now();
                 let mut out = self.compiler.compile_source(n, source, ShaderKind::Compute, &defines_ref(defines))?;
-                if n.starts_with("worldgen_") && std::env::var("VE_INLINE_ALL").is_err() {
-                    vkcore::shader::spirv_dont_inline(&mut out.spirv, worldgen_noinline);
-                }
+                worldgen_spirv(n, &mut out.spirv);
                 let t1 = t0.elapsed().as_secs_f32() * 1000.0;
                 let p = pipeline::compute(ctx, self.layout, &out.spirv, name)?;
                 log::debug!("{name}: glsl->spirv {t1:.0} ms ({} words), pipeline {:.0} ms", out.spirv.len(), t0.elapsed().as_secs_f32() * 1000.0 - t1);
@@ -199,9 +221,7 @@ impl PipelineManager {
                 anyhow::bail!("{name}: create_sources_parallel takes ComputeSource pipelines");
             };
             let mut out = self.compiler.compile_source(n, src, ShaderKind::Compute, &defines_ref(defines))?;
-            if n.starts_with("worldgen_") && std::env::var("VE_INLINE_ALL").is_err() {
-                vkcore::shader::spirv_dont_inline(&mut out.spirv, worldgen_noinline);
-            }
+            worldgen_spirv(n, &mut out.spirv);
             spirvs.push(out);
         }
         let layout = self.layout;

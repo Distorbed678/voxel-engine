@@ -25,5 +25,9 @@ void main() {
     for (float y = pc.ownMax; y > pc.ownMin; y -= step) {
         if (wg_density(vec3(xz.x, y, xz.y), c) > 0.0) { h = y; break; }
     }
+#ifdef WG_INTERPRETER
+    pout.r[i] = uvec4(wg_main_biome(c) | ((wg_col_zone(c, 0u) + ZONE_BASE) << 16), floatBitsToUint(wg_col_weight(c)), wg_col_zone(c, 1u) + ZONE_BASE, floatBitsToUint(h));
+#else
     pout.r[i] = uvec4((c.biome[0] + BIOME_BASE) | ((c.zone0 + ZONE_BASE) << 16), floatBitsToUint(c.bw[0]), c.zone1 + ZONE_BASE, floatBitsToUint(h));
+#endif
 }

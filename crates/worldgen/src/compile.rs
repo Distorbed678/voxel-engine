@@ -361,6 +361,18 @@ impl<'s, 'a> Em<'s, 'a> {
         format!("P({i}u)")
     }
 
+    /// `1 / (param * k)` as a live parameter of its own (computed here, on the CPU): positions
+    /// are scaled by multiplying, never dividing. The GPU's division isn't correctly rounded, and
+    /// noise flips at exact lattice ties, so `p / size` would differ by a bit between the compiled
+    /// shaders and the interpreter (`vm`); a multiply is exact in both.
+    fn pinv(&mut self, node: &Node, name: &str, k: f32) -> String {
+        let v = self.value(node, name).as_f32() * k;
+        let inv = if v != 0.0 { 1.0 / v } else { 0.0 };
+        let key = self.key(node.id, &format!("{name}#inv{k}"));
+        let i = self.sh.params.push(key, inv);
+        format!("P({i}u)")
+    }
+
     fn pu(&mut self, node: &Node, name: &str) -> String {
         format!("uint({})", self.p(node, name))
     }
@@ -454,13 +466,13 @@ impl<'s, 'a> Em<'s, 'a> {
 
     fn noise_expr(&mut self, n: &Node, func: &str, dims3: bool, ctx: usize) -> String {
         let pos = self.pos(ctx);
-        let size = self.p(n, "size");
+        let size = self.pinv(n, "size", 1.0);
         let oct = self.p(n, "octaves");
         let lac = self.p(n, "lacunarity");
         let gain = self.p(n, "gain");
         let amp = self.p(n, "amplitude");
         let seed = self.pu(n, "seed");
-        let arg = if dims3 { format!("{pos} / {size}") } else { format!("{pos}.xz / {size}") };
+        let arg = if dims3 { format!("{pos} * {size}") } else { format!("{pos}.xz * {size}") };
         format!("{func}({arg}, gSeed + {seed} * 7919u + {}u, int({oct}), {lac}, {gain}) * {amp}", n.id)
     }
 
@@ -514,15 +526,15 @@ impl<'s, 'a> Em<'s, 'a> {
             }
             "worley2d" | "worley3d" => {
                 let three = n.kind == "worley3d";
-                let size = self.p(&n, "size");
+                let size = self.pinv(&n, "size", 1.0);
                 let jit = self.p(&n, "jitter");
                 let amp = self.p(&n, "amplitude");
                 let seed = self.pu(&n, "seed");
                 let mode = ["w.x", "w.y", "(w.y - w.x)", "w.z"][self.enum_idx(&n, "mode")];
                 let call = if three {
-                    format!("worley3({pos} / {size}, gSeed + {seed} * 7919u + {}u, {jit})", n.id)
+                    format!("worley3({pos} * {size}, gSeed + {seed} * 7919u + {}u, {jit})", n.id)
                 } else {
-                    format!("worley2({pos}.xz / {size}, gSeed + {seed} * 7919u + {}u, {jit})", n.id)
+                    format!("worley2({pos}.xz * {size}, gSeed + {seed} * 7919u + {}u, {jit})", n.id)
                 };
                 let w = self.var("vec3", call, !three && self.ctx_2d(ctx));
                 if three
@@ -828,11 +840,11 @@ impl<'s, 'a> Em<'s, 'a> {
                 let base = mat_in(self, 0, "B_STONE");
                 let ore = self.block(&n, "ore");
                 let rep = self.block(&n, "replace");
-                let (sz, r, y0, y1) = (self.p(&n, "size"), self.p(&n, "rarity"), self.p(&n, "y_min"), self.p(&n, "y_max"));
+                let (sz, r, y0, y1) = (self.pinv(&n, "size", 1.0), self.p(&n, "rarity"), self.p(&n, "y_min"), self.p(&n, "y_max"));
                 let seed = self.pu(&n, "seed");
                 let b = self.var("uint", base, false);
                 format!(
-                    "(({0} == {rep} && p.y >= {y0} && p.y <= {y1} && simplex3(p / {sz}, gSeed + {seed} * 7919u + {1}u) > {r}) ? {ore} : {0})",
+                    "(({0} == {rep} && p.y >= {y0} && p.y <= {y1} && simplex3(p * {sz}, gSeed + {seed} * 7919u + {1}u) > {r}) ? {ore} : {0})",
                     b.e, n.id
                 )
             }
@@ -1280,10 +1292,11 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
                     entries.push((0, "1.0".into()));
                 }
                 let (cs, ji, bl, wa) = (em.p(&n, "cell_size"), em.p(&n, "jitter"), em.p(&n, "blend"), em.p(&n, "warp"));
+                let (inv, inv6) = (em.pinv(&n, "cell_size", 1.0), em.pinv(&n, "cell_size", 0.6));
                 let seed = em.pu(&n, "seed");
                 let _ = writeln!(f, "    uint seed = gSeed + {seed} * 7919u + {}u;", n.id * 31 + zi as u32);
-                let _ = writeln!(f, "    vec2 q = xz + vec2(fbm2(xz / ({cs} * 0.6), seed + 11u, 3, 2.0, 0.5), fbm2(xz / ({cs} * 0.6), seed + 12u, 3, 2.0, 0.5)) * {wa};");
-                let _ = writeln!(f, "    ivec2 c1, c2; float d1, d2;\n    voronoi2(q / {cs}, {ji}, seed, c1, c2, d1, d2);");
+                let _ = writeln!(f, "    vec2 q = xz + vec2(fbm2(xz * {inv6}, seed + 11u, 3, 2.0, 0.5), fbm2(xz * {inv6}, seed + 12u, 3, 2.0, 0.5)) * {wa};");
+                let _ = writeln!(f, "    ivec2 c1, c2; float d1, d2;\n    voronoi2(q * {inv}, {ji}, seed, c1, c2, d1, d2);");
                 let total = entries.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>().join(" + ");
                 let mut pick = format!("    float tot = max({total}, 1e-4);\n");
                 for (k, cell) in ["c1", "c2"].iter().enumerate() {
@@ -1341,15 +1354,15 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
                     em.warn("Cave Biome Select has no biomes connected".into());
                     cf.push_str("    return NO_CAVE_BIOME;\n");
                 } else {
-                    let (cs, wa) = (em.p(&n, "cell_size"), em.p(&n, "warp"));
+                    let (wa, inv, inv5) = (em.p(&n, "warp"), em.pinv(&n, "cell_size", 1.0), em.pinv(&n, "cell_size", 0.5));
                     let seed = em.pu(&n, "seed");
                     let _ = writeln!(cf, "    uint seed = gSeed + {seed} * 7919u + {}u;", n.id * 37 + zi as u32);
                     let _ = writeln!(
                         cf,
-                        "    vec3 q = p + vec3(fbm3(p / ({cs} * 0.5), seed + 1u, 2, 2.0, 0.5), fbm3(p / ({cs} * 0.5), seed + 2u, 2, 2.0, 0.5), fbm3(p / ({cs} * 0.5), seed + 3u, 2, 2.0, 0.5)) * {wa};"
+                        "    vec3 q = p + vec3(fbm3(p * {inv5}, seed + 1u, 2, 2.0, 0.5), fbm3(p * {inv5}, seed + 2u, 2, 2.0, 0.5), fbm3(p * {inv5}, seed + 3u, 2, 2.0, 0.5)) * {wa};"
                     );
                     let total = entries.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>().join(" + ");
-                    let _ = writeln!(cf, "    float r = rand3(ivec3(floor(q / {cs})), seed) * max({total}, 1e-4);");
+                    let _ = writeln!(cf, "    float r = rand3(ivec3(floor(q * {inv})), seed) * max({total}, 1e-4);");
                     let mut acc = String::from("0.0");
                     for (id, w) in &entries {
                         acc = format!("{acc} + {w}");
@@ -1437,10 +1450,11 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
                             entries.push((0, "1.0".into()));
                         }
                         let (cs, ji, bl, wa) = (em.p(&n, "cell_size"), em.p(&n, "jitter"), em.p(&n, "blend"), em.p(&n, "warp"));
+                        let (inv, inv5) = (em.pinv(&n, "cell_size", 1.0), em.pinv(&n, "cell_size", 0.5));
                         let seed = em.pu(&n, "seed");
                         let _ = writeln!(world_code, "    uint seed = gSeed + {seed} * 7919u + 977u;");
-                        let _ = writeln!(world_code, "    vec2 q = xz + vec2(fbm2(xz / ({cs} * 0.5), seed + 1u, 4, 2.0, 0.5), fbm2(xz / ({cs} * 0.5), seed + 2u, 4, 2.0, 0.5)) * {wa};");
-                        let _ = writeln!(world_code, "    ivec2 c1, c2; float d1, d2;\n    voronoi2(q / {cs}, {ji}, seed, c1, c2, d1, d2);");
+                        let _ = writeln!(world_code, "    vec2 q = xz + vec2(fbm2(xz * {inv5}, seed + 1u, 4, 2.0, 0.5), fbm2(xz * {inv5}, seed + 2u, 4, 2.0, 0.5)) * {wa};");
+                        let _ = writeln!(world_code, "    ivec2 c1, c2; float d1, d2;\n    voronoi2(q * {inv}, {ji}, seed, c1, c2, d1, d2);");
                         let total = entries.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>().join(" + ");
                         let _ = writeln!(world_code, "    float tot = max({total}, 1e-4);");
                         for (k, cell) in ["c1", "c2"].iter().enumerate() {
@@ -1633,7 +1647,11 @@ uint wg_pick(vec3 p, in WgColumn c) {{
     for (uint k = 0u; k < c.nb; ++k) {{ acc += c.bw[k]; if (r < acc) return k; }}
     return 0u;
 }}
-uint wg_main_biome(in WgColumn c) {{ return c.biome[0] + BIOME_BASE; }}"#
+uint wg_main_biome(in WgColumn c) {{ return c.biome[0] + BIOME_BASE; }}
+// what the main templates read of a column (the interpreter keeps columns to itself)
+uint wg_col_biome(in WgColumn c) {{ return c.biome[0]; }}
+float wg_col_weight(in WgColumn c) {{ return c.bw[0]; }}
+uint wg_col_zone(in WgColumn c, uint k) {{ return k == 0u ? c.zone0 : c.zone1; }}"#
     );
     // the deepest material threshold in a column (2.5: the river bed; cave materials count
     // everywhere), read live so slider edits stay exact
@@ -1698,10 +1716,10 @@ uint wg_main_biome(in WgColumn c) {{ return c.biome[0] + BIOME_BASE; }}"#
         let _ = writeln!(s, "        case {i}u: L.biome = {}u; {} break;", l.biome, l.desc);
     }
     let _ = writeln!(s, "        default: break;\n    }}\n}}");
-    let _ = writeln!(s, "float prop_mask(uint i, vec3 p, in float h[MAXH]) {{\n    switch (i) {{");
+    let _ = writeln!(s, "float prop_mask(uint i, vec3 p, in WgColumn c) {{\n    switch (i) {{");
     for (i, l) in prop_layers.iter().enumerate() {
         if let Some(m) = &l.mask_fn {
-            let _ = writeln!(s, "        case {i}u: return {m}(p, h);");
+            let _ = writeln!(s, "        case {i}u: return {m}(p, c.h[0]);");
         }
     }
     let _ = writeln!(s, "        default: return 1.0;\n    }}\n}}");

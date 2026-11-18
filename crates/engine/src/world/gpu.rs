@@ -140,6 +140,8 @@ pub struct GenPush {
     /// solo preview zone and biome (global ids, -1 = off)
     pub solo_zone: f32,
     pub solo_biome: f32,
+    /// the interpreter's program (interpreter pipelines only)
+    pub vm_program: u64,
 }
 
 /// One generator layer: its passes, its block of parameters and the cell heights it owns,
@@ -150,6 +152,8 @@ pub struct LayerPass {
     pub props: vk::Pipeline,
     pub param_base: u32,
     pub own: (f32, f32),
+    /// the layer's interpreter program when `terrain`/`props` are the interpreter (0: compiled)
+    pub vm_program: u64,
 }
 
 impl LayerPass {
@@ -604,6 +608,7 @@ impl WorldGpu {
             own_max: if g < nl { layers[g].own.1.min(1.0e30) } else { 1.0e30 },
             solo_zone: self.solo[0],
             solo_biome: self.solo[1],
+            vm_program: layers[g % nl].vm_program,
         };
         // terrain: the groups write disjoint cells, so they run back to back
         for g in (0..lists.len()).filter(|&g| !lists[g].is_empty()) {

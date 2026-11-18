@@ -7,8 +7,10 @@
 //! Change flow:
 //!   graph edited -> `mark_dirty()` -> next frame `update()` runs the (fast, CPU) graph compiler
 //!     * same GLSL as running   -> only the parameter buffer changes -> regenerate chunks now
-//!     * different GLSL         -> background thread: shaderc + vkCreateComputePipelines for the
-//!                                 changed layers -> swap pipelines -> regenerate chunks
+//!     * different GLSL         -> the interpreter (`worldgen::vm`) runs the changed layers at
+//!                                 once; a background thread builds their pipelines (shaderc +
+//!                                 vkCreateComputePipelines, fully inlined) -> swap pipelines ->
+//!                                 regenerate chunks
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -44,8 +46,6 @@ struct Job {
     id: u64,
     /// the layers to build: (layer index, sources of its passes)
     layers: Vec<(usize, [String; 3])>,
-    /// skip the quick tier and go straight to the optimised build
-    optimized_only: bool,
 }
 
 /// A layer's built passes (terrain, props, probe) and their sources.
@@ -57,8 +57,6 @@ pub struct BuiltLayer {
 
 pub struct BuiltPipelines {
     pub id: u64,
-    /// fully inlined (fast generation) build; quick builds are followed by an optimised one
-    pub optimized: bool,
     pub layers: Vec<BuiltLayer>,
     pub deps: Vec<PathBuf>,
     pub ms: f32,
@@ -74,7 +72,27 @@ impl BuiltPipelines {
     }
 }
 
+/// The interpreter (`worldgen::vm`): the shader library it calls into, the interpreter passes'
+/// sources and each layer's program.
+pub struct VmState {
+    pub lib: Option<worldgen::vm::Library>,
+    /// interpreter passes: terrain, props, probe
+    pub sources: Option<[String; 3]>,
+    /// per layer: its bytecode (None if it didn't compile: the layer waits for its build)
+    pub programs: Vec<Option<worldgen::vm::Program>>,
+    /// bumped whenever a program changes (the engine re-uploads them)
+    pub revision: u64,
+    pub error: Option<String>,
+}
+
+/// The interpreter passes' sources around the generated interpreter (`vm::glsl`).
+pub fn compose_vm_source(vm: &str) -> [String; 3] {
+    let wrap = |main: &str, defines: &str| format!("#version 460\n#define WG_INTERPRETER\n{defines}#include \"worldgen/prelude.glsl\"\n{vm}\n// ---- main ----\n#include \"{main}\"\n");
+    [wrap("worldgen/terrain_main.glsl", ""), wrap("worldgen/props_main.glsl", "#define PROPS_PASS\n"), wrap("worldgen/probe_main.glsl", "")]
+}
+
 pub struct WorldgenSystem {
+    pub vm: VmState,
     pub project: Project,
     pub dir: PathBuf,
     pub compiled: Compiled,
@@ -84,7 +102,6 @@ pub struct WorldgenSystem {
     pending: Option<Vec<String>>,
     next_id: u64,
     pending_id: Option<u64>,
-    optimizing_id: Option<u64>,
     tx: Sender<Job>,
     rx: Receiver<std::result::Result<BuiltPipelines, (u64, String)>>,
     /// The background shader build thread (joined on destroy: it uses the device).
@@ -105,6 +122,8 @@ pub struct WorldgenSystem {
     last_change: Instant,
     pub autosave: bool,
     pub revision: u64,
+    /// hold finished pipeline builds back (scripts: `interp_hold`), so the interpreter runs on
+    pub hold: bool,
 }
 
 impl WorldgenSystem {
@@ -160,8 +179,10 @@ impl WorldgenSystem {
                     while let Ok(newer) = job_rx.try_recv() {
                         job = newer;
                     }
-                    let tiers: &[bool] = if job.optimized_only { &[true] } else { &[false, true] };
-                    for &optimized in tiers {
+                    // One tier, fully inlined. (A quick tier with the big functions out of line built
+                    // ~3x faster, but the NVIDIA driver miscompiled it again and again: lost prop
+                    // parts, endless loops, corrupted memory. The interpreter covers the wait.)
+                    {
                         if thread_stop.load(Ordering::Relaxed) {
                             return;
                         }
@@ -172,9 +193,7 @@ impl WorldgenSystem {
                             for (_, sources) in &job.layers {
                                 for (name, src) in PASS_NAMES.iter().zip(sources) {
                                     let mut out = compiler.compile_source(&format!("{name}.comp"), src, ShaderKind::Compute, &[])?;
-                                    if !optimized {
-                                        vkcore::shader::spirv_dont_inline(&mut out.spirv, crate::shaders::worldgen_noinline);
-                                    }
+                                    crate::shaders::worldgen_spirv(name, &mut out.spirv);
                                     deps.extend(out.deps);
                                     spirv.push(out.spirv);
                                 }
@@ -204,34 +223,44 @@ impl WorldgenSystem {
                                 })
                                 .collect();
                             log::info!(
-                                "{} generator ({} layer(s)): GLSL -> SPIR-V {:.0} ms, driver {:.0} ms",
-                                if optimized { "optimised" } else { "quick" },
+                                "generator ({} layer(s)): GLSL -> SPIR-V {:.0} ms, driver {:.0} ms",
                                 job.layers.len(),
                                 t_glsl,
                                 t0.elapsed().as_secs_f32() * 1000.0 - t_glsl
                             );
                             deps.sort();
                             deps.dedup();
-                            Ok(BuiltPipelines { id: job.id, optimized, layers, deps, ms: t0.elapsed().as_secs_f32() * 1000.0 })
+                            Ok(BuiltPipelines { id: job.id, layers, deps, ms: t0.elapsed().as_secs_f32() * 1000.0 })
                         };
                         let msg = build().map_err(|e| (job.id, format!("{e:#}")));
-                        let failed = msg.is_err();
                         if res_tx.send(msg).is_err() {
                             return;
                         }
-                        // a newer edit arrived: don't waste time optimising this one
-                        if failed {
-                            break;
-                        }
                         if let Ok(newer) = job_rx.try_recv() {
                             carry = Some(newer);
-                            break;
                         }
                     }
                 }
             })?;
         let biome_table = Buffer::upload(ctx, "biome_table", (MAX_BIOMES * std::mem::size_of::<GpuBiome>()) as u64)?;
+        // the interpreter: the shader library it calls into
+        let vm_lib = (|| -> Result<worldgen::vm::Library> {
+            let texts: Vec<(String, String)> = worldgen::vm::LIBRARY_FILES
+                .iter()
+                .map(|(p, _)| Ok((p.to_string(), std::fs::read_to_string(shader_root.join(p))?)))
+                .collect::<Result<_>>()?;
+            let refs: Vec<(&str, &str)> = texts.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+            worldgen::vm::Library::new(&refs)
+        })();
+        let (vm_lib, vm_sources, vm_error) = match vm_lib.and_then(|l| worldgen::vm::glsl::interpreter_source(&l).map(|s| (l, s))) {
+            Ok((l, s)) => (Some(l), Some(compose_vm_source(&s)), None),
+            Err(e) => {
+                log::warn!("world generator interpreter unavailable: {e:#}");
+                (None, None, Some(format!("{e:#}")))
+            }
+        };
         let mut s = Self {
+            vm: VmState { lib: vm_lib, sources: vm_sources, programs: Vec::new(), revision: 0, error: vm_error },
             project,
             dir,
             compiled: Compiled::default(),
@@ -239,7 +268,6 @@ impl WorldgenSystem {
             pending: None,
             next_id: 1,
             pending_id: None,
-            optimizing_id: None,
             tx,
             rx,
             thread: Some(thread),
@@ -261,6 +289,7 @@ impl WorldgenSystem {
             last_change: Instant::now(),
             autosave: true,
             revision: 0,
+            hold: false,
         };
         if let Err(e) = s.recompile_cpu() {
             // e.g. a generator saved before layers existed
@@ -295,6 +324,27 @@ impl WorldgenSystem {
             l.source = format!("{}\n{}", self.blocks_header, l.source);
         }
         c.source = c.layers.iter().map(|l| l.source.as_str()).collect();
+        // the interpreter's programs (bytecode changes only with the code)
+        if let Some(lib) = &self.vm.lib {
+            let old: Vec<&str> = self.compiled.layers.iter().map(|l| l.source.as_str()).collect();
+            let same = old.len() == c.layers.len() && old.iter().zip(&c.layers).all(|(a, b)| *a == b.source) && self.vm.programs.len() == c.layers.len();
+            if !same {
+                let t1 = Instant::now();
+                self.vm.programs = c
+                    .layers
+                    .iter()
+                    .map(|l| match worldgen::vm::compile_program(lib, &l.source) {
+                        Ok(p) => Some(p),
+                        Err(e) => {
+                            log::warn!("layer {}: the interpreter can't run it: {e:#}", l.name);
+                            None
+                        }
+                    })
+                    .collect();
+                self.vm.revision += 1;
+                log::debug!("interpreter programs in {:.1} ms", t1.elapsed().as_secs_f32() * 1000.0);
+            }
+        }
         self.last_compile_ms = t0.elapsed().as_secs_f32() * 1000.0;
         self.compiled = c;
         self.write_biome_table();
@@ -343,6 +393,16 @@ impl WorldgenSystem {
         self.pending.is_none() && self.active == self.layer_sources()
     }
 
+    /// Whether layer `i`'s running pipelines were built from its current code.
+    pub fn layer_current(&self, i: usize) -> bool {
+        self.compiled.layers.get(i).is_some_and(|l| self.active.get(i) == Some(&l.source))
+    }
+
+    /// Whether every layer whose pipelines are out of date can run in the interpreter.
+    pub fn interpreter_covers(&self) -> bool {
+        self.vm.lib.is_some() && (0..self.compiled.layers.len()).all(|i| self.layer_current(i) || self.vm.programs.get(i).is_some_and(|p| p.is_some()))
+    }
+
     /// Call once per frame. Returns (params_changed, finished builds as (is_current, pipelines)).
     pub fn update(&mut self) -> (bool, Vec<(bool, BuiltPipelines)>) {
         let mut params_changed = false;
@@ -367,7 +427,6 @@ impl WorldgenSystem {
                             .collect();
                         let id = self.next_id;
                         self.next_id += 1;
-                        self.optimizing_id = None;
                         if changed.is_empty() {
                             // back to what's running (an edit undone, or layers removed)
                             self.pending_id = None;
@@ -376,7 +435,7 @@ impl WorldgenSystem {
                         } else {
                             self.pending_id = Some(id);
                             self.pending = Some(target);
-                            let _ = self.tx.send(Job { id, layers: changed, optimized_only: false });
+                            let _ = self.tx.send(Job { id, layers: changed });
                         }
                     }
                     self.last_error = None;
@@ -385,18 +444,15 @@ impl WorldgenSystem {
             }
         }
         let mut built = Vec::new();
-        while let Ok(msg) = self.rx.try_recv() {
+        while !self.hold
+            && let Ok(msg) = self.rx.try_recv()
+        {
             match msg {
                 Ok(b) => {
-                    let current = Some(b.id) == self.pending_id || Some(b.id) == self.optimizing_id;
+                    let current = Some(b.id) == self.pending_id;
                     if current {
-                        if Some(b.id) == self.pending_id {
-                            self.pending_id = None;
-                            self.active = self.pending.take().unwrap_or_default();
-                            self.optimizing_id = if b.optimized { None } else { Some(b.id) };
-                        } else if b.optimized {
-                            self.optimizing_id = None;
-                        }
+                        self.pending_id = None;
+                        self.active = self.pending.take().unwrap_or_default();
                         self.last_build_ms = b.ms;
                     }
                     // stale builds are returned too so the caller can destroy them
@@ -406,9 +462,6 @@ impl WorldgenSystem {
                     if Some(id) == self.pending_id {
                         self.pending_id = None;
                         self.pending = None;
-                    }
-                    if Some(id) == self.optimizing_id {
-                        self.optimizing_id = None;
                     }
                     log::error!("world generator shader failed:\n{e}");
                     self.last_error = Some(e);
@@ -425,18 +478,15 @@ impl WorldgenSystem {
         self.pending_id.is_some()
     }
 
-    pub fn is_optimizing(&self) -> bool {
-        self.optimizing_id.is_some()
-    }
-
-    /// Build the fully optimised pipelines for the currently active source (used at startup,
-    /// which boots with the quick build).
-    pub fn request_optimized(&mut self) {
+    /// Build every layer in the background (startup, when the interpreter runs the world until
+    /// the pipelines are ready).
+    pub fn request_all(&mut self) {
         let layers = self.sources().into_iter().enumerate().collect();
         let id = self.next_id;
         self.next_id += 1;
-        self.optimizing_id = Some(id);
-        let _ = self.tx.send(Job { id, layers, optimized_only: true });
+        self.pending_id = Some(id);
+        self.pending = Some(self.layer_sources());
+        let _ = self.tx.send(Job { id, layers });
     }
 
     pub fn save(&mut self) {

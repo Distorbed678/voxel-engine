@@ -146,6 +146,13 @@ pub struct Engine {
     pub tex_ui: crate::texture_editor::TextureEditorUi,
     /// per generator layer: its terrain, props and probe pipelines (`wg::PASS_NAMES`)
     gen_layers: Vec<[PipelineHandle; 3]>,
+    /// the interpreter's terrain, props and probe pipelines (`worldgen::vm`)
+    vm_pipes: Option<[PipelineHandle; 3]>,
+    /// the layers' interpreter programs on the GPU: buffer, each layer's address, revision
+    vm_buf: Option<(Buffer, Vec<u64>, u64)>,
+    vm_retired: Vec<(u64, Buffer)>,
+    /// run every layer in the interpreter (scripts: `interp on`)
+    pub vm_force: bool,
     pub probes: crate::probe::Probes,
     pub light: crate::light::LightGpu,
     taa: crate::taa::Taa,
@@ -216,6 +223,28 @@ enum JumpState {
     Probe { wait: u32, sea: f32, map_serial: u64 },
     /// a column read (region read `id`) around `depth`: stand in the nearest open pocket
     Column { id: u64, depth: f32, tries: u32 },
+}
+
+/// Put a finished generator build in place: replace the layers' pipelines (the old ones retire
+/// after `frame`), or register new layers'. Returns how many layers it held.
+fn install_build(pm: &mut PipelineManager, gen_layers: &mut Vec<[PipelineHandle; 3]>, b: crate::wg::BuiltPipelines, frame: u64) -> usize {
+    let n = b.layers.len();
+    for l in b.layers {
+        let existing = gen_layers.get(l.index).copied();
+        let mut handles = Vec::with_capacity(3);
+        for (k, ((pipeline, source), name)) in l.pipelines.into_iter().zip(l.sources).zip(crate::wg::PASS_NAMES).enumerate() {
+            let src = PipelineSource::ComputeSource { name: format!("{name}.comp"), source, defines: vec![] };
+            match existing {
+                Some(h) => pm.replace(h[k], src, pipeline, b.deps.clone(), frame),
+                None => handles.push(pm.insert(name, src, pipeline, b.deps.clone())),
+            }
+        }
+        // a new layer (new layers come in order, after the existing ones)
+        if existing.is_none() {
+            gen_layers.push([handles[0], handles[1], handles[2]]);
+        }
+    }
+    n
 }
 
 pub fn compose_source(generated: &str) -> (String, String, String) {
@@ -289,9 +318,28 @@ impl Engine {
         let mut prefabs = crate::prefab::PrefabLibrary::load(PathBuf::from("assets/prefabs"), &blocks);
         prefabs.upload(&ctx)?;
         let mut wg = WorldgenSystem::new(&ctx, &pm.compiler.root.clone(), pm.layout, block_ids, blocks.glsl_header(), prefabs.compile_info(), opts.worldgen_dir.clone().unwrap_or_else(|| PathBuf::from("assets/worldgen")))?;
-        // Build the generator synchronously at startup (fall back to the built-in one on error):
-        // every layer's passes at once.
         let t0 = Instant::now();
+        // the interpreter's pipelines don't depend on the graph: built once (cached by the driver)
+        let vm_pipes = wg.vm.sources.clone().filter(|_| std::env::var("VE_NO_VM").is_err()).and_then(|srcs| {
+            let items = ["worldgen_vm_terrain", "worldgen_vm_props", "worldgen_vm_probe"]
+                .into_iter()
+                .zip(srcs)
+                .map(|(n, s)| (n, PipelineSource::ComputeSource { name: format!("{n}.comp"), source: s, defines: vec![] }))
+                .collect();
+            match pm.create_sources_parallel(&ctx, items) {
+                Ok(h) => Some([h[0], h[1], h[2]]),
+                Err(e) => {
+                    log::warn!("world generator interpreter failed to build: {e:#}");
+                    None
+                }
+            }
+        });
+        if vm_pipes.is_some() {
+            log::info!("world generator interpreter built in {:.0} ms", t0.elapsed().as_secs_f32() * 1000.0);
+        }
+        // With the interpreter, the world starts generating at once and the generator's
+        // pipelines build in the background. Without it, they are built here (fall back to the
+        // built-in generator on error).
         let build = |pm: &mut PipelineManager, layers: Vec<[String; 3]>| -> Result<Vec<[PipelineHandle; 3]>> {
             let items = layers
                 .into_iter()
@@ -302,20 +350,43 @@ impl Engine {
             let h = pm.create_sources_parallel(&ctx, items)?;
             Ok(h.as_chunks::<3>().0.to_vec())
         };
-        let gen_layers = match build(&mut pm, wg.sources()) {
-            Ok(h) => h,
-            Err(e) => {
-                log::error!("world generator failed to build, using defaults: {e:#}");
-                wg.reset_to_defaults();
-                wg.update();
-                build(&mut pm, wg.sources())?
+        let interpreted = vm_pipes.is_some() && !wg.vm.programs.is_empty() && wg.vm.programs.iter().all(|p| p.is_some());
+        let mut gen_layers = if interpreted {
+            Vec::new()
+        } else {
+            match build(&mut pm, wg.sources()) {
+                Ok(h) => h,
+                Err(e) => {
+                    log::error!("world generator failed to build, using defaults: {e:#}");
+                    wg.reset_to_defaults();
+                    wg.update();
+                    build(&mut pm, wg.sources())?
+                }
             }
         };
-        wg.active = wg.layer_sources();
         wg.dirty = false;
-        wg.request_optimized();
+        // scripted runs never write the generator either
+        wg.autosave = opts.script.is_none();
+        if interpreted {
+            wg.request_all();
+            // the driver usually has them cached: give the build a moment before the interpreter
+            // generates a world that would be thrown away when it lands
+            let wait = Instant::now();
+            while wg.is_building() && wait.elapsed().as_secs_f32() < 1.5 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                for (current, b) in wg.update().1 {
+                    if current {
+                        install_build(&mut pm, &mut gen_layers, b, 0);
+                    } else {
+                        b.destroy(&ctx.device);
+                    }
+                }
+            }
+        } else {
+            wg.active = wg.layer_sources();
+        }
         log::info!(
-            "world generator: {} layers, {} biomes, {} zones, {} prop layers, {} params, shaders built in {:.0} ms",
+            "world generator: {} layers, {} biomes, {} zones, {} prop layers, {} params, ready in {:.0} ms",
             wg.compiled.layers.len(),
             wg.compiled.biomes.len(),
             wg.compiled.zones.len(),
@@ -458,6 +529,10 @@ impl Engine {
             jump: None,
             tex_ui: crate::texture_editor::TextureEditorUi::new(),
             gen_layers,
+            vm_pipes,
+            vm_buf: None,
+            vm_retired: Vec::new(),
+            vm_force: false,
             probes: crate::probe::Probes::new(&ctx, FIF)?,
             light,
             taa,
@@ -987,17 +1062,67 @@ impl Engine {
         crate::renderer::CloudSea { base: c.value(c.cloud_sea[0]), top: c.value(c.cloud_sea[1]), density: c.value(c.cloud_sea[2]) }
     }
 
-    /// The generator layers that have pipelines, as the batch recorder dispatches them.
+    /// Upload the layers' interpreter programs when they change; old buffers are destroyed once
+    /// the frames using them are done.
+    fn sync_vm_programs(&mut self, frame_value: u64) -> Result<()> {
+        let completed = self.timeline.value(&self.ctx);
+        self.vm_retired.retain_mut(|(v, b)| {
+            if *v <= completed {
+                b.destroy(&self.ctx);
+                false
+            } else {
+                true
+            }
+        });
+        let rev = self.wg.vm.revision;
+        if self.vm_buf.as_ref().is_some_and(|b| b.2 == rev) || self.vm_pipes.is_none() {
+            return Ok(());
+        }
+        let progs = &self.wg.vm.programs;
+        let total: usize = progs.iter().map(|p| p.as_ref().map_or(0, |p| p.words.len().next_multiple_of(4))).sum();
+        let mut buf = Buffer::upload(&self.ctx, "vm_programs", (total.max(4) * 4) as u64)?;
+        let mut addrs = Vec::new();
+        let mut at = 0usize;
+        for p in progs {
+            match p {
+                Some(p) => {
+                    buf.write((at * 4) as u64, &p.words);
+                    addrs.push(buf.address + (at * 4) as u64);
+                    at += p.words.len().next_multiple_of(4);
+                }
+                None => addrs.push(0),
+            }
+        }
+        log::debug!("frame {}: interpreter programs uploaded (revision {rev})", self.frame_counter);
+        if let Some((old, ..)) = self.vm_buf.replace((buf, addrs, rev)) {
+            self.vm_retired.push((frame_value, old));
+        }
+        Ok(())
+    }
+
+    /// Whether layer `i` runs in the interpreter (its pipelines are building, or scripts asked),
+    /// and its program's address.
+    fn layer_vm(&self, i: usize) -> Option<u64> {
+        let addr = self.vm_buf.as_ref().and_then(|b| b.1.get(i).copied()).filter(|a| *a != 0)?;
+        (self.vm_pipes.is_some() && (self.vm_force || !self.wg.layer_current(i) || i >= self.gen_layers.len())).then_some(addr)
+    }
+
+    /// The generator layers as the batch recorder dispatches them: compiled, or in the
+    /// interpreter.
     fn layer_passes(&self) -> Vec<crate::world::gpu::LayerPass> {
         let own = self.wg.compiled.generation_ranges();
-        self.wg
-            .compiled
-            .layers
-            .iter()
-            .zip(&self.gen_layers)
-            .zip(own)
-            .map(|((l, h), own)| crate::world::gpu::LayerPass { terrain: self.pm.get(h[0]), props: self.pm.get(h[1]), param_base: l.param_base, own })
-            .collect()
+        let vm = self.vm_pipes.map(|h| (self.pm.get(h[0]), self.pm.get(h[1])));
+        let mut out = Vec::new();
+        for (i, (l, own)) in self.wg.compiled.layers.iter().zip(own).enumerate() {
+            let (terrain, props, vm_program) = match (self.layer_vm(i), vm, self.gen_layers.get(i)) {
+                (Some(addr), Some((t, p)), _) => (t, p, addr),
+                (_, _, Some(h)) => (self.pm.get(h[0]), self.pm.get(h[1]), 0),
+                _ => break,
+            };
+            out.push(crate::world::gpu::LayerPass { terrain, props, param_base: l.param_base, own, vm_program });
+        }
+        log::trace!("layer passes, interpreted: {:?}", out.iter().map(|l| l.vm_program != 0).collect::<Vec<_>>());
+        out
     }
 
     /// Heights the probes scan for the minimap's surface in layer `li` (bottom, top): the
@@ -1187,39 +1312,22 @@ impl Engine {
         }
         if params_changed {
             self.wgpu.set_params(&self.wg.compiled.params);
-            if self.wg.is_current() {
+            // with the interpreter, structural edits apply now too
+            if self.wg.is_current() || (self.vm_pipes.is_some() && self.wg.interpreter_covers()) {
                 self.world.invalidate_all();
             }
         }
+        self.sync_vm_programs(value)?;
         for (current, b) in built {
             if !current {
                 b.destroy(&self.ctx.device);
                 continue;
             }
-            let n = b.layers.len();
-            for l in b.layers {
-                let existing = self.gen_layers.get(l.index).copied();
-                let mut handles = Vec::with_capacity(3);
-                for (k, ((pipeline, source), name)) in l.pipelines.into_iter().zip(l.sources).zip(crate::wg::PASS_NAMES).enumerate() {
-                    let src = PipelineSource::ComputeSource { name: format!("{name}.comp"), source, defines: vec![] };
-                    match existing {
-                        Some(h) => self.pm.replace(h[k], src, pipeline, b.deps.clone(), self.frame_counter),
-                        None => handles.push(self.pm.insert(name, src, pipeline, b.deps.clone())),
-                    }
-                }
-                // a new layer (new layers come in order, after the existing ones)
-                if existing.is_none() {
-                    self.gen_layers.push([handles[0], handles[1], handles[2]]);
-                }
-            }
+            let ms = b.ms;
+            let n = install_build(&mut self.pm, &mut self.gen_layers, b, self.frame_counter);
             self.wgpu.set_params(&self.wg.compiled.params);
             self.world.invalidate_all();
-            self.ui.toast(format!(
-                "{} generator ready in {:.0} ms ({n} layer{})",
-                if b.optimized { "Optimised" } else { "Quick" },
-                b.ms,
-                if n == 1 { "" } else { "s" }
-            ));
+            self.ui.toast(format!("Generator built in {:.1} s ({n} layer{})", ms / 1000.0, if n == 1 { "" } else { "s" }));
         }
         self.world.layers = self.wg.compiled.owned_ranges();
         self.world.set_connections(self.seed, &self.wg.compiled.connections);
@@ -1257,7 +1365,8 @@ impl Engine {
         // ---- input, camera, editing ----
         self.script_step()?;
         self.handle_shortcuts();
-        if self.opts.benchmark && self.bench.is_none() && self.frame_counter == 2 {
+        // (the benchmark measures the compiled generator: it waits for it)
+        if self.opts.benchmark && self.bench.is_none() && self.frame_counter >= 2 && !self.wg.is_building() {
             self.opts.benchmark = false;
             self.start_benchmark();
         }
@@ -1353,6 +1462,9 @@ impl Engine {
             if self.script.is_some() {
                 // fixed batch sizes keep scripted runs deterministic
                 max_jobs = self.ui.jobs_per_frame.min(MAX_JOBS);
+            } else if (0..self.wg.compiled.layers.len()).any(|i| self.layer_vm(i).is_some()) {
+                // the interpreter is several times slower: small batches keep frames smooth
+                max_jobs = max_jobs.min(8);
             }
             let jobs = self.world.pick_jobs(self.camera.pos, self.camera.forward(), max_jobs, value);
             self.batch_sizes[slot] = jobs.len();
@@ -1429,13 +1541,19 @@ impl Engine {
         };
 
         // biome probes (camera environment + minimap), in the camera's layer
-        if !self.gen_layers.is_empty() {
+        // (the interpreter's probe until the camera's layer has its pipelines)
+        let probe_li = self.wg.compiled.layer_near(self.camera.pos.y as f32);
+        let probe_pass = match (self.layer_vm(probe_li), self.vm_pipes) {
+            (Some(addr), Some(h)) => Some((self.pm.get(h[2]), addr)),
+            _ => self.gen_layers.get(probe_li).map(|h| (self.pm.get(h[2]), 0)),
+        };
+        if let Some((probe_pipe, vm_program)) = probe_pass {
             let pos = self.camera.pos;
             let n = self.probes.prepare(slot, pos, self.frame_counter);
-            let li = self.wg.compiled.layer_near(pos.y as f32).min(self.gen_layers.len() - 1);
+            let li = probe_li;
             let scan = self.probe_scan(li, pos.y as f32);
             unsafe {
-                self.ctx.device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, self.pm.get(self.gen_layers[li][2]));
+                self.ctx.device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, probe_pipe);
                 self.ctx.device.cmd_bind_descriptor_sets(cb, vk::PipelineBindPoint::COMPUTE, self.pm.layout, 0, &[self.bindless.set], &[]);
             }
             let push = crate::world::gpu::GenPush {
@@ -1459,6 +1577,7 @@ impl Engine {
                 own_max: scan.1,
                 solo_zone: self.wgpu.solo[0],
                 solo_biome: self.wgpu.solo[1],
+                vm_program,
             };
             unsafe {
                 self.ctx.device.cmd_push_constants(cb, self.pm.layout, vk::ShaderStageFlags::ALL, 0, bytemuck::bytes_of(&push));
@@ -2156,6 +2275,12 @@ impl Drop for Engine {
         self.timeline.destroy(&self.ctx);
         self.profiler.destroy(&self.ctx);
         self.wgpu.destroy(&self.ctx);
+        if let Some((b, ..)) = &mut self.vm_buf {
+            b.destroy(&self.ctx);
+        }
+        for (_, b) in &mut self.vm_retired {
+            b.destroy(&self.ctx);
+        }
         self.tools.prefabs.destroy(&self.ctx);
         self.probes.destroy(&self.ctx);
         self.light.destroy(&self.ctx, &mut self.bindless);

@@ -3,6 +3,7 @@
 
 pub mod compile;
 pub mod connect;
+pub mod vm;
 pub mod defaults;
 pub mod graph;
 pub mod layout;

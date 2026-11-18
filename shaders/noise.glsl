@@ -57,7 +57,10 @@ float simplex3(vec3 p, uint seed) {
     const float G3 = 1.0 / 6.0;
     vec3 s = floor(p + dot(p, vec3(F3)));
     vec3 x0 = p - s + dot(s, vec3(G3));
-    vec3 e = step(vec3(0.0), x0 - x0.yzx);
+    // which corners to visit: e.x = x >= y, e.y = y >= z, e.z = z > x (strict: when all three are
+    // equal the simplex stays valid, so the noise is continuous there and a last-bit difference in
+    // p, between the compiled generator and the interpreter, changes the value by a last bit too)
+    vec3 e = vec3(step(0.0, x0.x - x0.y), step(0.0, x0.y - x0.z), x0.z > x0.x ? 1.0 : 0.0);
     vec3 i1 = e * (1.0 - e.zxy);
     vec3 i2 = 1.0 - e.zxy * (1.0 - e);
     vec3 x1 = x0 - i1 + G3;

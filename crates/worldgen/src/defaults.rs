@@ -1017,6 +1017,11 @@ mod tests {
     fn default_project_compiles() {
         let p = default_project();
         let c = compile::compile(&p, &blocks(), &prefabs()).unwrap();
+        if let Ok(d) = std::env::var("VE_DUMP_LAYERS") {
+            for l in &c.layers {
+                std::fs::write(format!("{d}/layer_{}.glsl", l.name), &l.source).unwrap();
+            }
+        }
         assert!(c.warnings.is_empty(), "warnings: {:#?}", c.warnings);
         // four generator units: the surface, the two underground bands and the sky
         let layers: Vec<(&str, u32, u32)> = c.layers.iter().map(|l| (l.name.as_str(), l.biome_count, l.zone_count)).collect();

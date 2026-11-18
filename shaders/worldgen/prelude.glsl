@@ -35,6 +35,8 @@ layout(push_constant, scalar) uniform GenPC {
     // solo preview: zone and biome (global ids) shown everywhere, -1 = off
     float soloZone;
     float soloBiome;
+    // the interpreter's program (header + bytecode, crates/worldgen/src/vm), interpreter passes only
+    uint64_t vmProgram;
 } pc;
 
 bool wg_owns(float y) { return y >= pc.ownMin && y < pc.ownMax; }

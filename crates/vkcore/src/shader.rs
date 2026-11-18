@@ -194,3 +194,52 @@ pub fn spirv_dont_inline(words: &mut [u32], pred: impl Fn(&str) -> bool) -> usiz
     }
     n
 }
+
+/// Decorate every floating-point arithmetic result `NoContraction`: the driver may not fuse a
+/// multiply and an add into one FMA (one rounding instead of two). Applied to the world generator
+/// and to its interpreter, so both round every operation the same way and generate the same
+/// blocks. Returns the number of results decorated.
+pub fn spirv_no_contraction(words: &mut Vec<u32>) -> usize {
+    use std::collections::HashSet;
+    const DECORATE: u32 = 71;
+    const NO_CONTRACTION: u32 = 42;
+    // OpFNegate, OpFAdd, OpFSub, OpFMul, OpFDiv, OpFRem, OpFMod, OpVectorTimesScalar,
+    // OpMatrixTimesScalar, OpVectorTimesMatrix, OpMatrixTimesVector, OpMatrixTimesMatrix, OpDot
+    const FLOAT_OPS: &[u32] = &[127, 129, 131, 133, 136, 140, 141, 142, 143, 144, 145, 146, 148];
+    if words.len() < 5 {
+        return 0;
+    }
+    let mut ids = Vec::new();
+    let mut have: HashSet<u32> = HashSet::new();
+    let mut last_annotation = None;
+    let mut first_type = None;
+    let mut i = 5;
+    while i < words.len() {
+        let wc = (words[i] >> 16) as usize;
+        let op = words[i] & 0xFFFF;
+        if wc == 0 {
+            break;
+        }
+        if (71..=75).contains(&op) || op == 332 || op == 5632 || op == 5633 {
+            last_annotation = Some(i + wc);
+            if op == DECORATE && wc >= 3 && words[i + 2] == NO_CONTRACTION {
+                have.insert(words[i + 1]);
+            }
+        }
+        if first_type.is_none() && (19..=39).contains(&op) {
+            first_type = Some(i);
+        }
+        if FLOAT_OPS.contains(&op) && wc >= 3 {
+            ids.push(words[i + 2]);
+        }
+        i += wc;
+    }
+    let Some(at) = last_annotation.or(first_type) else { return 0 };
+    let mut deco = Vec::with_capacity(ids.len() * 3);
+    for id in ids.iter().filter(|id| !have.contains(id)) {
+        deco.extend_from_slice(&[(3 << 16) | DECORATE, *id, NO_CONTRACTION]);
+    }
+    let n = deco.len() / 3;
+    words.splice(at..at, deco);
+    n
+}

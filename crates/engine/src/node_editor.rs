@@ -209,9 +209,9 @@ impl NodeEditorUi {
         }
         ui.same_line();
         if wg.is_building() {
-            ui.text_colored([1.0, 0.8, 0.3, 1.0], "building shaders...");
-        } else if wg.is_optimizing() {
-            ui.text_colored([0.8, 0.8, 0.4, 1.0], "optimising in background...");
+            // the interpreter runs the edit meanwhile (worldgen::vm)
+            let vm = wg.interpreter_covers();
+            ui.text_colored([1.0, 0.8, 0.3, 1.0], if vm { "building shaders (interpreter meanwhile)..." } else { "building shaders..." });
         } else {
             ui.text_colored(
                 [0.6, 0.9, 0.6, 1.0],
@@ -231,6 +231,9 @@ impl NodeEditorUi {
             ui.same_line();
             let first: String = e.lines().take(3).collect::<Vec<_>>().join(" | ");
             ui.text_wrapped(first);
+        }
+        if let Some(e) = &wg.vm.error {
+            ui.text_disabled(format!("interpreter unavailable: {}", e.lines().next().unwrap_or("")));
         }
         if !wg.compiled.warnings.is_empty() {
             ui.text_colored([1.0, 0.75, 0.3, 1.0], format!("{} warning(s):", wg.compiled.warnings.len()));
