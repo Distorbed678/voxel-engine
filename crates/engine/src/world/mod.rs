@@ -105,6 +105,8 @@ pub struct WorldStats {
     pub quads_resident: u64,
     pub per_lod: [(u32, u32); 8],
     pub last_overflow: u32,
+    /// the most prop anchors a chunk had, per LOD (`MAX_ANCHORS` in props_main.glsl fit)
+    pub max_anchors: [u32; 8],
 }
 
 pub enum Deferred {
@@ -721,6 +723,8 @@ impl World {
     pub fn apply_results(&mut self, slot: usize, jobs: &[JobDesc], results: &[JobResult], frame_value: u64) {
         let mut overflow = 0;
         for (job, res) in jobs.iter().zip(results) {
+            let m = &mut self.stats.max_anchors[(job.key.lod as usize).min(7)];
+            *m = (*m).max(res.anchors);
             if job.counter == u32::MAX {
                 if res.flags & JOB_OVERFLOW != 0 {
                     for r in &mut self.region_reads {
@@ -797,6 +801,7 @@ impl World {
             jobs_total: self.stats.jobs_total,
             jobs_last_second: self.stats.jobs_last_second,
             last_overflow: self.stats.last_overflow,
+            max_anchors: self.stats.max_anchors,
             ..Default::default()
         };
         s.chunks = self.chunks.len();

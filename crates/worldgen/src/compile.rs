@@ -1052,7 +1052,7 @@ fn compile_unit(sh: &mut Shared, unit: &Unit, biome_base: u32, zone_base: u32) -
         let dec_body = em.take_body();
         // props
         let mut masks = Vec::new();
-        for slot in 3..9u8 {
+        for slot in 3..13u8 {
             let Some(l) = g.input_link(outn.id, slot).copied() else { continue };
             let Some(layer_node) = g.node(l.from_node).cloned() else { continue };
             let li = prop_layers.len();

@@ -62,7 +62,7 @@ struct JobResult {
     uint nonAir;
     uint opaque;
     uint counts[NUM_STREAMS];
-    uint pad0;
+    uint anchors;   // props pass: prop anchors found (the most of any layer's pass)
     uint pad1;
 };
 layout(buffer_reference, scalar, buffer_reference_align = 4) buffer JobResultBuf { JobResult r[]; };

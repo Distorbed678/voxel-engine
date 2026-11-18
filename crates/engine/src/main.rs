@@ -219,8 +219,8 @@ fn main() -> Result<()> {
         log::info!("headless run finished: {} frames, {} validation errors", engine.frame_counter, errors);
         let s = &engine.world.stats;
         log::info!(
-            "world: {} chunks ({} meshed, {} empty, {} pending), {} jobs, {:.1}M quads resident",
-            s.chunks, s.meshed, s.empty, s.pending, s.jobs_total, s.quads_resident as f64 / 1e6
+            "world: {} chunks ({} meshed, {} empty, {} pending), {} jobs, {:.1}M quads resident, at most {} prop anchors in a chunk (by LOD {:?})",
+            s.chunks, s.meshed, s.empty, s.pending, s.jobs_total, s.quads_resident as f64 / 1e6, s.max_anchors.iter().max().unwrap_or(&0), s.max_anchors
         );
         for (name, (sum, n)) in &engine.gpu_sums {
             log::info!("gpu {name:<12} avg {:.3} ms over {n} frames (total {:.1} ms)", sum / *n as f64, sum);

@@ -12,11 +12,27 @@
 
 layout(local_size_x = 256) in;
 
-#define MAX_ANCHORS 384
+// Anchors are packed in 8 bytes (anchor_pack): 768 fit where 384 unpacked ones did. Each prop layer
+// adds at most about ANCHOR_SHARE of them to a chunk: where a layer would add more (dense forests
+// in the coarse LODs' big chunks), its anchors are thinned by a decision every chunk of that LOD
+// makes alike, so neighbours agree on which props are there.
+#define MAX_ANCHORS 768
+#define ANCHOR_SHARE 320.0
 #define PROP_SKY 8  // cells of open air a surface needs above it to grow props
-shared ivec4 sAnchors[MAX_ANCHORS];
-shared ivec4 sSorted[MAX_ANCHORS];
+shared uvec2 sAnchors[MAX_ANCHORS];
+shared uvec2 sSorted[MAX_ANCHORS];
 shared uint sCount;
+
+// An anchor (xyz, w = prop layer or -1 - previewed graph) relative to the chunk's corner `base`,
+// in 16 bits each, ordered for anchor_before: x = layer, y; y = z, x.
+uvec2 anchor_pack(ivec4 a, ivec3 base) {
+    uvec3 r = uvec3(a.xyz - base + 32768) & 0xFFFFu;
+    return uvec2((uint(a.w + 32768) << 16) | r.y, (r.z << 16) | r.x);
+}
+ivec4 anchor_unpack(uvec2 k, ivec3 base) {
+    ivec3 r = ivec3(int(k.y & 0xFFFFu), int(k.x & 0xFFFFu), int(k.y >> 16)) - 32768;
+    return ivec4(base + r, int(k.x >> 16) - 32768);
+}
 // instances built in parallel, BUILD_BATCH at a time: primitive count and bounds (cells,
 // relative to the anchor) of each
 #define BUILD_BATCH 16u
@@ -39,11 +55,8 @@ void anchor_layer(int w, out PropLayer L) {
 }
 
 // a fixed order of anchors (prop layer, then position), the same in every chunk
-bool anchor_before(ivec4 a, ivec4 b) {
-    if (a.w != b.w) return a.w < b.w;
-    if (a.y != b.y) return a.y < b.y;
-    if (a.z != b.z) return a.z < b.z;
-    return a.x < b.x;
+bool anchor_before(uvec2 a, uvec2 b) {
+    return a.x < b.x || (a.x == b.x && a.y < b.y);
 }
 
 void main() {
@@ -63,7 +76,7 @@ void main() {
     if (lid == 0u) {
         sCount = 0u;
         if (preview) {
-            sAnchors[0] = ivec4(0, 0, 0, -1 - int(job.pad1));
+            sAnchors[0] = anchor_pack(ivec4(0, 0, 0, -1 - int(job.pad1)), rmin);
             sCount = 1u;
         }
     }
@@ -88,10 +101,15 @@ void main() {
             if (!geode) { c0.y = 0; c1.y = 0; }
             uvec3 nn = uvec3(c1 - c0 + 1);
             uint total = nn.x * nn.y * nn.z;
+            // the share of this layer's anchors kept in this LOD (from the cells a chunk of this
+            // LOD spans, the same for all of them)
+            float span = (float(CA * scale) + 2.0 * float(Ri)) / float(sp);
+            float keep = min(1.0, ANCHOR_SHARE / max(span * span * (geode ? span : 1.0) * L.chance, 1.0));
             for (uint i = lid; i < total; i += 256u) {
                 ivec3 cell = c0 + ivec3(i % nn.x, (i / nn.x) % nn.y, i / (nn.x * nn.y));
                 float r = geode ? rand3(cell, L.seed) : rand2(cell.xz, L.seed);
                 if (r >= L.chance) continue;
+                if (keep < 1.0 && (geode ? rand3(cell, L.seed ^ 0x51ED27u) : rand2(cell.xz, L.seed ^ 0x51ED27u)) >= keep) continue;
                 vec3 j = (rand3v(cell, L.seed ^ 0x9E37u) - 0.5) * L.jitter;
                 ivec3 a = ivec3(floor((vec3(cell) + 0.5 + j) * float(sp)));
                 if (a.x + Ri < rmin.x || a.x - Ri >= rmax.x || a.z + Ri < rmin.z || a.z - Ri >= rmax.z) continue;
@@ -111,7 +129,7 @@ void main() {
                 }
                 if (geode) {
                     uint idx = atomicAdd(sCount, 1u);
-                    if (idx < MAX_ANCHORS) sAnchors[idx] = ivec4(a, int(layer));
+                    if (idx < MAX_ANCHORS) sAnchors[idx] = anchor_pack(ivec4(a, int(layer)), rmin);
                     continue;
                 }
                 // Surface scan, top-down over every height this prop could reach the chunk from.
@@ -146,22 +164,23 @@ void main() {
                         continue;
                     }
                     uint idx = atomicAdd(sCount, 1u);
-                    if (idx < MAX_ANCHORS) sAnchors[idx] = ivec4(a.x, surf + scale, a.z, int(layer));
+                    if (idx < MAX_ANCHORS) sAnchors[idx] = anchor_pack(ivec4(a.x, surf + scale, a.z, int(layer)), rmin);
                 }
             }
         }
     }
     barrier();
 
+    if (lid == 0u) atomicMax(pc.results.r[jobIdx].anchors, sCount);
     // Overlapping props resolve by order (first writer wins between leaves, prefabs overwrite),
     // so draw the anchors in a fixed order, one at a time: the append order above depends on
     // thread timing, and every chunk a prop touches must draw the same blocks.
     uint count = min(sCount, uint(MAX_ANCHORS));
     for (uint i = lid; i < count; i += 256u) {
-        ivec4 a = sAnchors[i];
+        uvec2 a = sAnchors[i];
         uint rank = 0u;
         for (uint j = 0u; j < count; ++j) {
-            ivec4 b = sAnchors[j];
+            uvec2 b = sAnchors[j];
             if (anchor_before(b, a) || (b == a && j < i)) ++rank;
         }
         sSorted[rank] = a;
@@ -176,7 +195,7 @@ void main() {
         uint nb = min(uint(BUILD_BATCH), count - b0);
         barrier();
         if (lid < nb) {
-            ivec4 an = sSorted[b0 + lid];
+            ivec4 an = anchor_unpack(sSorted[b0 + lid], rmin);
             PropLayer L;
             anchor_layer(an.w, L);
             sBuiltN[lid] = 0u;
@@ -206,7 +225,7 @@ void main() {
         }
         for (uint k = 0u; k < nb; ++k) {
             barrier();
-            ivec4 an = sSorted[b0 + k];
+            ivec4 an = anchor_unpack(sSorted[b0 + k], rmin);
             ivec3 anchor = an.xyz;
             PropLayer L;
             anchor_layer(an.w, L);

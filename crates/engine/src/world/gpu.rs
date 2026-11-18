@@ -72,7 +72,9 @@ pub struct JobResult {
     pub non_air: u32,
     pub opaque: u32,
     pub counts: [u32; NUM_STREAMS],
-    pub pad: [u32; 2],
+    /// prop anchors the props pass found (`MAX_ANCHORS` fit)
+    pub anchors: u32,
+    pub pad: u32,
 }
 
 #[derive(Clone, Debug)]

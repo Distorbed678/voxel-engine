@@ -205,7 +205,7 @@ pub static NODES: &[NodeDef] = &[
         inputs: &[("Biomes", Biome), ("Caves", Density), ("Cave Biomes", Biome)], outputs: &[], params: &[col("map_color", [0.4, 0.7, 0.3])], allowed: ZONE },
     NodeDef { kind: "biome_output", title: "Biome Output", category: "Output",
         help: "A biome: terrain density (>0 = solid), materials, ground cover, props and environment.",
-        inputs: &[("Terrain", Density), ("Material", Material), ("Ground Cover", Decor), ("Props 1", PropLayer), ("Props 2", PropLayer), ("Props 3", PropLayer), ("Props 4", PropLayer), ("Props 5", PropLayer), ("Props 6", PropLayer)],
+        inputs: &[("Terrain", Density), ("Material", Material), ("Ground Cover", Decor), ("Props 1", PropLayer), ("Props 2", PropLayer), ("Props 3", PropLayer), ("Props 4", PropLayer), ("Props 5", PropLayer), ("Props 6", PropLayer), ("Props 7", PropLayer), ("Props 8", PropLayer), ("Props 9", PropLayer), ("Props 10", PropLayer)],
         outputs: &[],
         params: &[
             en("fluid", &["Water", "Lava", "Ice", "None"], 0),
