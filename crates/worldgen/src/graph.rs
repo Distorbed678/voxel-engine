@@ -224,6 +224,75 @@ impl Project {
         v
     }
 
+    /// `name` if it is free for a graph of `kind`, else `name_2`, `name_3`...
+    pub fn free_name(&self, kind: GraphKind, name: &str) -> String {
+        if self.get(kind, name).is_none() {
+            return name.to_string();
+        }
+        (2..).map(|n| format!("{name}_{n}")).find(|c| self.get(kind, c).is_none()).unwrap()
+    }
+
+    /// Add a copy of graph `name` under a free name. Returns the new name.
+    pub fn duplicate(&mut self, kind: GraphKind, name: &str) -> Option<String> {
+        let mut g = self.get(kind, name)?.clone();
+        g.name = self.free_name(kind, name);
+        let new = g.name.clone();
+        self.graphs.push(g);
+        Some(new)
+    }
+
+    /// The biomes a zone graph places (its Biome nodes), in order, without repeats.
+    pub fn zone_biomes(&self, zone: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        if let Some(g) = self.get(GraphKind::Zone, zone) {
+            for n in g.nodes.iter().filter(|n| n.kind == "biome") {
+                if let Some(Value::Ref(b)) = n.params.get("biome")
+                    && !b.is_empty()
+                    && !out.contains(b)
+                {
+                    out.push(b.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Duplicate a zone and every biome it places; the new zone places the new biomes. Returns
+    /// the new zone's name and (old, new) biome names.
+    pub fn duplicate_zone_with_biomes(&mut self, zone: &str) -> Option<(String, Vec<(String, String)>)> {
+        let biomes = self.zone_biomes(zone);
+        let new_zone = self.duplicate(GraphKind::Zone, zone)?;
+        let mut renamed = Vec::new();
+        for b in biomes {
+            if let Some(nb) = self.duplicate(GraphKind::Biome, &b) {
+                renamed.push((b, nb));
+            }
+        }
+        if let Some(g) = self.get_mut(GraphKind::Zone, &new_zone) {
+            for n in g.nodes.iter_mut().filter(|n| n.kind == "biome") {
+                if let Some(Value::Ref(b)) = n.params.get_mut("biome")
+                    && let Some((_, nb)) = renamed.iter().find(|(old, _)| old == b)
+                {
+                    *b = nb.clone();
+                }
+            }
+        }
+        Some((new_zone, renamed))
+    }
+
+    /// A new graph of `kind` named `name` (or a free variant): empty, or a copy of the built-in
+    /// graph `template` (`defaults`). Returns the new name.
+    pub fn create_from_template(&mut self, kind: GraphKind, name: &str, template: Option<&str>) -> Option<String> {
+        let name = self.free_name(kind, name);
+        let mut g = match template {
+            Some(t) => crate::defaults::default_project().graphs.into_iter().find(|g| g.kind == kind && g.name == t)?,
+            None => Graph::new(&name, kind),
+        };
+        g.name = name.clone();
+        self.graphs.push(g);
+        Some(name)
+    }
+
     pub fn save_dir(&self, dir: &Path) -> Result<()> {
         for kind in GraphKind::ALL {
             let d = dir.join(kind.dir());

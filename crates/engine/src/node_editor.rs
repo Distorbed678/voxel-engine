@@ -20,6 +20,9 @@ type GraphEdit = Box<dyn FnOnce(&mut Graph)>;
 
 type GraphKey = (GraphKind, String);
 
+/// A zone in the graph browser: its name, biomes and cave biomes.
+type BrowsedZone = (String, Vec<String>, Vec<String>);
+
 pub struct NodeEditorUi {
     pub open: bool,
     pub current: GraphKey,
@@ -42,6 +45,14 @@ pub struct NodeEditorUi {
     comment_sizes: HashMap<u32, [f32; 2]>,
     /// Solo preview: this zone or biome everywhere in the world (by graph name).
     pub solo: Option<GraphKey>,
+    /// the graph browser's search text
+    pub browse_filter: String,
+    /// "New graph": the chosen template (0 = empty)
+    new_template: usize,
+    /// the built-in graphs' names by kind (the templates)
+    templates: HashMap<GraphKind, Vec<String>>,
+    /// a block the browser asked to open in the Block Editor
+    pub open_block: Option<u16>,
 }
 
 fn pin_id(node: u32, out: bool, idx: u8) -> PinId {
@@ -93,6 +104,20 @@ impl NodeEditorUi {
             navigate: true,
             status: String::new(),
             comment_sizes: HashMap::new(),
+            browse_filter: String::new(),
+            new_template: 0,
+            templates: HashMap::new(),
+            open_block: None,
+        }
+    }
+
+    /// Show a graph in the editor.
+    pub fn open_graph(&mut self, kind: GraphKind, name: &str) {
+        if self.current.0 != kind || self.current.1 != name {
+            self.current = (kind, name.to_string());
+            self.selected.clear();
+            self.navigate = true;
+            self.rename_buf = name.to_string();
         }
     }
 
@@ -148,9 +173,9 @@ impl NodeEditorUi {
             .build(|| {
                 self.toolbar(ui, wg);
                 let avail = ui.content_region_avail();
-                ui.child_window("graphs").size([210.0, avail[1]]).border(true).build(ui, || self.graph_list(ui, wg));
+                ui.child_window("graphs").size([240.0, avail[1]]).border(true).build(ui, || self.graph_list(ui, wg, blocks));
                 ui.same_line();
-                ui.child_window("canvas_host").size([avail[0] - 210.0 - 300.0 - 16.0, avail[1]]).build(ui, || self.canvas(ui, wg, blocks));
+                ui.child_window("canvas_host").size([avail[0] - 240.0 - 300.0 - 16.0, avail[1]]).build(ui, || self.canvas(ui, wg, blocks));
                 ui.same_line();
                 ui.child_window("inspector").size([300.0, avail[1]]).border(true).build(ui, || self.inspector(ui, wg, blocks));
             });
@@ -242,32 +267,75 @@ impl NodeEditorUi {
         }
     }
 
-    fn graph_list(&mut self, ui: &Ui, wg: &mut WorldgenSystem) {
-        for kind in GraphKind::ALL {
-            ui.text_colored([0.7, 0.75, 0.9, 1.0], format!("{}s", kind.label()));
-            for name in wg.project.names(kind) {
-                let sel = self.current.0 == kind && self.current.1 == name;
-                if ui.selectable_config(format!("  {name}##{}", kind.label())).selected(sel).build() && !sel {
-                    self.current = (kind, name.clone());
-                    self.selected.clear();
-                    self.navigate = true;
-                    self.rename_buf = name.clone();
+    /// A graph in the browser: click to open it.
+    fn browse_leaf(&mut self, ui: &Ui, kind: GraphKind, name: &str, label: &str) {
+        let sel = self.current.0 == kind && self.current.1 == name;
+        if ui.selectable_config(format!("{label}##{}_{name}", kind.label())).selected(sel).build() {
+            self.open_graph(kind, name);
+        }
+    }
+
+    /// A graph with children in the browser: the arrow folds it, the label opens it.
+    fn browse_branch<'a>(&mut self, ui: &'a Ui, kind: GraphKind, name: &str, label: &str) -> Option<dear_imgui_rs::TreeNodeToken<'a>> {
+        let sel = self.current.0 == kind && self.current.1 == name;
+        let t = ui.tree_node_config(format!("{label}##{}_{name}", kind.label())).default_open(true).open_on_arrow(true).selected(sel).span_avail_width(true).push();
+        if ui.is_item_clicked() && !ui.is_item_toggled_open() {
+            self.open_graph(kind, name);
+        }
+        t
+    }
+
+    /// The graph browser: Layers > Zones > Biomes, then Props, Functions, Particles, Fluids and
+    /// Blocks; or, with a search, everything whose name matches.
+    fn graph_list(&mut self, ui: &Ui, wg: &mut WorldgenSystem, blocks: &BlockRegistry) {
+        ui.set_next_item_width(-1.0);
+        ui.input_text("##browse", &mut self.browse_filter).hint("search graphs, blocks...").build();
+        let filter = self.browse_filter.trim().to_lowercase();
+        if !filter.is_empty() {
+            for kind in GraphKind::ALL {
+                for name in wg.project.names(kind).into_iter().filter(|n| n.contains(&filter)) {
+                    self.browse_leaf(ui, kind, &name, &format!("{name}  ({})", kind.label()));
                 }
             }
-            ui.spacing();
+            for (id, b) in blocks.live().filter(|(_, b)| b.name.contains(&filter) || b.display.to_lowercase().contains(&filter)) {
+                let what = if b.fluid { "Fluid" } else { "Block" };
+                if ui.selectable(format!("{}  ({what})##blk{id}", b.name)) {
+                    self.open_block = Some(id);
+                }
+            }
+        } else {
+            self.browse_tree(ui, wg, blocks);
         }
         ui.separator();
         ui.text("New graph");
-        let kinds = ["Zone", "Biome", "Function", "Prop", "Particle"];
-        ui.combo_simple_string("##kind", &mut self.new_kind, &kinds);
-        ui.input_text("##name", &mut self.new_name).build();
+        let kinds = [GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop, GraphKind::Particle];
+        let labels: Vec<&str> = kinds.iter().map(|k| k.label()).collect();
+        ui.set_next_item_width(-1.0);
+        if ui.combo_simple_string("##kind", &mut self.new_kind, &labels) {
+            self.new_template = 0;
+        }
+        let kind = kinds[self.new_kind.min(kinds.len() - 1)];
+        if self.templates.is_empty() {
+            let d = worldgen::defaults::default_project();
+            for k in GraphKind::ALL {
+                self.templates.insert(k, d.names(k));
+            }
+        }
+        let templates: Vec<String> = std::iter::once("(empty)".to_string()).chain(self.templates.get(&kind).cloned().unwrap_or_default().into_iter().map(|t| format!("like {t}"))).collect();
+        ui.set_next_item_width(-1.0);
+        ui.combo_simple_string("##template", &mut self.new_template, &templates);
+        if ui.is_item_hovered() {
+            ui.tooltip_text("start empty, or from a copy of a built-in graph");
+        }
+        ui.set_next_item_width(-1.0);
+        ui.input_text("##name", &mut self.new_name).hint("name").build();
         if ui.button("Create") {
-            let kind = [GraphKind::Zone, GraphKind::Biome, GraphKind::Function, GraphKind::Prop, GraphKind::Particle][self.new_kind.min(4)];
             let name = worldgen::compile::sanitize(self.new_name.trim()).to_lowercase();
-            if !name.is_empty() && wg.project.get(kind, &name).is_none() {
-                wg.project.graphs.push(Graph::new(&name, kind));
-                self.current = (kind, name);
-                self.navigate = true;
+            let template = self.new_template.checked_sub(1).and_then(|i| self.templates.get(&kind).and_then(|t| t.get(i)).cloned());
+            if !name.is_empty()
+                && let Some(n) = wg.project.create_from_template(kind, &name, template.as_deref())
+            {
+                self.open_graph(kind, &n);
                 wg.mark_dirty();
                 self.new_name.clear();
             }
@@ -299,18 +367,23 @@ impl NodeEditorUi {
                 }
             }
             if ui.button("Duplicate")
-                && let Some(g) = wg.project.get(self.current.0, &self.current.1).cloned() {
-                    let mut n = 2;
-                    while wg.project.get(g.kind, &format!("{}_{n}", g.name)).is_some() {
-                        n += 1;
-                    }
-                    let mut g2 = g;
-                    g2.name = format!("{}_{n}", g2.name);
-                    self.current = (g2.kind, g2.name.clone());
-                    wg.project.graphs.push(g2);
-                    self.navigate = true;
+                && let Some(n) = wg.project.duplicate(self.current.0, &self.current.1)
+            {
+                self.open_graph(self.current.0, &n);
+                wg.mark_dirty();
+            }
+            if self.current.0 == GraphKind::Zone {
+                ui.same_line();
+                if ui.button("Duplicate with biomes")
+                    && let Some((n, _)) = wg.project.duplicate_zone_with_biomes(&self.current.1)
+                {
+                    self.open_graph(GraphKind::Zone, &n);
                     wg.mark_dirty();
                 }
+                if ui.is_item_hovered() {
+                    ui.tooltip_text("a copy of this zone placing copies of its biomes, to change them without touching the originals");
+                }
+            }
             ui.same_line();
             let count = wg.project.graphs.iter().filter(|g| g.kind == self.current.0).count();
             if ui.button("Delete") && count > 1 {
@@ -318,6 +391,94 @@ impl NodeEditorUi {
                 wg.project.graphs.retain(|g| !(g.kind == key.0 && g.name == key.1));
                 self.contexts.remove(&key);
                 wg.mark_dirty();
+            }
+        }
+    }
+
+    fn browse_tree(&mut self, ui: &Ui, wg: &mut WorldgenSystem, blocks: &BlockRegistry) {
+        for name in wg.project.names(GraphKind::World) {
+            self.browse_leaf(ui, GraphKind::World, &name, "World");
+        }
+        // what each layer places, from the last compile: zones, their biomes and cave biomes
+        let c = &wg.compiled;
+        let name_of = |b: &u32| c.biomes.get(*b as usize).map(|b| b.name.clone()).unwrap_or_default();
+        let layers: Vec<(String, Vec<BrowsedZone>)> = c
+            .layers
+            .iter()
+            .map(|l| {
+                let zones = c.zones[l.zone_base as usize..(l.zone_base + l.zone_count) as usize]
+                    .iter()
+                    .map(|z| (z.name.clone(), z.biomes.iter().map(name_of).collect(), z.cave_biomes.iter().map(name_of).collect()))
+                    .collect();
+                (format!("{} ({:?})", l.name, l.kind), zones)
+            })
+            .collect();
+        let mut used: HashSet<(GraphKind, String)> = HashSet::new();
+        if let Some(_t) = ui.tree_node_config("Layers").default_open(true).push() {
+            for (li, (label, zones)) in layers.iter().enumerate() {
+                let Some(_l) = ui.tree_node_config(format!("{label}##layer{li}")).default_open(true).push() else { continue };
+                for (zone, biomes, caves) in zones {
+                    used.insert((GraphKind::Zone, zone.clone()));
+                    let Some(_z) = self.browse_branch(ui, GraphKind::Zone, zone, zone) else { continue };
+                    for b in biomes {
+                        used.insert((GraphKind::Biome, b.clone()));
+                        self.browse_leaf(ui, GraphKind::Biome, b, b);
+                    }
+                    for b in caves {
+                        used.insert((GraphKind::Biome, b.clone()));
+                        self.browse_leaf(ui, GraphKind::Biome, b, &format!("{b}  (caves)"));
+                    }
+                }
+            }
+        }
+        // zones and biomes no layer places yet
+        let unused: Vec<(GraphKind, String)> = [GraphKind::Zone, GraphKind::Biome]
+            .into_iter()
+            .flat_map(|k| wg.project.names(k).into_iter().map(move |n| (k, n)))
+            .filter(|k| !used.contains(k))
+            .collect();
+        if !unused.is_empty()
+            && let Some(_t) = ui.tree_node_config(format!("Not placed ({})", unused.len())).push()
+        {
+            for (k, n) in &unused {
+                self.browse_leaf(ui, *k, n, &format!("{n}  ({})", k.label()));
+            }
+        }
+        for (kind, label) in [(GraphKind::Prop, "Props"), (GraphKind::Function, "Functions"), (GraphKind::Particle, "Particles")] {
+            let names = wg.project.names(kind);
+            if let Some(_t) = ui.tree_node_config(format!("{label} ({})##{label}", names.len())).push() {
+                for n in &names {
+                    self.browse_leaf(ui, kind, n, n);
+                }
+            }
+        }
+        // fluids and blocks open in the Block Editor
+        let fluids: Vec<(u16, String)> = blocks.live().filter(|(_, b)| b.fluid).map(|(id, b)| (id, b.name.clone())).collect();
+        if let Some(_t) = ui.tree_node_config(format!("Fluids ({})##fluids", fluids.len())).push() {
+            for (id, n) in &fluids {
+                if ui.selectable(format!("{n}##fluid{id}")) {
+                    self.open_block = Some(*id);
+                }
+            }
+        }
+        let mut cats: Vec<(String, Vec<(u16, String)>)> = Vec::new();
+        for (id, b) in blocks.live().filter(|(id, _)| *id != 0) {
+            match cats.iter_mut().find(|(c, _)| *c == b.category) {
+                Some((_, v)) => v.push((id, b.name.clone())),
+                None => cats.push((b.category.clone(), vec![(id, b.name.clone())])),
+            }
+        }
+        let total: usize = cats.iter().map(|(_, v)| v.len()).sum();
+        if let Some(_t) = ui.tree_node_config(format!("Blocks ({total})##blocks")).push() {
+            for (cat, list) in &cats {
+                let label = if cat.is_empty() { "Other" } else { cat.as_str() };
+                if let Some(_c) = ui.tree_node_config(format!("{label}##bcat{label}")).push() {
+                    for (id, n) in list {
+                        if ui.selectable(format!("{n}##blk{id}")) {
+                            self.open_block = Some(*id);
+                        }
+                    }
+                }
             }
         }
     }

@@ -49,7 +49,7 @@
 //! | `expect_prefab NAME` | a prefab of that name is loaded (e.g. after `op save_prefab`) |
 //! | `expect_selected NAME` | the block selected for placing (e.g. after a middle-click pick) |
 //! | `expect_clipboard SX SY SZ` / `expect_selection X1 Y1 Z1 X2 Y2 Z2` | tool state |
-//! | `expect_image GOLDEN [TOL]` | compare this frame against a reference PNG (created if missing, `UPDATE_GOLDEN=1` rewrites) |
+//! | `expect_image GOLDEN [TOL] [region X Y W H]` | compare this frame (or a part of the screen, in pixels) against a reference PNG (created if missing, `UPDATE_GOLDEN=1` rewrites) |
 //! | `check_apron CX CY CZ` / `check_apron ~DX ~DY ~DZ` | (debugging) compare a LOD0 chunk's generated apron cells with its neighbours' blocks |
 //! | `block_new NAME [FROM]` / `block_delete NAME` | create a block (a copy of FROM) / delete one (session only: scripts never save blocks) |
 //! | `block_set NAME PROPERTY VALUE...` | `kind opaque\|cutout\|transparent\|model`, `model cross\|tall_cross\|slab\|stairs\|lantern\|pebbles\|mushroom`, `texture all\|top\|bottom\|side\|east\|west\|south\|north TEX`, `tint none\|grass\|foliage\|water`, `emission N`, `light R G B REACH`, `absorb N`, `rotation none\|column\|facing`, `fluid on\|off`, `flow DISTANCE SECONDS [infinite] [hardens BLOCK]`, `washes on\|off`, `display TEXT` |
@@ -61,7 +61,11 @@
 //! | `window NAME on\|off` / `edit_block NAME` | show or hide a window (`block_editor`, `texture_editor`, `node_editor`, `tools`, `stats`, `render`, `world`, `camera`, `blocks`, `help`, `map`) / open a block in the block editor |
 //! | `expect_texel NAME FRAME X Y RRGGBB[AA]` | a texel of a texture as the world has it |
 //! | `place_prop NAME X Y Z [SEED]` | build one instance of a Prop graph (the real props pass, alone) and place it as an edit with its anchor at X Y Z |
-//! | `open_graph world\|zone\|biome\|function\|prop NAME` | open a graph in the node editor (a Prop graph shows its preview) |
+//! | `open_graph world\|zone\|biome\|function\|prop\|particle NAME` | open a graph in the node editor (a Prop graph shows its preview) |
+//! | `browse TEXT` | the graph browser's search (empty: the tree) |
+//! | `graph_new KIND NAME [TEMPLATE]` | a new graph, empty or a copy of a built-in one (session only) |
+//! | `graph_duplicate KIND NAME [biomes]` | duplicate a graph (a zone with copies of its biomes) |
+//! | `expect_graph KIND NAME` | a graph of that name exists |
 //! | `log TEXT` | print a line |
 
 use std::path::{Path, PathBuf};
@@ -162,7 +166,8 @@ enum Cmd {
     ExpectUndo(usize, Option<String>),
     ExpectClipboard(IVec3),
     ExpectSelection(IVec3, IVec3),
-    ExpectImage { golden: PathBuf, tol: f32 },
+    /// region: (x, y, w, h) in screen pixels, None = the whole frame
+    ExpectImage { golden: PathBuf, tol: f32, region: Option<[u32; 4]> },
     /// chunk, relative to the camera's chunk (`~` coordinates)
     CheckApron(IVec3, bool),
     BlockNew(String, Option<String>),
@@ -183,6 +188,13 @@ enum Cmd {
     ExpectTexel { name: String, frame: usize, x: i32, y: i32, color: [u8; 4] },
     PlaceProp { name: String, at: IVec3, seed: u32 },
     OpenGraph(worldgen::GraphKind, String),
+    /// the graph browser's search text
+    Browse(String),
+    /// kind, name, template
+    GraphNew(worldgen::GraphKind, String, Option<String>),
+    /// kind, name, with its biomes (zones)
+    GraphDuplicate(worldgen::GraphKind, String, bool),
+    ExpectGraph(worldgen::GraphKind, String),
     Log(String),
 }
 
@@ -258,7 +270,7 @@ enum Busy {
     Apron { id: u64, chunk: IVec3, left: u32 },
     /// Column read for `find_cave`.
     Cave { id: u64, min_height: i32, tries: u32, left: u32 },
-    Image { shot: PathBuf, golden: PathBuf, tol: f32, left: u32 },
+    Image { shot: PathBuf, golden: PathBuf, tol: f32, region: Option<[u32; 4]>, left: u32 },
     /// A prop instance being built for `place_prop`.
     PropPlace { id: u64, at: IVec3, left: u32 },
 }
@@ -536,10 +548,16 @@ fn parse(line: &str) -> Result<Cmd> {
         "expect_selected" => Cmd::ExpectSelected(a.first().context("missing block name")?.to_string()),
         "expect_clipboard" => Cmd::ExpectClipboard(ivec(a, "size")?),
         "expect_selection" => Cmd::ExpectSelection(ivec(a, "corner")?, ivec(a.get(3..).unwrap_or(&[]), "corner")?),
-        "expect_image" => Cmd::ExpectImage {
-            golden: a.first().context("missing golden path")?.into(),
-            tol: a.get(1).map(|t| t.parse()).transpose()?.unwrap_or(1.5),
-        },
+        "expect_image" => {
+            // expect_image GOLDEN [TOL] [region X Y W H]
+            let r = a.iter().position(|t| *t == "region");
+            let region = match r {
+                Some(i) => Some([0, 1, 2, 3].map(|k| a.get(i + 1 + k).and_then(|t| t.parse::<u32>().ok())).map(|v| v.context("region X Y W H")).into_iter().collect::<Result<Vec<u32>>>()?),
+                None => None,
+            };
+            let tol = a.get(1).filter(|t| **t != "region").map(|t| t.parse()).transpose()?.unwrap_or(1.5);
+            Cmd::ExpectImage { golden: a.first().context("missing golden path")?.into(), tol, region: region.map(|v| [v[0], v[1], v[2], v[3]]) }
+        }
         "interp" => Cmd::Interp(on_off(a.first())?),
         "interp_hold" => Cmd::InterpHold(on_off(a.first())?),
         "graph_set" => {
@@ -598,6 +616,10 @@ fn parse(line: &str) -> Result<Cmd> {
             at: ivec(a.get(1..).unwrap_or(&[]), "position")?,
             seed: a.get(4).map(|s| s.parse()).transpose()?.unwrap_or(1),
         },
+        "browse" => Cmd::Browse(a.join(" ")),
+        "graph_new" => Cmd::GraphNew(graph_kind(a.first().copied().unwrap_or(""))?, a.get(1).context("missing graph name")?.to_string(), a.get(2).map(|s| s.to_string())),
+        "graph_duplicate" => Cmd::GraphDuplicate(graph_kind(a.first().copied().unwrap_or(""))?, a.get(1).context("missing graph name")?.to_string(), a.get(2) == Some(&"biomes")),
+        "expect_graph" => Cmd::ExpectGraph(graph_kind(a.first().copied().unwrap_or(""))?, a.get(1).context("missing graph name")?.to_string()),
         "open_graph" => Cmd::OpenGraph(graph_kind(a.first().copied().unwrap_or(""))?, a.get(1).context("missing graph name")?.to_string()),
         "log" => Cmd::Log(a.join(" ")),
         other => bail!("unknown command `{other}`"),
@@ -663,8 +685,14 @@ fn best_cell(cells: &[ProbeResult], biome: u32, strict: bool) -> Option<usize> {
 
 /// Compare `shot` against `golden`. Returns a failure message, or None on a match. Goldens are
 /// stored at half resolution, which keeps them small and ignores sub-pixel noise.
-fn compare_images(shot: &Path, golden: &Path, tol: f32) -> Result<Option<String>> {
-    let full = image::open(shot)?.to_rgb8();
+fn compare_images(shot: &Path, golden: &Path, tol: f32, region: Option<[u32; 4]>) -> Result<Option<String>> {
+    let mut full = image::open(shot)?.to_rgb8();
+    if let Some([x, y, w, h]) = region {
+        // a part of the screen (UI panels next to it show live timings)
+        let (fw, fh) = full.dimensions();
+        let (x, y) = (x.min(fw - 1), y.min(fh - 1));
+        full = image::imageops::crop_imm(&full, x, y, w.min(fw - x).max(1), h.min(fh - y).max(1)).to_image();
+    }
     let a = image::imageops::resize(&full, (full.width() / 2).max(1), (full.height() / 2).max(1), image::imageops::FilterType::Triangle);
     let existed = golden.exists();
     if !existed || std::env::var_os("UPDATE_GOLDEN").is_some() {
@@ -1249,13 +1277,13 @@ impl Engine {
                     Some(Busy::Region { id, pos, want, left: left - 1 })
                 }
             }
-            Busy::Image { shot, golden, tol, left } => {
+            Busy::Image { shot, golden, tol, region, left } => {
                 if left > 0 {
-                    return Ok(Some(Busy::Image { shot, golden, tol, left: left - 1 }));
+                    return Ok(Some(Busy::Image { shot, golden, tol, region, left: left - 1 }));
                 }
                 if !shot.exists() {
                     s.fail(line, format!("screenshot {} was not written", shot.display()));
-                } else if let Some(msg) = compare_images(&shot, &golden, tol)? {
+                } else if let Some(msg) = compare_images(&shot, &golden, tol, region)? {
                     s.fail(line, msg);
                 }
                 None
@@ -1571,12 +1599,12 @@ impl Engine {
                     s.fail(line, format!("expected selection {a} {b}, got {got:?}"));
                 }
             }
-            Cmd::ExpectImage { golden, tol } => {
+            Cmd::ExpectImage { golden, tol, region } => {
                 let stem = golden.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "shot".into());
                 let shot = Path::new(OUT_DIR).join(format!("{stem}.png"));
                 let _ = std::fs::remove_file(&shot);
                 self.screenshot_request = Some(shot.clone());
-                return Ok(Some(Busy::Image { shot, golden, tol, left: FIF as u32 + 2 }));
+                return Ok(Some(Busy::Image { shot, golden, tol, region, left: FIF as u32 + 2 }));
             }
             Cmd::InterpHold(on) => self.wg.hold = on,
             Cmd::GraphSet { kind, graph, node, param, value } => {
@@ -1784,6 +1812,33 @@ impl Engine {
                     self.node_ui.navigate = true;
                 } else {
                     s.fail(line, format!("unknown {} graph `{name}`", kind.label()));
+                }
+            }
+            Cmd::Browse(text) => self.node_ui.browse_filter = text,
+            Cmd::GraphNew(kind, name, template) => match self.wg.project.create_from_template(kind, &name, template.as_deref()) {
+                Some(n) => {
+                    self.node_ui.open_graph(kind, &n);
+                    self.wg.mark_dirty();
+                }
+                None => s.fail(line, format!("no built-in {} graph `{}`", kind.label(), template.unwrap_or_default())),
+            },
+            Cmd::GraphDuplicate(kind, name, biomes) => {
+                let new = if biomes && kind == worldgen::GraphKind::Zone {
+                    self.wg.project.duplicate_zone_with_biomes(&name).map(|(n, _)| n)
+                } else {
+                    self.wg.project.duplicate(kind, &name)
+                };
+                match new {
+                    Some(n) => {
+                        self.node_ui.open_graph(kind, &n);
+                        self.wg.mark_dirty();
+                    }
+                    None => s.fail(line, format!("unknown {} graph `{name}`", kind.label())),
+                }
+            }
+            Cmd::ExpectGraph(kind, name) => {
+                if self.wg.project.get(kind, &name).is_none() {
+                    s.fail(line, format!("no {} graph `{name}`", kind.label()));
                 }
             }
             Cmd::Log(text) => log::info!("script: {text}"),

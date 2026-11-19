@@ -1245,6 +1245,29 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_zones_with_biomes_and_templates() {
+        let mut p = default_project();
+        let biomes = p.zone_biomes("arid");
+        assert_eq!(biomes, ["desert", "badlands", "savanna", "crystal_caves", "lush_caves"]);
+        let (zone, renamed) = p.duplicate_zone_with_biomes("arid").unwrap();
+        assert_eq!(zone, "arid_2");
+        assert_eq!(renamed.len(), biomes.len());
+        assert_eq!(p.zone_biomes("arid_2"), renamed.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>());
+        assert_eq!(p.zone_biomes("arid"), biomes, "the original keeps its biomes");
+        assert_eq!(renamed[0], ("desert".to_string(), "desert_2".to_string()));
+        // the copy compiles (unused until a layer places it)
+        compile::compile(&p, &blocks(), &prefabs()).unwrap();
+        // a new biome from a template is a copy of the built-in one; an empty one has just its output
+        let n = p.create_from_template(GraphKind::Biome, "dunes", Some("desert")).unwrap();
+        assert_eq!(n, "dunes");
+        assert_eq!(p.get(GraphKind::Biome, "dunes").unwrap().nodes.len(), p.get(GraphKind::Biome, "desert").unwrap().nodes.len());
+        let e = p.create_from_template(GraphKind::Prop, "dunes", None).unwrap();
+        assert_eq!((e.as_str(), p.get(GraphKind::Prop, "dunes").unwrap().nodes.len()), ("dunes", 1));
+        assert_eq!(p.create_from_template(GraphKind::Biome, "dunes", Some("desert")).as_deref(), Some("dunes_2"));
+        assert!(p.create_from_template(GraphKind::Biome, "x", Some("no_such_biome")).is_none());
+    }
+
+    #[test]
     fn old_biome_fog_moves_to_environment_nodes() {
         let mut g = meadow();
         g.name = "old".into();

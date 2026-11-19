@@ -138,6 +138,11 @@ function" turns the selected nodes into a reusable function graph. **Auto-layout
 **Solo** shows the open zone or biome across the whole world, to tune it without searching for it
 (a cave biome fills every cave).
 A **Comment** node is a resizable box with a note; dragging it moves the nodes inside.
+The **graph browser** on the left shows the World, then Layers > Zones > Biomes (and cave biomes)
+as the world places them, zones and biomes no layer places yet, Props, Functions, Particles,
+Fluids and Blocks (those open in the Block Editor). Type to search everything by name.
+**New graph** starts empty or from a copy of a built-in one; **Duplicate with biomes** copies a
+zone and the biomes it places.
 
 </details>
 

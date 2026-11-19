@@ -1,0 +1,25 @@
+# Editor tooling (roadmap item 23): the graph browser (Layers > Zones > Biomes, then Props,
+# Functions, Particles, Fluids and Blocks; search), templates and duplicates.
+ui on
+weather 0
+time 0.4
+pos 0 200 0
+look 0 -20
+settle
+open_graph biome desert
+wait 10
+expect_image crates/engine/tests/golden/browser_tree.png 1.5 region 350 350 260 370
+browse cave
+wait 3
+expect_image crates/engine/tests/golden/browser_search.png 1.5 region 350 350 260 370
+browse
+# a zone duplicated with copies of its biomes; a new biome from a built-in one
+graph_duplicate zone arid biomes
+expect_graph zone arid_2
+expect_graph biome desert_2
+expect_graph biome lush_caves_2
+graph_new biome dunes desert
+expect_graph biome dunes
+graph_new prop boulder
+expect_graph prop boulder
+settle

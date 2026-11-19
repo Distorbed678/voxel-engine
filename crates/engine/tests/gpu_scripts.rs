@@ -124,3 +124,9 @@ fn particles() {
 fn fluids() {
     run("fluids");
 }
+
+#[test]
+#[ignore = "needs a Vulkan GPU with mesh shaders"]
+fn editor() {
+    run("editor");
+}

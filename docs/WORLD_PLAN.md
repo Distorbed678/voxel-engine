@@ -449,6 +449,10 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
 - **Graph browser**: a tree of Layers > Zones > Biomes, plus Props, Functions, Particles,
   Fluids, Blocks; search; open in the node editor.
 - **Templates & duplicate** for biomes, zones and props.
+- **Done**: the graph browser (World, Layers > Zones > Biomes from the last compile, zones and
+  biomes not placed yet, Props, Functions, Particles, Fluids and Blocks opening in the Block
+  Editor; search), new graphs from a copy of any built-in graph, Duplicate, and Duplicate with
+  biomes for zones; `editor.vxs` test (UI images compare a screen region).
 - **Node previews**: thumbnails on density and noise nodes, 2D slices evaluated on the GPU (the
   interpreter makes this cheap), throttled.
 - **Layer map**: any layer, underground at a chosen depth, zones and biomes coloured, click to

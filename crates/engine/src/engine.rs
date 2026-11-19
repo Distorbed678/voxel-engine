@@ -2119,6 +2119,9 @@ impl Engine {
         let mut block_act = crate::block_editor::BlockEditorActions::default();
         if self.ui.show_ui {
             self.node_ui.draw(ui, &mut self.wg, &self.blocks);
+            if let Some(id) = self.node_ui.open_block.take() {
+                self.ui.edit_block = Some(id);
+            }
             self.tools.draw_ui(ui, &mut self.world, &self.blocks, &mut self.ui, self.pick);
             if let Some(id) = self.ui.edit_block.take() {
                 self.block_ui.open = true;
