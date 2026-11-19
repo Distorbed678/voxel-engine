@@ -442,6 +442,8 @@ and new ones, 0 validation errors, and a benchmark note. Then comes a check-in w
 
   Same as phase C within noise: environments are CPU-only, and the particle type table costs
   nothing measurable.
+- **Owner, at the phase D check-in (2026-11-18)**: continue to phase E; keep the default storm
+  frequency (stormy about a third of the time).
 
 ### Phase E (item 23): editor tooling
 - **Graph browser**: a tree of Layers > Zones > Biomes, plus Props, Functions, Particles,
